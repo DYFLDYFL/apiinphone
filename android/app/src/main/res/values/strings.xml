@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">AI API Client</string>
+    <string name="title_activity_main">AI API Client</string>
+    <string name="package_name">com.apiinphone.client</string>
+    <string name="custom_url_scheme">com.apiinphone.client</string>
+</resources>

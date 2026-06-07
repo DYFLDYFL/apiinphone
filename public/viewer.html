@@ -1,0 +1,524 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link rel="stylesheet" href="./assets/katex/katex.min.css" />
+  <script src="./assets/marked/marked.min.js"></script>
+  <script src="./assets/katex/katex.min.js"></script>
+  <style>
+    body.light {
+      --chat-bg: #eef2f7;
+      --panel: #ffffff;
+      --text: #1f2937;
+      --muted: #6b7280;
+      --user: #dbeafe;
+      --assistant-bg: #ffffff;
+      --assistant-text: #1f2937;
+      --accent: #2563eb;
+      --border: #e5e7eb;
+      --code-bg: #f3f4f6;
+      --code-text: #1f2937;
+      --table-border: #e5e7eb;
+      --blockquote-bg: #f9fafb;
+      --blockquote-border: #dbeafe;
+      --hr: #e5e7eb;
+      --error: #dc2626;
+      --shadow: rgba(15, 23, 42, 0.06);
+      --reasoning-bg: #f8fafc;
+    }
+    body.dark {
+      --chat-bg: #1e293b;
+      --panel: #334155;
+      --text: #e5e7eb;
+      --muted: #9ca3af;
+      --user: #1e3a5f;
+      --assistant-bg: #334155;
+      --assistant-text: #f1f5f9;
+      --accent: #60a5fa;
+      --border: #475569;
+      --code-bg: #0f172a;
+      --code-text: #e2e8f0;
+      --table-border: #475569;
+      --blockquote-bg: #1e293b;
+      --blockquote-border: #3b82f6;
+      --hr: #475569;
+      --error: #f87171;
+      --shadow: rgba(0, 0, 0, 0.22);
+      --reasoning-bg: #1e293b;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0; padding: 0; height: 100%;
+      background: var(--chat-bg);
+      color: var(--text);
+      font-family: "Segoe UI", "Microsoft YaHei UI", sans-serif;
+      font-size: 14px; line-height: 1.55;
+    }
+    #messages {
+      padding: 16px 20px 24px;
+      display: flex; flex-direction: column; gap: 14px;
+      background: var(--chat-bg);
+    }
+    .msg {
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 12px 14px;
+      max-width: 100%;
+      overflow-x: auto;
+      word-break: break-word;
+    }
+    .msg.user {
+      background: var(--user);
+      color: var(--text);
+      align-self: flex-end;
+      max-width: 92%;
+    }
+    .msg.assistant {
+      background: var(--assistant-bg) !important;
+      color: var(--assistant-text) !important;
+      align-self: stretch;
+      box-shadow: 0 1px 2px var(--shadow);
+    }
+    .msg.system {
+      background: var(--panel);
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .role {
+      font-size: 11px; font-weight: 600; text-transform: uppercase;
+      letter-spacing: 0.06em; color: var(--accent); margin-bottom: 6px;
+    }
+    .msg.assistant .role { color: var(--accent); }
+    .reasoning-block {
+      display: none;
+      margin-bottom: 12px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: var(--reasoning-bg);
+      overflow: hidden;
+    }
+    .reasoning-block.is-active {
+      display: block;
+    }
+    .reasoning-block > summary {
+      list-style: none;
+      cursor: pointer;
+      padding: 8px 10px;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--accent);
+      border-bottom: 1px solid transparent;
+      user-select: none;
+    }
+    .reasoning-block.is-active > summary {
+      border-bottom-color: var(--border);
+    }
+    .reasoning-block > summary::-webkit-details-marker {
+      display: none;
+    }
+    .reasoning-block > summary::before {
+      content: "▸ ";
+      color: var(--muted);
+    }
+    .reasoning-block[open] > summary::before {
+      content: "▾ ";
+    }
+    .reasoning-status {
+      font-weight: 500;
+      color: var(--muted);
+      margin-left: 6px;
+    }
+    .reasoning-body {
+      max-height: 280px;
+      overflow: auto;
+      padding: 10px 12px;
+      font-size: 13px;
+      color: var(--muted);
+      white-space: pre-wrap;
+      line-height: 1.5;
+      font-family: Consolas, "Cascadia Code", "Microsoft YaHei UI", sans-serif;
+    }
+    .reasoning-block.thinking > summary .reasoning-status::after {
+      content: "思考中…";
+    }
+    .reasoning-block.thinking .reasoning-body::after {
+      content: "▋";
+      animation: blink 1s step-end infinite;
+      color: var(--accent);
+    }
+    .tools-block {
+      display: none;
+      margin-bottom: 12px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: var(--reasoning-bg);
+      overflow: hidden;
+    }
+    .tools-block.is-active {
+      display: block;
+    }
+    .tools-title {
+      padding: 8px 10px;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--accent);
+      border-bottom: 1px solid var(--border);
+    }
+    .tools-block.waiting .tools-title::after {
+      content: " · 联网中，请稍候…";
+      font-weight: 500;
+      color: var(--muted);
+    }
+    .tools-list {
+      list-style: none;
+      margin: 0;
+      padding: 8px 10px;
+    }
+    .tool-item {
+      font-size: 12px;
+      color: var(--muted);
+      padding: 4px 0;
+      line-height: 1.45;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .tool-item.running {
+      color: var(--accent);
+    }
+    .tool-item.running::before {
+      content: "▸ ";
+    }
+    .tool-item.done::before {
+      content: "✓ ";
+      color: #16a34a;
+    }
+    .tool-item.error::before {
+      content: "✗ ";
+      color: var(--error);
+    }
+    .tool-item.error {
+      color: var(--error);
+    }
+    .msg.assistant .content,
+    .msg.assistant .content.plain {
+      background: transparent;
+      color: var(--assistant-text);
+    }
+    .msg.assistant .content.plain {
+      white-space: pre-wrap;
+      line-height: 1.5;
+    }
+    .msg.assistant hr {
+      border: 0;
+      height: 1px;
+      background: var(--hr);
+      margin: 14px 0;
+    }
+    .content img {
+      max-width: 100%; height: auto; border-radius: 8px;
+      margin: 8px 0; display: block;
+      border: 1px solid var(--border);
+    }
+    .content pre {
+      background: var(--code-bg);
+      color: var(--code-text);
+      padding: 10px; border-radius: 8px; overflow-x: auto;
+      border: 1px solid var(--border);
+    }
+    .content code {
+      font-family: Consolas, "Cascadia Code", monospace;
+      font-size: 13px;
+      background: var(--code-bg);
+      color: var(--code-text);
+      padding: 0 0.15em;
+      border-radius: 4px;
+    }
+    .content pre code { background: transparent; padding: 0; border: none; }
+    .content p { margin: 0.35em 0; }
+    .content h1, .content h2, .content h3, .content h4 {
+      margin: 0.6em 0 0.3em;
+      color: inherit;
+      background: transparent;
+    }
+    .content table { border-collapse: collapse; margin: 8px 0; width: 100%; }
+    .content th, .content td {
+      border: 1px solid var(--table-border);
+      padding: 6px 10px;
+      vertical-align: middle;
+      background: transparent;
+      color: inherit;
+    }
+    .msg.assistant .content blockquote {
+      margin: 0.4em 0;
+      padding: 0.4em 0.8em;
+      border-left: 3px solid var(--blockquote-border);
+      background: var(--blockquote-bg);
+      color: inherit;
+    }
+    .content .katex { font-size: 1.05em; color: inherit; }
+    .content .katex-display {
+      margin: 0.55em 0;
+      overflow-x: auto;
+      overflow-y: visible;
+      background: transparent;
+    }
+    .content.plain { white-space: pre-wrap; line-height: 1.5; }
+    .typing::after {
+      content: "▋";
+      animation: blink 1s step-end infinite;
+      color: var(--accent);
+    }
+    @keyframes blink { 50% { opacity: 0; } }
+    .error { color: var(--error); }
+    .katex-error { color: var(--error); font-family: Consolas, monospace; font-size: 12px; }
+  </style>
+</head>
+<body class="light">
+  <div id="messages"></div>
+  <script>
+    const container = document.getElementById("messages");
+    marked.setOptions({ breaks: true, gfm: true });
+
+    const mathPattern = /\$\$([\s\S]+?)\$\$|\\\[([\s\S]+?)\\\]|\\\((.+?)\\\)|(?<!\$)\$(?!\$)([^\$\n]+?)(?<!\$)\$(?!\$)/g;
+
+    function renderKatex(latex, displayMode) {
+      if (typeof katex === "undefined") {
+        return displayMode ? "$$" + latex + "$$" : "$" + latex + "$";
+      }
+      try {
+        return katex.renderToString(latex.trim(), {
+          throwOnError: false,
+          displayMode: displayMode,
+          strict: "ignore",
+        });
+      } catch (e) {
+        return '<span class="katex-error">' + latex + "</span>";
+      }
+    }
+
+    function renderMarkdownWithMath(text) {
+      const source = text || "";
+      let html = "";
+      let last = 0;
+      mathPattern.lastIndex = 0;
+      let match;
+      while ((match = mathPattern.exec(source)) !== null) {
+        if (match.index > last) {
+          html += marked.parse(source.slice(last, match.index));
+        }
+        if (match[1] != null) {
+          html += renderKatex(match[1], true);
+        } else if (match[2] != null) {
+          html += renderKatex(match[2], true);
+        } else if (match[3] != null) {
+          html += renderKatex(match[3], false);
+        } else if (match[4] != null) {
+          html += renderKatex(match[4], false);
+        }
+        last = match.index + match[0].length;
+      }
+      if (last < source.length) {
+        html += marked.parse(source.slice(last));
+      }
+      return html;
+    }
+
+    function renderBareLatexInCode(el) {
+      el.querySelectorAll("pre code, code").forEach((code) => {
+        const text = (code.textContent || "").trim();
+        if (!/\\[a-zA-Z]+/.test(text)) return;
+        if (code.closest(".katex")) return;
+        try {
+          const span = document.createElement("span");
+          span.innerHTML = renderKatex(text, /\\begin\{/.test(text));
+          code.replaceWith(span);
+        } catch (e) {}
+      });
+    }
+
+    function decorateContent(el, text, typing) {
+      if (typing) {
+        el.className = "content plain";
+        el.textContent = text || "";
+        return;
+      }
+      el.className = "content";
+      el.innerHTML = renderMarkdownWithMath(text);
+      renderBareLatexInCode(el);
+      el.querySelectorAll("img").forEach((img) => {
+        img.loading = "lazy";
+        img.onerror = () => { img.alt = "图片加载失败"; };
+      });
+      el.querySelectorAll("a").forEach((a) => {
+        a.target = "_blank";
+        a.rel = "noopener noreferrer";
+      });
+    }
+
+    window.setTheme = function(theme) {
+      document.body.classList.toggle("light", theme === "light");
+      document.body.classList.toggle("dark", theme !== "light");
+    };
+
+    window.clearMessages = function() {
+      container.innerHTML = "";
+    };
+
+    function ensureReasoningBlock(parent) {
+      let block = parent.querySelector(".reasoning-block");
+      if (block) return block;
+      block = document.createElement("details");
+      block.className = "reasoning-block";
+      block.open = true;
+      const summary = document.createElement("summary");
+      summary.innerHTML = '思考过程<span class="reasoning-status"></span>';
+      const body = document.createElement("div");
+      body.className = "reasoning-body";
+      block.appendChild(summary);
+      block.appendChild(body);
+      const content = parent.querySelector(".content");
+      parent.insertBefore(block, content);
+      return block;
+    }
+
+    function setReasoningBlock(parent, reasoning, reasoningTyping) {
+      const text = (reasoning || "").trim();
+      const active = reasoningTyping || text;
+      const existing = parent.querySelector(".reasoning-block");
+      if (!active) {
+        if (existing) existing.classList.remove("is-active", "thinking");
+        if (existing) existing.style.display = "none";
+        return;
+      }
+      const block = ensureReasoningBlock(parent);
+      block.style.display = "";
+      block.classList.add("is-active");
+      block.classList.toggle("thinking", !!reasoningTyping);
+      if (reasoningTyping) {
+        block.open = true;
+      } else if (text.trim()) {
+        block.open = false;
+      }
+      const body = block.querySelector(".reasoning-body");
+      if (reasoningTyping && !text) {
+        body.textContent = "正在连接模型，等待思考输出…";
+      } else {
+        body.textContent = text;
+      }
+      if (reasoningTyping) {
+        body.scrollTop = body.scrollHeight;
+      }
+    }
+
+    function ensureToolsBlock(parent) {
+      let block = parent.querySelector(".tools-block");
+      if (block) return block;
+      block = document.createElement("div");
+      block.className = "tools-block";
+      const title = document.createElement("div");
+      title.className = "tools-title";
+      title.textContent = "工具调用";
+      const list = document.createElement("ul");
+      list.className = "tools-list";
+      block.appendChild(title);
+      block.appendChild(list);
+      const content = parent.querySelector(".content");
+      parent.insertBefore(block, content);
+      return block;
+    }
+
+    function setToolsBlock(parent, tools, active) {
+      const items = Array.isArray(tools) ? tools : [];
+      const existing = parent.querySelector(".tools-block");
+      if (!items.length) {
+        if (existing) existing.classList.remove("is-active", "waiting");
+        return;
+      }
+      const block = ensureToolsBlock(parent);
+      block.classList.add("is-active");
+      block.classList.toggle("waiting", !!active && items.some((t) => t.status === "running"));
+      const list = block.querySelector(".tools-list");
+      list.innerHTML = "";
+      items.forEach((tool) => {
+        const li = document.createElement("li");
+        li.className = "tool-item " + (tool.status || "done");
+        li.textContent = tool.label || tool.name || "工具";
+        list.appendChild(li);
+      });
+    }
+
+    window.appendMessage = function(role, text, options) {
+      options = options || {};
+      const wrap = document.createElement("div");
+      wrap.className = "msg " + role + (options.typing ? " typing" : "");
+      const roleEl = document.createElement("div");
+      roleEl.className = "role";
+      roleEl.textContent = role === "user" ? "你" : role === "assistant" ? "助手" : "系统";
+      const content = document.createElement("div");
+      content.className = "content";
+      if (options.rawHtml) {
+        content.innerHTML = text;
+      } else if (options.plain) {
+        content.className = "content plain";
+        content.textContent = text;
+      } else {
+        decorateContent(content, text, false);
+      }
+      wrap.appendChild(roleEl);
+      wrap.appendChild(content);
+      if (role === "assistant" && options.reasoning) {
+        setReasoningBlock(wrap, options.reasoning, false);
+      }
+      if (role === "assistant" && options.tools && options.tools.length) {
+        setToolsBlock(wrap, options.tools, false);
+      }
+      container.appendChild(wrap);
+      window.scrollToBottom();
+      return wrap;
+    };
+
+    window.updateLastAssistant = function(text, typing, reasoning, reasoningTyping) {
+      let nodes = container.querySelectorAll(".msg.assistant");
+      let last = nodes[nodes.length - 1];
+      if (!last) {
+        last = window.appendMessage("assistant", "", { typing: !!typing });
+      }
+      last.classList.toggle("typing", !!typing);
+      setReasoningBlock(last, reasoning, reasoningTyping);
+      if (!reasoningTyping && (reasoning || "").trim()) {
+        const block = last.querySelector(".reasoning-block");
+        if (block) {
+          block.classList.remove("thinking");
+          block.open = false;
+        }
+      }
+      const content = last.querySelector(".content");
+      decorateContent(content, text, !!typing);
+      window.scrollToBottom();
+    };
+
+    window.updateLastAssistantTools = function(tools, active) {
+      let nodes = container.querySelectorAll(".msg.assistant");
+      let last = nodes[nodes.length - 1];
+      if (!last) {
+        last = window.appendMessage("assistant", "", {});
+      }
+      setToolsBlock(last, tools, !!active);
+      window.scrollToBottom();
+    };
+
+    window.showError = function(text) {
+      window.appendMessage("system", text, { plain: true });
+      const last = container.lastElementChild;
+      if (last) last.querySelector(".content").classList.add("error");
+    };
+
+    window.scrollToBottom = function() {
+      requestAnimationFrame(() => {
+        window.scrollTo(0, document.body.scrollHeight);
+      });
+    };
+  </script>
+</body>
+</html>

@@ -1,0 +1,12 @@
+node_modules/
+dist/
+android-sdk/
+android/.gradle/
+android/app/build/
+android/build/
+*.apk
+*.aab
+.DS_Store
+.env
+.idea/
+tsconfig.tsbuildinfo
