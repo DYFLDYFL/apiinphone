@@ -25,6 +25,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   toolsWebSearch: true,
   toolsPythonSandbox: true,
   pythonSandboxTimeout: 15,
+  maxToolRounds: 24,
   webSearchEngine: Capacitor.isNativePlatform() ? "bing_rss" : "bing_cn",
   webSearchEndpoint: "http://localhost:8080",
   webSearchMetasoKey: "",
@@ -53,6 +54,12 @@ export function thinkingActive(settings: AppSettings): boolean {
   if (settings.apiProvider !== "deepseek") return false;
   const model = effectiveModel(settings).toLowerCase();
   return model.includes("reasoner") || model.includes("v4");
+}
+
+export function effectiveMaxToolRounds(settings: AppSettings): number {
+  const n = Number(settings.maxToolRounds ?? 24);
+  if (Number.isNaN(n)) return 24;
+  return Math.min(64, Math.max(1, Math.round(n)));
 }
 
 export async function loadSettings(): Promise<AppSettings> {

@@ -22,13 +22,7 @@ import {
   loadPastedImage,
 } from "./lib/attachments";
 import { formatBalanceDisplay } from "./lib/usageInfo";
-import {
-  effectiveModel,
-  loadSettings,
-  rememberModel,
-  saveSettings,
-  thinkingActive,
-} from "./lib/settings";
+import { effectiveModel, loadSettings, rememberModel, saveSettings, thinkingActive } from "./lib/settings";
 import { warmupPythonSandbox } from "./lib/sandbox/pythonSandbox";
 import {
   createNewSession,
@@ -337,7 +331,6 @@ export default function App() {
       } else {
         viewer?.updateLastAssistant(finalContent, false);
       }
-      if (response.note) viewer?.showError(response.note);
       setStatusText("完成");
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

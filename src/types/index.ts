@@ -14,6 +14,7 @@ export interface AppSettings {
   toolsWebSearch: boolean;
   toolsPythonSandbox: boolean;
   pythonSandboxTimeout: number;
+  maxToolRounds: number;
   webSearchEngine: string;
   webSearchEndpoint: string;
   webSearchMetasoKey: string;

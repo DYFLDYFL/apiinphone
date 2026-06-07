@@ -15,7 +15,8 @@ import { webFetchForTool, webSearchForTool } from "./webSearch";
 
 export class ToolError extends Error {}
 
-export const MAX_TOOL_ROUNDS = 8;
+/** Default max agent tool loops per user message. */
+export const DEFAULT_MAX_TOOL_ROUNDS = 24;
 
 export { waitingLabel, buildToolTraceFromApiMessages as buildToolTrace };
 

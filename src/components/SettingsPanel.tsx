@@ -255,6 +255,21 @@ export function SettingsPanel({
 
           {draft.toolsEnabled && (
             <>
+              <label>
+                工具调用轮次上限
+                <input
+                  type="number"
+                  min={1}
+                  max={64}
+                  value={draft.maxToolRounds}
+                  onChange={(e) =>
+                    update({ maxToolRounds: Number(e.target.value) })
+                  }
+                />
+                <p className="settings-hint">
+                  单条消息内模型可连续调用工具的最大轮数（默认 24）。用满后会自动汇总回答，不会报错。
+                </p>
+              </label>
               <label className="checkbox">
                 <input
                   type="checkbox"

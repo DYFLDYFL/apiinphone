@@ -8,11 +8,10 @@ import type {
 } from "../types";
 import { getProvider, modelSupportsThinking, providerSupportsVision, resolveModel } from "./apiProviders";
 import { normalizeMessagesForApi } from "./attachments";
-import { effectiveModel, thinkingActive } from "./settings";
+import { effectiveMaxToolRounds, effectiveModel, thinkingActive } from "./settings";
 import {
   buildTools,
   executeTool,
-  MAX_TOOL_ROUNDS,
   ToolError,
   toolStatusLabel,
   waitingLabel,
@@ -225,7 +224,8 @@ class ToolCallAccumulator {
   finish(): ToolCall[] {
     return [...this.calls.entries()]
       .sort(([a], [b]) => a - b)
-      .map(([, v]) => v);
+      .map(([, v]) => v)
+      .filter((tc) => tc.function.name.trim());
   }
 }
 
@@ -317,7 +317,12 @@ async function streamChat(
   return {
     content,
     reasoning,
-    toolCalls: toolAcc.finish(),
+    toolCalls:
+      finishReason === "stop" ||
+      finishReason === "length" ||
+      finishReason === "content_filter"
+        ? []
+        : toolAcc.finish(),
     finishReason,
     usage,
   };
@@ -439,6 +444,117 @@ function serializeMessagesForApi(
   return out;
 }
 
+/** Match desktop aiusingapi: only stream tokens on the first completion. */
+function streamOptionsForRound(
+  round: number,
+  options?: {
+    onDelta?: (text: string) => void;
+    onReasoningDelta?: (text: string) => void;
+    control?: StreamControl;
+  },
+) {
+  if (round === 0) return options;
+  return {
+    ...options,
+    onDelta: undefined,
+    onReasoningDelta: undefined,
+  };
+}
+
+async function runSingleCompletion(
+  settings: AppSettings,
+  convo: ChatMessage[],
+  includeTools: boolean,
+  options?: {
+    onDelta?: (text: string) => void;
+    onReasoningDelta?: (text: string) => void;
+    control?: StreamControl;
+  },
+): Promise<CompletionResult> {
+  const body = buildChatBody(settings, convo);
+  if (!includeTools) {
+    delete body.tools;
+    delete body.tool_choice;
+  }
+  if (settings.stream) {
+    return streamChat(
+      settings,
+      body,
+      options?.onDelta,
+      options?.onReasoningDelta,
+      options?.control,
+    );
+  }
+  return completeChat(
+    settings,
+    body,
+    options?.onDelta,
+    options?.onReasoningDelta,
+    options?.control,
+  );
+}
+
+function summarizeFromToolMessages(
+  apiMessages: ChatMessage[],
+  fallback = "",
+): string {
+  const toolTexts = apiMessages
+    .filter((m) => m.role === "tool")
+    .map((m) => String(m.content ?? "").trim())
+    .filter(Boolean);
+  if (!toolTexts.length) {
+    return fallback.trim() || "请根据上文工具结果继续提问，或点击重试。";
+  }
+  const body = toolTexts
+    .map((text, i) => `### 工具结果 ${i + 1}\n${text.slice(0, 2000)}`)
+    .join("\n\n");
+  return `以下为已收集的信息，供你参考：\n\n${body}`;
+}
+
+async function finalizeAfterToolLimit(
+  settings: AppSettings,
+  convo: ChatMessage[],
+  apiMessages: ChatMessage[],
+  lastStreamedContent: string,
+  lastReasoning: string,
+  options?: {
+    onDelta?: (text: string) => void;
+    onReasoningDelta?: (text: string) => void;
+    control?: StreamControl;
+  },
+): Promise<{ content: string; reasoning: string; usage: TokenUsage | null }> {
+  const wrapUpConvo: ChatMessage[] = [
+    ...convo,
+    {
+      role: "user",
+      content:
+        "请根据上文所有工具返回的信息，直接给出完整、对用户有用的最终回答，不要再调用任何工具。",
+    },
+  ];
+  try {
+    const forced = await withRetry(settings, () =>
+      runSingleCompletion(settings, wrapUpConvo, false, options),
+    );
+    const content =
+      forced.content.trim() ||
+      lastStreamedContent.trim() ||
+      summarizeFromToolMessages(apiMessages, lastStreamedContent);
+    return {
+      content,
+      reasoning: forced.reasoning || lastReasoning,
+      usage: forced.usage,
+    };
+  } catch {
+    return {
+      content:
+        lastStreamedContent.trim() ||
+        summarizeFromToolMessages(apiMessages),
+      reasoning: lastReasoning,
+      usage: null,
+    };
+  }
+}
+
 export async function chatStream(
   settings: AppSettings,
   messages: ChatMessage[],
@@ -462,9 +578,11 @@ export async function chatStream(
   const apiMessages: ChatMessage[] = [];
   let lastReasoning = "";
   let note = "";
+  let lastStreamedContent = "";
 
   try {
-    for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
+    const maxRounds = effectiveMaxToolRounds(settings);
+    for (let round = 0; round < maxRounds; round++) {
       if (options?.control?.cancelled) {
         return {
           content: "",
@@ -475,29 +593,16 @@ export async function chatStream(
         };
       }
 
-      const body = buildChatBody(settings, convo);
-      const run = async () => {
-        if (settings.stream) {
-          return streamChat(
-            settings,
-            body,
-            options?.onDelta,
-            options?.onReasoningDelta,
-            options?.control,
-          );
-        }
-        return completeChat(
-          settings,
-          body,
-          options?.onDelta,
-          options?.onReasoningDelta,
-          options?.control,
-        );
-      };
+      const roundOptions = streamOptionsForRound(round, options);
+      const run = () =>
+        runSingleCompletion(settings, convo, true, roundOptions);
 
       const result = await withRetry(settings, run);
       totalUsage = mergeUsage(totalUsage, result.usage);
       if (result.reasoning) lastReasoning = result.reasoning;
+      if (round === 0 && result.content.trim()) {
+        lastStreamedContent = result.content;
+      }
 
       if (options?.control?.cancelled) {
         note = "已取消";
@@ -568,9 +673,26 @@ export async function chatStream(
         apiMessages,
       };
     }
-    throw new ApiError(
-      `Tool 调用超过 ${MAX_TOOL_ROUNDS} 轮，请简化请求或关闭 Tool Calls。`,
+
+    const finalized = await finalizeAfterToolLimit(
+      settings,
+      convo,
+      apiMessages,
+      lastStreamedContent,
+      lastReasoning,
+      options,
     );
+    totalUsage = mergeUsage(totalUsage, finalized.usage);
+    if (finalized.reasoning) lastReasoning = finalized.reasoning;
+    const final = assistantMessage(finalized.content, finalized.reasoning);
+    apiMessages.push(final);
+    return {
+      content: finalized.content,
+      reasoning: lastReasoning,
+      note: "",
+      usage: totalUsage,
+      apiMessages,
+    };
   } catch (err) {
     if (options?.control?.cancelled) {
       return {
