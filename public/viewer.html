@@ -387,8 +387,7 @@
       const active = reasoningTyping || text;
       const existing = parent.querySelector(".reasoning-block");
       if (!active) {
-        if (existing) existing.classList.remove("is-active", "thinking");
-        if (existing) existing.style.display = "none";
+        if (existing) existing.remove();
         return;
       }
       const block = ensureReasoningBlock(parent);

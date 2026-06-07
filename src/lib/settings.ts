@@ -1,3 +1,4 @@
+import { Capacitor } from "@capacitor/core";
 import { Preferences } from "@capacitor/preferences";
 import type { AppSettings } from "../types";
 import {
@@ -24,7 +25,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   toolsWebSearch: true,
   toolsPythonSandbox: true,
   pythonSandboxTimeout: 15,
-  webSearchEngine: "bing_cn",
+  webSearchEngine: Capacitor.isNativePlatform() ? "bing_rss" : "bing_cn",
   webSearchEndpoint: "http://localhost:8080",
   webSearchMetasoKey: "",
   webSearchBaiduKey: "",

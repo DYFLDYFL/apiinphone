@@ -22,7 +22,13 @@ import {
   loadPastedImage,
 } from "./lib/attachments";
 import { formatBalanceDisplay } from "./lib/usageInfo";
-import { effectiveModel, loadSettings, rememberModel, saveSettings } from "./lib/settings";
+import {
+  effectiveModel,
+  loadSettings,
+  rememberModel,
+  saveSettings,
+  thinkingActive,
+} from "./lib/settings";
 import { warmupPythonSandbox } from "./lib/sandbox/pythonSandbox";
 import {
   createNewSession,
@@ -202,7 +208,7 @@ export default function App() {
         control: streamControlRef.current,
         onDelta: (delta) => {
           streamText += delta;
-          if (settings.showThinking) {
+          if (thinkingActive(settings)) {
             viewer?.updateLastAssistant(
               streamText,
               true,
@@ -215,7 +221,7 @@ export default function App() {
         },
         onReasoningDelta: (delta) => {
           streamReasoning += delta;
-          if (settings.showThinking) {
+          if (thinkingActive(settings)) {
             viewer?.updateLastAssistant(streamText, true, streamReasoning, true);
           }
         },
@@ -263,7 +269,7 @@ export default function App() {
         const assistantDisplay: DisplayMessage = {
           role: "assistant",
           content: streamText,
-          reasoning: settings.showThinking ? streamReasoning : undefined,
+          reasoning: thinkingActive(settings) ? streamReasoning : undefined,
           toolTrace,
           note: response.note,
         };
@@ -293,7 +299,7 @@ export default function App() {
       const assistantDisplay: DisplayMessage = {
         role: "assistant",
         content: finalContent,
-        reasoning: settings.showThinking ? response.reasoning : undefined,
+        reasoning: thinkingActive(settings) ? response.reasoning : undefined,
         toolTrace,
         note: response.note || undefined,
       };
@@ -321,7 +327,7 @@ export default function App() {
       void refreshBalance(settings);
 
       viewer?.updateLastAssistantTools(toolTrace, false);
-      if (settings.showThinking) {
+      if (thinkingActive(settings)) {
         viewer?.updateLastAssistant(
           finalContent,
           false,
@@ -347,7 +353,7 @@ export default function App() {
         role: "assistant",
         content: errorBody,
         reasoning:
-          settings.showThinking && streamReasoning ? streamReasoning : undefined,
+          thinkingActive(settings) && streamReasoning ? streamReasoning : undefined,
         toolTrace: toolTrace.length ? toolTrace : undefined,
       };
 

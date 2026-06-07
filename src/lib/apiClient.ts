@@ -137,7 +137,7 @@ function buildChatBody(
 ): Record<string, unknown> {
   const body: Record<string, unknown> = {
     model: effectiveModel(settings),
-    messages,
+    messages: serializeMessagesForApi(messages),
     stream: settings.stream,
   };
   if (!thinkingActive(settings)) {
@@ -377,6 +377,68 @@ function assistantMessage(
   return msg;
 }
 
+function normalizeToolCallIds(toolCalls: ToolCall[], round: number): ToolCall[] {
+  return toolCalls.map((tc, index) => ({
+    ...tc,
+    id: tc.id || `call_${round}_${index}_${tc.function.name || "tool"}`,
+    type: tc.type || "function",
+  }));
+}
+
+/** OpenAI-compatible APIs expect snake_case message fields in JSON bodies. */
+function serializeMessagesForApi(
+  messages: ChatMessage[],
+): Array<Record<string, unknown>> {
+  const out: Array<Record<string, unknown>> = [];
+  let pendingToolCallIds: string[] = [];
+
+  for (const msg of messages) {
+    if (msg.role === "assistant" && msg.toolCalls?.length) {
+      pendingToolCallIds = msg.toolCalls.map((tc, index) =>
+        tc.id || `call_legacy_${index}_${tc.function.name || "tool"}`,
+      );
+      out.push({
+        role: "assistant",
+        content: msg.content,
+        ...(msg.reasoningContent
+          ? { reasoning_content: msg.reasoningContent }
+          : {}),
+        tool_calls: msg.toolCalls.map((tc, index) => ({
+          id: pendingToolCallIds[index],
+          type: tc.type || "function",
+          function: {
+            name: tc.function.name,
+            arguments: tc.function.arguments,
+          },
+        })),
+      });
+      continue;
+    }
+
+    if (msg.role === "tool") {
+      const callId = msg.toolCallId || pendingToolCallIds.shift() || "";
+      out.push({
+        role: "tool",
+        content: msg.content,
+        tool_call_id: callId,
+      });
+      continue;
+    }
+
+    pendingToolCallIds = [];
+    const row: Record<string, unknown> = {
+      role: msg.role,
+      content: msg.content,
+    };
+    if (msg.reasoningContent) {
+      row.reasoning_content = msg.reasoningContent;
+    }
+    out.push(row);
+  }
+
+  return out;
+}
+
 export async function chatStream(
   settings: AppSettings,
   messages: ChatMessage[],
@@ -446,18 +508,19 @@ export async function chatStream(
         if (round > 0) {
           options?.onToolStatus?.("waiting", "", waitingLabel());
         }
+        const toolCalls = normalizeToolCallIds(result.toolCalls, round);
         const assistant = assistantMessage(
           result.content,
           result.reasoning,
-          result.toolCalls,
+          toolCalls,
         );
         convo.push(assistant);
         apiMessages.push(assistant);
 
-        for (const tc of result.toolCalls) {
+        for (const tc of toolCalls) {
           const name = tc.function.name;
           const args = tc.function.arguments;
-          const tid = tc.id || name;
+          const tid = tc.id;
           options?.onToolStatus?.(
             "start",
             tid,

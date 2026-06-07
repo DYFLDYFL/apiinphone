@@ -302,6 +302,9 @@ export function SettingsPanel({
                   <option value="metaso">Metaso</option>
                   <option value="baidu">百度 AI 搜索</option>
                 </select>
+                <p className="settings-hint">
+                  手机端若 Bing/DDG 网络失败，推荐 Metaso 或百度 Key（国内 API 最稳）。
+                </p>
               </label>
               {draft.webSearchEngine === "searxng" && (
                 <label>

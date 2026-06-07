@@ -1,6 +1,6 @@
 # apiinphone
 
-**Version 1.0.0**
+**Version 1.1.0**
 
 Android 版 AI API 客户端，功能对齐桌面项目 [aiusingapi](../aiusingapi)。
 

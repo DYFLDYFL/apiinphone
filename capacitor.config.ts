@@ -7,8 +7,26 @@ const config: CapacitorConfig = {
   android: {
     allowMixedContent: true,
   },
+  plugins: {
+    // Patch fetch/XHR to native HTTP — fixes Android WebView failing on external search URLs
+    CapacitorHttp: {
+      enabled: true,
+    },
+  },
   server: {
     androidScheme: "https",
+    allowNavigation: [
+      "*.bing.com",
+      "bing.com",
+      "*.duckduckgo.com",
+      "duckduckgo.com",
+      "*.jina.ai",
+      "s.jina.ai",
+      "metaso.cn",
+      "*.metaso.cn",
+      "qianfan.baidubce.com",
+      "*.baidubce.com",
+    ],
   },
 };
 
