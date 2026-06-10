@@ -1,4 +1,5 @@
 import type { AppSettings } from "../types";
+import { resolveWebSearchTopK } from "./settings";
 import { httpJson, httpText } from "./nativeHttp";
 
 export interface SearchResult {
@@ -513,11 +514,11 @@ async function searchWithEngine(
 export async function webSearch(
   query: string,
   settings: AppSettings,
-  topK = 5,
+  topK?: number,
 ): Promise<SearchResult[]> {
   const q = query.trim();
   if (!q) throw new WebSearchError("搜索词不能为空");
-  const k = Math.min(10, Math.max(1, topK));
+  const k = resolveWebSearchTopK(settings, topK);
   const primary = settings.webSearchEngine || "bing_rss";
   const engines = [primary, ...fallbackEngines(primary)];
   const errors: string[] = [];
@@ -582,7 +583,7 @@ export async function webFetch(url: string): Promise<string> {
 export async function webSearchForTool(
   query: string,
   settings: AppSettings,
-  topK = 5,
+  topK?: number,
 ): Promise<string> {
   try {
     const results = await webSearch(query, settings, topK);

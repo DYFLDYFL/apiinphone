@@ -11,6 +11,11 @@ import {
   runningLabel,
   waitingLabel,
 } from "./toolStatus";
+import {
+  effectiveWebSearchDefaultTopK,
+  effectiveWebSearchMaxTopK,
+  resolveWebSearchTopK,
+} from "./settings";
 import { webFetchForTool, webSearchForTool } from "./webSearch";
 
 export class ToolError extends Error {}
@@ -25,7 +30,8 @@ const BUILTIN_TOOLS = [
     type: "function",
     function: {
       name: "get_current_time",
-      description: "Get the current local date and time in ISO format.",
+      description:
+        "获取当前本地日期时间（ISO）。回答时效性问题前应先调用，再与 web_search 结果对照。",
       parameters: {
         type: "object",
         properties: {},
@@ -35,26 +41,30 @@ const BUILTIN_TOOLS = [
   },
 ];
 
-const WEB_SEARCH_TOOL = {
-  type: "function",
-  function: {
-    name: "web_search",
-    description:
-      "搜索公开互联网，返回标题、链接与摘要。当问题依赖实时信息时必须调用。",
-    parameters: {
-      type: "object",
-      properties: {
-        query: { type: "string", description: "Natural-language search query." },
-        topK: {
-          type: "integer",
-          description: "Number of results to return (1-10, default 5).",
+function buildWebSearchTool(settings: AppSettings) {
+  const def = effectiveWebSearchDefaultTopK(settings);
+  const max = effectiveWebSearchMaxTopK(settings);
+  return {
+    type: "function",
+    function: {
+      name: "web_search",
+      description:
+        "搜索公开互联网，返回标题、链接与摘要。时事、新闻、政策、价格等时效问题应优先调用。",
+      parameters: {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "Natural-language search query." },
+          topK: {
+            type: "integer",
+            description: `Number of results (1-${max}, default ${def}).`,
+          },
         },
+        required: ["query"],
+        additionalProperties: false,
       },
-      required: ["query"],
-      additionalProperties: false,
     },
-  },
-};
+  };
+}
 
 const WEB_FETCH_TOOL = {
   type: "function",
@@ -103,8 +113,7 @@ const BUILTIN_HANDLERS: Record<string, ToolHandler> = {
   get_current_time: async () => new Date().toISOString(),
   web_search: async (args, settings) => {
     const query = String(args.query ?? "").trim();
-    let topK = Number(args.topK ?? 5);
-    if (Number.isNaN(topK)) topK = 5;
+    const topK = resolveWebSearchTopK(settings, args.topK);
     return webSearchForTool(query, settings, topK);
   },
   web_fetch: async (args) => {
@@ -143,7 +152,7 @@ export function buildTools(
   if (!settings.toolsEnabled) return null;
   const tools: Array<Record<string, unknown>> = [...BUILTIN_TOOLS];
   if (settings.toolsWebSearch) {
-    tools.push(WEB_SEARCH_TOOL, WEB_FETCH_TOOL);
+    tools.push(buildWebSearchTool(settings), WEB_FETCH_TOOL);
     if (settings.apiProvider === "poe") {
       tools.push({ type: "web_search_preview" });
     }

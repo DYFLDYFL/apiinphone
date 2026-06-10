@@ -19,6 +19,10 @@ export interface AppSettings {
   webSearchEndpoint: string;
   webSearchMetasoKey: string;
   webSearchBaiduKey: string;
+  /** Default result count per web_search when model omits topK. */
+  webSearchDefaultTopK: number;
+  /** Maximum topK allowed per web_search call. */
+  webSearchMaxTopK: number;
   toolsCustomJson: string;
   httpConnectTimeout: number;
   httpReadTimeout: number;

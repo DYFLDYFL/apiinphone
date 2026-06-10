@@ -302,6 +302,34 @@ export function SettingsPanel({
                   />
                 </label>
               )}
+              {draft.toolsWebSearch && (
+                <>
+                  <label>
+                    每次搜索默认条数
+                    <input
+                      type="number"
+                      min={1}
+                      max={30}
+                      value={draft.webSearchDefaultTopK}
+                      onChange={(e) =>
+                        update({ webSearchDefaultTopK: Number(e.target.value) })
+                      }
+                    />
+                  </label>
+                  <label>
+                    每次搜索条数上限
+                    <input
+                      type="number"
+                      min={1}
+                      max={30}
+                      value={draft.webSearchMaxTopK}
+                      onChange={(e) =>
+                        update({ webSearchMaxTopK: Number(e.target.value) })
+                      }
+                    />
+                  </label>
+                </>
+              )}
               <label>
                 搜索引擎
                 <select

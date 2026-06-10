@@ -30,15 +30,17 @@ export const DEFAULT_SETTINGS: AppSettings = {
   webSearchEndpoint: "http://localhost:8080",
   webSearchMetasoKey: "",
   webSearchBaiduKey: "",
+  webSearchDefaultTopK: 8,
+  webSearchMaxTopK: 20,
   toolsCustomJson: "",
   httpConnectTimeout: 15,
   httpReadTimeout: 120,
   retryCount: 2,
   retryBackoffMs: 1000,
   systemPrompt:
-    "你是一个有帮助的助手。回答可使用 Markdown、LaTeX（$...$ 或 $$...$$）以及图片链接。\n" +
-    "用户可通过附件发送文件；正文已嵌入在当前用户消息中，请直接阅读并回答，" +
-    "不要声称无法访问这些附件。内置 Tool 不能读写本地磁盘，但附件内容已经提供给你。",
+    "你是一个有帮助的助手，用 Markdown、LaTeX（$...$ / $$...$$）作答。\n" +
+    "涉及新闻、政策、价格、赛事、产品版本等时效信息时：先 get_current_time 获取当前时间，再 web_search 检索网页并对照时间作答，勿仅凭训练数据断言「最新」。\n" +
+    "用户消息中的附件正文已提供，可直接阅读。",
   httpReferer: "https://apiinphone.local",
   appTitle: "AI API Client",
   theme: "light",
@@ -62,6 +64,32 @@ export function effectiveMaxToolRounds(settings: AppSettings): number {
   return Math.min(64, Math.max(1, Math.round(n)));
 }
 
+export function effectiveWebSearchMaxTopK(settings: AppSettings): number {
+  const n = Number(settings.webSearchMaxTopK ?? 20);
+  if (Number.isNaN(n)) return 20;
+  return Math.min(30, Math.max(1, Math.round(n)));
+}
+
+export function effectiveWebSearchDefaultTopK(settings: AppSettings): number {
+  const max = effectiveWebSearchMaxTopK(settings);
+  const n = Number(settings.webSearchDefaultTopK ?? 8);
+  if (Number.isNaN(n)) return Math.min(8, max);
+  return Math.min(max, Math.max(1, Math.round(n)));
+}
+
+/** Clamp model-requested topK to settings default/max. */
+export function resolveWebSearchTopK(
+  settings: AppSettings,
+  requested?: unknown,
+): number {
+  const max = effectiveWebSearchMaxTopK(settings);
+  const def = effectiveWebSearchDefaultTopK(settings);
+  if (requested == null || requested === "") return def;
+  const n = Number(requested);
+  if (Number.isNaN(n)) return def;
+  return Math.min(max, Math.max(1, Math.round(n)));
+}
+
 export async function loadSettings(): Promise<AppSettings> {
   const { value } = await Preferences.get({ key: SETTINGS_KEY });
   if (!value) return { ...DEFAULT_SETTINGS };
@@ -72,6 +100,8 @@ export async function loadSettings(): Promise<AppSettings> {
     if (!merged.recentModels?.length) {
       merged.recentModels = defaultRecentModels();
     }
+    merged.webSearchMaxTopK = effectiveWebSearchMaxTopK(merged);
+    merged.webSearchDefaultTopK = effectiveWebSearchDefaultTopK(merged);
     return merged;
   } catch {
     return { ...DEFAULT_SETTINGS };
