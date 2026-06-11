@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Capacitor } from "@capacitor/core";
-import { StatusBar, Style } from "@capacitor/status-bar";
+import { configureNativeChrome } from "./lib/nativeChrome";
 import type {
   AppSettings,
   AttachmentPreview,
@@ -121,11 +120,7 @@ export default function App() {
           /* first-run download may fail offline */
         });
       }
-      if (Capacitor.isNativePlatform()) {
-        await StatusBar.setStyle({
-          style: loaded.theme === "dark" ? Style.Dark : Style.Light,
-        });
-      }
+      await configureNativeChrome(loaded.theme);
     })();
   }, [refreshSessions]);
 
@@ -160,11 +155,7 @@ export default function App() {
   const persistSettings = async (next: AppSettings) => {
     setSettings(next);
     await saveSettings(next);
-    if (Capacitor.isNativePlatform()) {
-      await StatusBar.setStyle({
-        style: next.theme === "dark" ? Style.Dark : Style.Light,
-      });
-    }
+    await configureNativeChrome(next.theme);
     void refreshBalance(next);
   };
 
