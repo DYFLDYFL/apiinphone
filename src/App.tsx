@@ -200,27 +200,49 @@ export default function App() {
       if (last.role === "user") viewer?.appendMessage("user", last.content);
     }
     viewer?.appendMessage("assistant", "", { typing: true });
+    if (thinkingChainVisible(settings)) {
+      viewer?.updateLastAssistant("", true, "", true);
+    }
+
+    let reasoningStreaming = false;
+    let viewerRaf = 0;
+    const pushViewerStream = () => {
+      if (thinkingChainVisible(settings)) {
+        viewer?.updateLastAssistant(
+          streamText,
+          true,
+          streamReasoning,
+          reasoningStreaming && !streamText,
+        );
+      } else {
+        viewer?.updateLastAssistant(streamText, true);
+      }
+    };
+    const scheduleViewerStream = () => {
+      if (viewerRaf) return;
+      viewerRaf = requestAnimationFrame(() => {
+        viewerRaf = 0;
+        pushViewerStream();
+      });
+    };
 
     try {
       const response = await chatStream(settings, history, {
         control: streamControlRef.current,
+        onStreamRoundStart: () => {
+          streamText = "";
+          scheduleViewerStream();
+        },
         onDelta: (delta) => {
           streamText += delta;
-          if (thinkingChainVisible(settings)) {
-            viewer?.updateLastAssistant(
-              streamText,
-              true,
-              streamReasoning,
-              !streamReasoning && !streamText,
-            );
-          } else {
-            viewer?.updateLastAssistant(streamText, true);
-          }
+          reasoningStreaming = false;
+          scheduleViewerStream();
         },
         onReasoningDelta: (delta) => {
           streamReasoning += delta;
+          reasoningStreaming = true;
           if (thinkingChainVisible(settings)) {
-            viewer?.updateLastAssistant(streamText, true, streamReasoning, true);
+            scheduleViewerStream();
           }
         },
         onToolStatus: (phase, id, label, meta) => {
@@ -374,6 +396,7 @@ export default function App() {
       renderSession(failedSession, settings.theme, thinkingChainVisible(settings));
       setStatusText(message);
     } finally {
+      if (viewerRaf) cancelAnimationFrame(viewerRaf);
       setBusy(false);
     }
   };

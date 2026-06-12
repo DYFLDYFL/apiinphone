@@ -329,6 +329,24 @@ async function streamChat(
   };
 }
 
+/** Simulate token streaming when API returns one JSON blob (stream off). */
+async function pumpDeltas(
+  text: string,
+  onChunk?: (delta: string) => void,
+  control?: StreamControl,
+): Promise<void> {
+  if (!onChunk || !text) return;
+  const step = Math.max(1, Math.min(16, Math.ceil(text.length / 72)));
+  for (let i = 0; i < text.length; i += step) {
+    if (control?.cancelled) {
+      onChunk(text.slice(i));
+      return;
+    }
+    onChunk(text.slice(i, i + step));
+    await new Promise((r) => setTimeout(r, 12));
+  }
+}
+
 async function completeChat(
   settings: AppSettings,
   body: Record<string, unknown>,
@@ -358,8 +376,8 @@ async function completeChat(
   const message = (choices?.[0]?.message ?? {}) as Record<string, unknown>;
   const content = String(message.content ?? "");
   const reasoning = pickText(message, "reasoning_content", "reasoning");
-  if (onReasoningDelta && reasoning) onReasoningDelta(reasoning);
-  if (onDelta && content) onDelta(content);
+  await pumpDeltas(reasoning, onReasoningDelta, control);
+  await pumpDeltas(content, onDelta, control);
   const toolCalls = Array.isArray(message.tool_calls)
     ? (message.tool_calls as ToolCall[])
     : [];
@@ -443,23 +461,6 @@ function serializeMessagesForApi(
   }
 
   return out;
-}
-
-/** Match desktop aiusingapi: only stream tokens on the first completion. */
-function streamOptionsForRound(
-  round: number,
-  options?: {
-    onDelta?: (text: string) => void;
-    onReasoningDelta?: (text: string) => void;
-    control?: StreamControl;
-  },
-) {
-  if (round === 0) return options;
-  return {
-    ...options,
-    onDelta: undefined,
-    onReasoningDelta: undefined,
-  };
 }
 
 async function runSingleCompletion(
@@ -562,6 +563,8 @@ export async function chatStream(
   options?: {
     onDelta?: (text: string) => void;
     onReasoningDelta?: (text: string) => void;
+    /** Fired before round > 0 so UI can clear interim assistant text. */
+    onStreamRoundStart?: (round: number) => void;
     onToolStatus?: (
       phase: "start" | "done" | "error" | "waiting",
       id: string,
@@ -600,9 +603,10 @@ export async function chatStream(
         };
       }
 
-      const roundOptions = streamOptionsForRound(round, options);
-      const run = () =>
-        runSingleCompletion(settings, convo, true, roundOptions);
+      if (round > 0) {
+        options?.onStreamRoundStart?.(round);
+      }
+      const run = () => runSingleCompletion(settings, convo, true, options);
 
       const result = await withRetry(settings, run);
       totalUsage = mergeUsage(totalUsage, result.usage);

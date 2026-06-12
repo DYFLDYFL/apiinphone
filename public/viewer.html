@@ -451,7 +451,11 @@
       background: transparent;
     }
     .content.plain { white-space: pre-wrap; line-height: 1.5; }
-    .typing::after {
+    .msg.assistant.typing .content.plain:empty::before {
+      content: "等待输出…";
+      color: var(--muted);
+    }
+    .msg.assistant.typing .content.plain:not(:empty)::after {
       content: "▋";
       animation: blink 1s step-end infinite;
       color: var(--accent);
