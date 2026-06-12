@@ -21,7 +21,14 @@ import {
   loadPastedImage,
 } from "./lib/attachments";
 import { formatBalanceDisplay } from "./lib/usageInfo";
-import { effectiveModel, loadSettings, rememberModel, saveSettings, thinkingActive } from "./lib/settings";
+import {
+  effectiveModel,
+  loadSettings,
+  rememberModel,
+  saveSettings,
+  thinkingActive,
+  thinkingChainVisible,
+} from "./lib/settings";
 import { warmupPythonSandbox } from "./lib/sandbox/pythonSandbox";
 import {
   createNewSession,
@@ -87,7 +94,11 @@ export default function App() {
   }, []);
 
   const renderSession = useCallback(
-    (current: ChatSession, theme: "light" | "dark") => {
+    (
+      current: ChatSession,
+      theme: "light" | "dark",
+      showThinkingChain: boolean,
+    ) => {
       const viewer = viewerFromRef(viewerRef);
       if (!viewer) return;
       viewer.setTheme(theme);
@@ -97,7 +108,7 @@ export default function App() {
           viewer.appendMessage("user", msg.content);
         } else {
           viewer.appendMessage("assistant", msg.content, {
-            reasoning: msg.reasoning,
+            reasoning: showThinkingChain ? msg.reasoning : undefined,
             tools: normalizeToolTrace(msg.toolTrace),
           });
         }
@@ -126,8 +137,8 @@ export default function App() {
 
   useEffect(() => {
     if (!settings || !session || !viewerReady) return;
-    renderSession(session, settings.theme);
-  }, [session?.id, viewerReady, settings?.theme, renderSession]);
+    renderSession(session, settings.theme, thinkingChainVisible(settings));
+  }, [session?.id, viewerReady, settings, renderSession]);
 
   const refreshBalance = useCallback(async (current: AppSettings) => {
     if (current.apiProvider !== "deepseek" || !current.apiKey.trim()) {
@@ -193,12 +204,12 @@ export default function App() {
         control: streamControlRef.current,
         onDelta: (delta) => {
           streamText += delta;
-          if (thinkingActive(settings)) {
+          if (thinkingChainVisible(settings)) {
             viewer?.updateLastAssistant(
               streamText,
               true,
               streamReasoning,
-              !streamReasoning,
+              !streamReasoning && !streamText,
             );
           } else {
             viewer?.updateLastAssistant(streamText, true);
@@ -206,17 +217,18 @@ export default function App() {
         },
         onReasoningDelta: (delta) => {
           streamReasoning += delta;
-          if (thinkingActive(settings)) {
+          if (thinkingChainVisible(settings)) {
             viewer?.updateLastAssistant(streamText, true, streamReasoning, true);
           }
         },
-        onToolStatus: (phase, id, label) => {
+        onToolStatus: (phase, id, label, meta) => {
           if (phase === "start") {
             toolTraceRef.current.push({
               id,
-              name: "",
+              name: meta?.name ?? "",
               status: "running",
               label,
+              args: meta?.args,
             });
           } else if (phase === "waiting") {
             setStatusText(label);
@@ -225,6 +237,8 @@ export default function App() {
             if (entry) {
               entry.status = phase === "done" ? "done" : "error";
               entry.label = label;
+              if (meta?.name) entry.name = meta.name;
+              if (meta?.result) entry.result = meta.result;
             }
           }
           viewer?.updateLastAssistantTools(toolTraceRef.current, true);
@@ -312,11 +326,11 @@ export default function App() {
       void refreshBalance(settings);
 
       viewer?.updateLastAssistantTools(toolTrace, false);
-      if (thinkingActive(settings)) {
+      if (thinkingChainVisible(settings)) {
         viewer?.updateLastAssistant(
           finalContent,
           false,
-          response.reasoning,
+          response.reasoning || streamReasoning,
           false,
         );
       } else {
@@ -347,7 +361,7 @@ export default function App() {
       };
 
       await persistSession(failedSession);
-      renderSession(failedSession, settings.theme);
+      renderSession(failedSession, settings.theme, thinkingChainVisible(settings));
       setStatusText(message);
     } finally {
       setBusy(false);
@@ -406,7 +420,7 @@ export default function App() {
     const trimmedDisplay = session.display.slice(0, -1);
     const baseSession = { ...session, history: trimmedHistory, display: trimmedDisplay };
     setSession(baseSession);
-    renderSession(baseSession, settings.theme);
+    renderSession(baseSession, settings.theme, thinkingChainVisible(settings));
 
     const history: ChatMessage[] = [];
     if (settings.systemPrompt.trim()) {

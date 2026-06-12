@@ -130,7 +130,7 @@
       margin-left: 6px;
     }
     .reasoning-body {
-      max-height: 280px;
+      max-height: min(42vh, 420px);
       overflow: auto;
       padding: 10px 12px;
       font-size: 13px;
@@ -138,6 +138,26 @@
       white-space: pre-wrap;
       line-height: 1.5;
       font-family: Consolas, "Cascadia Code", "Microsoft YaHei UI", sans-serif;
+    }
+    .reasoning-body.rich {
+      white-space: normal;
+      font-family: "Segoe UI", "Microsoft YaHei UI", sans-serif;
+      color: var(--text);
+    }
+    .reasoning-body.rich p { margin: 0.35em 0; }
+    .reasoning-body.rich pre {
+      background: var(--code-bg);
+      color: var(--code-text);
+      padding: 8px;
+      border-radius: 6px;
+      overflow-x: auto;
+      font-size: 12px;
+    }
+    .reasoning-body.rich code {
+      font-family: Consolas, "Cascadia Code", monospace;
+      background: var(--code-bg);
+      padding: 0 0.15em;
+      border-radius: 4px;
     }
     .reasoning-block.thinking > summary .reasoning-status::after {
       content: "思考中…";
@@ -178,10 +198,87 @@
     .tool-item {
       font-size: 12px;
       color: var(--muted);
-      padding: 4px 0;
+      padding: 6px 0;
       line-height: 1.45;
+      word-break: break-word;
+      border-bottom: 1px solid var(--border);
+    }
+    .tool-item:last-child {
+      border-bottom: 0;
+    }
+    .tool-head {
+      white-space: pre-wrap;
+    }
+    .tool-result {
+      margin-top: 6px;
+    }
+    .tool-result > summary {
+      cursor: pointer;
+      font-size: 11px;
+      color: var(--accent);
+      user-select: none;
+      list-style: none;
+    }
+    .tool-result > summary::-webkit-details-marker {
+      display: none;
+    }
+    .tool-result > summary::before {
+      content: "▸ ";
+      color: var(--muted);
+    }
+    .tool-result[open] > summary::before {
+      content: "▾ ";
+    }
+    .tool-result-body {
+      margin-top: 6px;
+      max-height: min(36vh, 320px);
+      overflow: auto;
+      font-size: 12px;
+      color: var(--text);
+    }
+    .tool-query {
+      font-size: 11px;
+      color: var(--muted);
+      margin-bottom: 8px;
+    }
+    .search-hit {
+      padding: 8px 0;
+      border-top: 1px solid var(--border);
+    }
+    .search-hit:first-of-type {
+      border-top: 0;
+    }
+    .search-hit a {
+      color: var(--accent);
+      text-decoration: none;
+      font-weight: 600;
+      line-height: 1.4;
+    }
+    .search-hit a:hover {
+      text-decoration: underline;
+    }
+    .search-url {
+      font-size: 11px;
+      color: var(--muted);
+      margin-top: 2px;
+      word-break: break-all;
+    }
+    .search-snippet {
+      margin-top: 4px;
+      color: var(--text);
+      line-height: 1.45;
+    }
+    .tool-fetch-body {
+      margin: 0;
       white-space: pre-wrap;
       word-break: break-word;
+      font-family: Consolas, "Cascadia Code", "Microsoft YaHei UI", sans-serif;
+      font-size: 11px;
+      background: var(--code-bg);
+      color: var(--code-text);
+      padding: 8px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
     }
     .tool-item.running {
       color: var(--accent);
@@ -372,7 +469,7 @@
       block.className = "reasoning-block";
       block.open = true;
       const summary = document.createElement("summary");
-      summary.innerHTML = '思考过程<span class="reasoning-status"></span>';
+      summary.innerHTML = '思考链<span class="reasoning-status"></span>';
       const body = document.createElement("div");
       body.className = "reasoning-body";
       block.appendChild(summary);
@@ -380,6 +477,27 @@
       const content = parent.querySelector(".content");
       parent.insertBefore(block, content);
       return block;
+    }
+
+    function renderReasoningBody(body, text, reasoningTyping) {
+      const trimmed = (text || "").trim();
+      if (reasoningTyping && !trimmed) {
+        body.className = "reasoning-body";
+        body.textContent = "正在连接模型，等待思考输出…";
+        return;
+      }
+      if (reasoningTyping) {
+        body.className = "reasoning-body";
+        body.textContent = text || "";
+        return;
+      }
+      body.className = "reasoning-body rich";
+      body.innerHTML = renderMarkdownWithMath(text || "");
+      renderBareLatexInCode(body);
+      body.querySelectorAll("a").forEach((a) => {
+        a.target = "_blank";
+        a.rel = "noopener noreferrer";
+      });
     }
 
     function setReasoningBlock(parent, reasoning, reasoningTyping) {
@@ -394,16 +512,14 @@
       block.style.display = "";
       block.classList.add("is-active");
       block.classList.toggle("thinking", !!reasoningTyping);
-      if (reasoningTyping) {
-        block.open = true;
-      } else if (text.trim()) {
-        block.open = false;
-      }
+      block.open = true;
       const body = block.querySelector(".reasoning-body");
-      if (reasoningTyping && !text) {
-        body.textContent = "正在连接模型，等待思考输出…";
-      } else {
-        body.textContent = text;
+      renderReasoningBody(body, reasoning || "", !!reasoningTyping);
+      const status = block.querySelector(".reasoning-status");
+      if (status && text && !reasoningTyping) {
+        status.textContent = "（" + text.length + " 字）";
+      } else if (status) {
+        status.textContent = "";
       }
       if (reasoningTyping) {
         body.scrollTop = body.scrollHeight;
@@ -427,6 +543,90 @@
       return block;
     }
 
+    function escapeHtml(text) {
+      return String(text || "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+    }
+
+    function resultSummaryLabel(name) {
+      if (name === "web_search") return "查看搜索结果";
+      if (name === "web_fetch") return "查看网页正文";
+      if (name === "run_python") return "查看运行输出";
+      return "查看返回内容";
+    }
+
+    function formatWebSearchHtml(text) {
+      const parts = [];
+      const queryM = text.match(/^query:\s*(.+)$/m);
+      if (queryM) {
+        parts.push(
+          '<div class="tool-query">关键词：' + escapeHtml(queryM[1].trim()) + "</div>",
+        );
+      }
+      const lines = text.split("\n");
+      for (let i = 0; i < lines.length; i++) {
+        const hm = lines[i].match(/^\s*(\d+)\.\s+(.+)$/);
+        if (!hm) continue;
+        const title = hm[2].trim();
+        const url = (lines[i + 1] || "").trim();
+        let snippet = (lines[i + 2] || "").trim();
+        if (!url.startsWith("http://") && !url.startsWith("https://")) continue;
+        if (snippet.startsWith("http://") || snippet.startsWith("https://")) {
+          snippet = "";
+        }
+        i += 2;
+        parts.push(
+          '<div class="search-hit">' +
+            '<a href="' + escapeHtml(url) + '" target="_blank" rel="noopener noreferrer">' +
+            escapeHtml(title) + "</a>" +
+            '<div class="search-url">' + escapeHtml(url) + "</div>" +
+            (snippet
+              ? '<div class="search-snippet">' + escapeHtml(snippet) + "</div>"
+              : "") +
+            "</div>",
+        );
+      }
+      if (parts.length <= (queryM ? 1 : 0)) {
+        return (
+          '<pre class="tool-fetch-body">' + escapeHtml(text.slice(0, 12000)) + "</pre>"
+        );
+      }
+      return '<div class="search-results">' + parts.join("") + "</div>";
+    }
+
+    function formatToolResultHtml(name, result) {
+      const text = (result || "").trim();
+      if (!text) return "";
+      if (name === "web_search") return formatWebSearchHtml(text);
+      return '<pre class="tool-fetch-body">' + escapeHtml(text.slice(0, 12000)) + "</pre>";
+    }
+
+    function renderToolItem(tool) {
+      const li = document.createElement("li");
+      li.className = "tool-item " + (tool.status || "done");
+      const head = document.createElement("div");
+      head.className = "tool-head";
+      head.textContent = tool.label || tool.name || "工具";
+      li.appendChild(head);
+      const result = (tool.result || "").trim();
+      if (result && tool.status !== "running") {
+        const details = document.createElement("details");
+        details.className = "tool-result";
+        const summary = document.createElement("summary");
+        summary.textContent = resultSummaryLabel(tool.name || "");
+        const body = document.createElement("div");
+        body.className = "tool-result-body";
+        body.innerHTML = formatToolResultHtml(tool.name || "", result);
+        details.appendChild(summary);
+        details.appendChild(body);
+        li.appendChild(details);
+      }
+      return li;
+    }
+
     function setToolsBlock(parent, tools, active) {
       const items = Array.isArray(tools) ? tools : [];
       const existing = parent.querySelector(".tools-block");
@@ -440,10 +640,7 @@
       const list = block.querySelector(".tools-list");
       list.innerHTML = "";
       items.forEach((tool) => {
-        const li = document.createElement("li");
-        li.className = "tool-item " + (tool.status || "done");
-        li.textContent = tool.label || tool.name || "工具";
-        list.appendChild(li);
+        list.appendChild(renderToolItem(tool));
       });
     }
 
@@ -487,10 +684,7 @@
       setReasoningBlock(last, reasoning, reasoningTyping);
       if (!reasoningTyping && (reasoning || "").trim()) {
         const block = last.querySelector(".reasoning-block");
-        if (block) {
-          block.classList.remove("thinking");
-          block.open = false;
-        }
+        if (block) block.classList.remove("thinking");
       }
       const content = last.querySelector(".content");
       decorateContent(content, text, !!typing);

@@ -61,19 +61,23 @@ export function traceItem(
   status: ToolTraceItem["status"],
   argsJson = "",
   toolCallId = "",
+  result = "",
 ): ToolTraceItem {
   let label: string;
   if (status === "running") label = runningLabel(name, argsJson);
   else if (status === "done") label = doneLabel(name);
   else if (status === "error") label = errorLabel(name);
   else label = toolDisplayName(name);
-  return {
+  const item: ToolTraceItem = {
     id: toolCallId || name,
     name,
     label,
     status,
     detail: toolDetail(name, argsJson),
+    args: argsJson || undefined,
   };
+  if (result) item.result = result;
+  return item;
 }
 
 export function buildToolTraceFromApiMessages(
@@ -98,7 +102,8 @@ export function buildToolTraceFromApiMessages(
       const item = byId.get(msg.toolCallId ?? "");
       if (!item) continue;
       const content = String(msg.content ?? "");
-      if (content.startsWith("工具错误")) {
+      item.result = content;
+      if (content.startsWith("工具错误") || content.startsWith("搜索失败")) {
         item.status = "error";
         item.label = errorLabel(item.name);
         item.detail = content.slice(0, 160);

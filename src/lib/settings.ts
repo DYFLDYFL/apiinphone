@@ -58,6 +58,11 @@ export function thinkingActive(settings: AppSettings): boolean {
   return model.includes("reasoner") || model.includes("v4");
 }
 
+/** Whether the chat UI should show streamed / stored reasoning (思考链). */
+export function thinkingChainVisible(settings: AppSettings): boolean {
+  return settings.showThinking && thinkingActive(settings);
+}
+
 export function effectiveMaxToolRounds(settings: AppSettings): number {
   const n = Number(settings.maxToolRounds ?? 24);
   if (Number.isNaN(n)) return 24;

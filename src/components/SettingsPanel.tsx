@@ -239,10 +239,16 @@ export function SettingsPanel({
             <input
               type="checkbox"
               checked={draft.showThinking}
+              disabled={!thinkingOn}
               onChange={(e) => update({ showThinking: e.target.checked })}
             />
-            在界面显示思考过程
+            在界面显示思考链
           </label>
+          {!thinkingOn && (
+            <p className="settings-hint">
+              思考链需 DeepSeek V4 / Reasoner 模型且开启「思考模式」后才有内容。
+            </p>
+          )}
 
           <label className="checkbox">
             <input

@@ -13,7 +13,12 @@ export interface ViewerHandle {
     reasoningTyping?: boolean,
   ): void;
   updateLastAssistantTools(
-    tools: Array<{ status: string; label: string }>,
+    tools: Array<{
+      status: string;
+      label: string;
+      name?: string;
+      result?: string;
+    }>,
     active?: boolean,
   ): void;
   showError(text: string): void;

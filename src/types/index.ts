@@ -65,7 +65,12 @@ export interface ToolTraceItem {
   name: string;
   label: string;
   status: "running" | "done" | "error";
+  /** Short summary (query, URL, etc.). */
   detail?: string;
+  /** Raw tool arguments JSON. */
+  args?: string;
+  /** Full tool output for expandable UI (search hits, page text, etc.). */
+  result?: string;
 }
 
 export interface DisplayMessage {

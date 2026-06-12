@@ -561,7 +561,12 @@ export async function chatStream(
   options?: {
     onDelta?: (text: string) => void;
     onReasoningDelta?: (text: string) => void;
-    onToolStatus?: (phase: "start" | "done" | "error" | "waiting", id: string, label: string) => void;
+    onToolStatus?: (
+      phase: "start" | "done" | "error" | "waiting",
+      id: string,
+      label: string,
+      meta?: { name?: string; args?: string; result?: string },
+    ) => void;
     control?: StreamControl;
   },
 ): Promise<ChatResponse> {
@@ -630,6 +635,7 @@ export async function chatStream(
             "start",
             tid,
             toolStatusLabel("start", name, args),
+            { name, args },
           );
           let toolOut: string;
           try {
@@ -638,6 +644,7 @@ export async function chatStream(
               "done",
               tid,
               toolStatusLabel("done", name, args),
+              { name, args, result: toolOut },
             );
           } catch (err) {
             toolOut = `工具错误：${err instanceof Error ? err.message : String(err)}`;
@@ -645,6 +652,7 @@ export async function chatStream(
               "error",
               tid,
               toolStatusLabel("error", name, args),
+              { name, args, result: toolOut },
             );
           }
           if (!toolOut.trim()) {
