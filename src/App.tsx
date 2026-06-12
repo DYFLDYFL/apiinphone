@@ -40,6 +40,7 @@ import {
   setActiveSession,
   titleFromFirstMessage,
 } from "./lib/sessionStore";
+import { collectNumberedSources } from "./lib/searchSources";
 import { buildToolTrace } from "./lib/tools";
 import { ChatViewer, useChatViewerRef, viewerFromRef } from "./components/ChatViewer";
 import { InfoPanel } from "./components/InfoPanel";
@@ -110,6 +111,7 @@ export default function App() {
           viewer.appendMessage("assistant", msg.content, {
             reasoning: showThinkingChain ? msg.reasoning : undefined,
             tools: normalizeToolTrace(msg.toolTrace),
+            sources: msg.sources,
           });
         }
       }
@@ -264,12 +266,15 @@ export default function App() {
         response.note ||
         "(无内容)";
 
+      const sources = collectNumberedSources(toolTrace);
+
       if (response.note === "已取消" && streamText.trim()) {
         const assistantDisplay: DisplayMessage = {
           role: "assistant",
           content: streamText,
           reasoning: thinkingActive(settings) ? streamReasoning : undefined,
           toolTrace,
+          sources: sources.length ? sources : undefined,
           note: response.note,
         };
         const finalSession: ChatSession = {
@@ -290,7 +295,8 @@ export default function App() {
         };
         await persistSession(finalSession);
         setLastUsage(response.usage);
-        viewer?.updateLastAssistant(finalContent, false, streamReasoning, false);
+        viewer?.updateLastAssistant(streamText, false, streamReasoning, false);
+        viewer?.updateLastAssistantSources(sources);
         setStatusText("已取消");
         return;
       }
@@ -300,6 +306,7 @@ export default function App() {
         content: finalContent,
         reasoning: thinkingActive(settings) ? response.reasoning : undefined,
         toolTrace,
+        sources: sources.length ? sources : undefined,
         note: response.note || undefined,
       };
 
@@ -336,6 +343,7 @@ export default function App() {
       } else {
         viewer?.updateLastAssistant(finalContent, false);
       }
+      viewer?.updateLastAssistantSources(sources);
       setStatusText("完成");
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -347,12 +355,14 @@ export default function App() {
           ? `工具已执行，但后续请求失败：${message}`
           : `请求失败：${message}`;
 
+      const errorSources = collectNumberedSources(toolTrace);
       const errorDisplay: DisplayMessage = {
         role: "assistant",
         content: errorBody,
         reasoning:
           thinkingActive(settings) && streamReasoning ? streamReasoning : undefined,
         toolTrace: toolTrace.length ? toolTrace : undefined,
+        sources: errorSources.length ? errorSources : undefined,
       };
 
       const failedSession: ChatSession = {

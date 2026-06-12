@@ -168,27 +168,41 @@
       color: var(--accent);
     }
     .tools-block {
-      display: none;
+      display: block;
       margin-bottom: 12px;
       border-radius: 8px;
       border: 1px solid var(--border);
       background: var(--reasoning-bg);
       overflow: hidden;
     }
-    .tools-block.is-active {
-      display: block;
-    }
-    .tools-title {
+    .tools-block > summary {
+      list-style: none;
+      cursor: pointer;
       padding: 8px 10px;
       font-size: 12px;
       font-weight: 600;
       color: var(--accent);
-      border-bottom: 1px solid var(--border);
+      user-select: none;
     }
-    .tools-block.waiting .tools-title::after {
-      content: " · 联网中，请稍候…";
+    .tools-block > summary::-webkit-details-marker {
+      display: none;
+    }
+    .tools-block > summary::before {
+      content: "▸ ";
+      color: var(--muted);
+    }
+    .tools-block[open] > summary::before {
+      content: "▾ ";
+    }
+    .tools-block.waiting > summary::after {
+      content: " · 联网中…";
       font-weight: 500;
       color: var(--muted);
+    }
+    .tools-body {
+      max-height: min(28vh, 220px);
+      overflow: auto;
+      border-top: 1px solid var(--border);
     }
     .tools-list {
       list-style: none;
@@ -279,6 +293,82 @@
       padding: 8px;
       border-radius: 6px;
       border: 1px solid var(--border);
+    }
+    .sources-block {
+      display: block;
+      margin-top: 12px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: var(--reasoning-bg);
+      overflow: hidden;
+    }
+    .sources-block > summary {
+      list-style: none;
+      cursor: pointer;
+      padding: 8px 10px;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--accent);
+      user-select: none;
+    }
+    .sources-block > summary::-webkit-details-marker {
+      display: none;
+    }
+    .sources-block > summary::before {
+      content: "▸ ";
+      color: var(--muted);
+    }
+    .sources-block[open] > summary::before {
+      content: "▾ ";
+    }
+    .sources-body {
+      max-height: min(28vh, 220px);
+      overflow: auto;
+      padding: 0 10px 10px;
+      border-top: 1px solid var(--border);
+    }
+    .sources-list {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+    }
+    .sources-list li {
+      font-size: 12px;
+      padding: 5px 0;
+      line-height: 1.45;
+      border-top: 1px solid var(--border);
+    }
+    .sources-list li:first-child {
+      border-top: 0;
+    }
+    .source-idx {
+      font-weight: 700;
+      color: var(--accent);
+      margin-right: 4px;
+    }
+    .sources-list a.source-title {
+      color: var(--accent);
+      text-decoration: none;
+      font-weight: 600;
+    }
+    .sources-list a.source-title:hover {
+      text-decoration: underline;
+    }
+    .source-url {
+      display: block;
+      margin-top: 2px;
+      padding-left: 1.75em;
+      font-size: 11px;
+      color: var(--muted);
+      word-break: break-all;
+    }
+    a.cite-link {
+      color: var(--accent);
+      text-decoration: none;
+      font-weight: 600;
+    }
+    a.cite-link:hover {
+      text-decoration: underline;
     }
     .tool-item.running {
       color: var(--accent);
@@ -434,14 +524,66 @@
       });
     }
 
-    function decorateContent(el, text, typing) {
+    function regexEsc(s) {
+      return String(s || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    }
+
+    function normalizeUrl(url) {
+      try {
+        const u = new URL(url);
+        u.hash = "";
+        let href = u.href;
+        if (href.endsWith("/")) href = href.slice(0, -1);
+        return href.toLowerCase();
+      } catch {
+        return String(url || "")
+          .trim()
+          .toLowerCase()
+          .replace(/\/$/, "");
+      }
+    }
+
+    function buildSourceMaps(sources) {
+      const byNum = new Map();
+      const byUrl = new Map();
+      (sources || []).forEach((s) => {
+        byNum.set(Number(s.n), s.url);
+        byUrl.set(normalizeUrl(s.url), Number(s.n));
+      });
+      return { byNum, byUrl };
+    }
+
+    /** Turn [标题](url) into [n] before Markdown, when url/title match search hits. */
+    function preprocessMarkdownCitations(text, sources) {
+      if (!sources || !sources.length) return text || "";
+      let out = text || "";
+      const sorted = sources.slice().sort((a, b) => b.title.length - a.title.length);
+      for (const s of sorted) {
+        const n = s.n;
+        const title = regexEsc(s.title);
+        const url = regexEsc(s.url);
+        if (title && url) {
+          out = out.replace(
+            new RegExp("\\[" + title + "\\]\\(" + url + "\\)", "gi"),
+            "[" + n + "]",
+          );
+        }
+      }
+      out = out.replace(/【(\d{1,3})】/g, "[$1]");
+      out = out.replace(/［(\d{1,3})］/g, "[$1]");
+      return out;
+    }
+
+    function decorateContent(el, text, typing, sources) {
+      el.dataset.rawMarkdown = text || "";
       if (typing) {
         el.className = "content plain";
         el.textContent = text || "";
         return;
       }
       el.className = "content";
-      el.innerHTML = renderMarkdownWithMath(text);
+      const md = preprocessMarkdownCitations(text, sources);
+      el.innerHTML = renderMarkdownWithMath(md);
       renderBareLatexInCode(el);
       el.querySelectorAll("img").forEach((img) => {
         img.loading = "lazy";
@@ -526,23 +668,6 @@
       }
     }
 
-    function ensureToolsBlock(parent) {
-      let block = parent.querySelector(".tools-block");
-      if (block) return block;
-      block = document.createElement("div");
-      block.className = "tools-block";
-      const title = document.createElement("div");
-      title.className = "tools-title";
-      title.textContent = "工具调用";
-      const list = document.createElement("ul");
-      list.className = "tools-list";
-      block.appendChild(title);
-      block.appendChild(list);
-      const content = parent.querySelector(".content");
-      parent.insertBefore(block, content);
-      return block;
-    }
-
     function escapeHtml(text) {
       return String(text || "")
         .replace(/&/g, "&amp;")
@@ -568,18 +693,33 @@
       }
       const lines = text.split("\n");
       for (let i = 0; i < lines.length; i++) {
-        const hm = lines[i].match(/^\s*(\d+)\.\s+(.+)$/);
-        if (!hm) continue;
-        const title = hm[2].trim();
-        const url = (lines[i + 1] || "").trim();
-        let snippet = (lines[i + 2] || "").trim();
+        const bracket = lines[i].match(/^\s*\[(\d+)\]\s+(.+)$/);
+        const legacy = lines[i].match(/^\s*(\d+)\.\s+(.+)$/);
+        const n = bracket ? bracket[1] : legacy ? legacy[1] : "";
+        const title = (bracket?.[2] ?? legacy?.[2])?.trim();
+        if (!title) continue;
+        const urlLine = (lines[i + 1] || "").trim().replace(/^URL:\s*/i, "");
+        const url = urlLine;
         if (!url.startsWith("http://") && !url.startsWith("https://")) continue;
-        if (snippet.startsWith("http://") || snippet.startsWith("https://")) {
-          snippet = "";
+        let snippet = "";
+        let consumed = 2;
+        const maybeSnippet = (lines[i + 2] || "").trim();
+        if (
+          maybeSnippet &&
+          !isHitStartLine(maybeSnippet) &&
+          !maybeSnippet.startsWith("http://") &&
+          !maybeSnippet.startsWith("https://")
+        ) {
+          snippet = maybeSnippet.startsWith("摘要:")
+            ? maybeSnippet.slice(3).trim()
+            : maybeSnippet;
+          consumed = 3;
         }
-        i += 2;
+        i += consumed - 1;
+        const idx = n ? "[" + n + "] " : "";
         parts.push(
           '<div class="search-hit">' +
+            '<span class="source-idx">' + escapeHtml(idx) + "</span>" +
             '<a href="' + escapeHtml(url) + '" target="_blank" rel="noopener noreferrer">' +
             escapeHtml(title) + "</a>" +
             '<div class="search-url">' + escapeHtml(url) + "</div>" +
@@ -627,21 +767,147 @@
       return li;
     }
 
+    function setSourcesBlock(parent, sources) {
+      const existing = parent.querySelector(".sources-block");
+      if (!sources || !sources.length) {
+        if (existing) existing.remove();
+        return;
+      }
+      const wasOpen = existing?.open === true;
+      if (existing) existing.remove();
+      const block = document.createElement("details");
+      block.className = "sources-block";
+      block.open = wasOpen;
+      const summary = document.createElement("summary");
+      summary.textContent = "参考来源（" + sources.length + "）";
+      const body = document.createElement("div");
+      body.className = "sources-body";
+      const list = document.createElement("ul");
+      list.className = "sources-list";
+      sources.forEach((s) => {
+        const li = document.createElement("li");
+        const idx = document.createElement("span");
+        idx.className = "source-idx";
+        idx.textContent = "[" + s.n + "]";
+        const link = document.createElement("a");
+        link.className = "source-title";
+        link.href = s.url;
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+        link.textContent = s.title || s.url;
+        const urlEl = document.createElement("span");
+        urlEl.className = "source-url";
+        urlEl.textContent = s.url;
+        li.appendChild(idx);
+        li.appendChild(link);
+        li.appendChild(urlEl);
+        list.appendChild(li);
+      });
+      body.appendChild(list);
+      block.appendChild(summary);
+      block.appendChild(body);
+      parent.appendChild(block);
+    }
+
+    function isHitStartLine(line) {
+      return /^\s*\[\d+\]\s/.test(line) || /^\s*\d+\.\s/.test(line);
+    }
+
+    function applyCitationLinks(contentEl, sources) {
+      if (!sources || !sources.length || !contentEl) return;
+      if (contentEl.classList.contains("plain")) return;
+      const { byNum, byUrl } = buildSourceMaps(sources);
+
+      contentEl.querySelectorAll("a").forEach((a) => {
+        if (a.classList.contains("cite-link")) return;
+        const href = a.getAttribute("href") || "";
+        const n = byUrl.get(normalizeUrl(href));
+        if (n == null) return;
+        a.textContent = "[" + n + "]";
+        a.classList.add("cite-link");
+        a.href = byNum.get(n) || href;
+        a.target = "_blank";
+        a.rel = "noopener noreferrer";
+      });
+
+      const linkify = (text) =>
+        text.replace(/\[(\d{1,3})\]/g, function (match, num) {
+          const url = byNum.get(Number(num));
+          if (!url) return match;
+          return (
+            '<a href="' +
+            escapeHtml(url) +
+            '" class="cite-link" target="_blank" rel="noopener noreferrer">[' +
+            num +
+            "]</a>"
+          );
+        });
+
+      const walker = document.createTreeWalker(
+        contentEl,
+        NodeFilter.SHOW_TEXT,
+        {
+          acceptNode(node) {
+            const p = node.parentElement;
+            if (!p) return NodeFilter.FILTER_REJECT;
+            const tag = p.tagName;
+            if (tag === "A" || tag === "CODE" || tag === "PRE") {
+              return NodeFilter.FILTER_REJECT;
+            }
+            return NodeFilter.FILTER_ACCEPT;
+          },
+        },
+      );
+      const textNodes = [];
+      while (walker.nextNode()) textNodes.push(walker.currentNode);
+      textNodes.forEach((node) => {
+        const text = node.textContent || "";
+        if (!/\[\d{1,3}\]/.test(text)) return;
+        const span = document.createElement("span");
+        span.innerHTML = linkify(text);
+        if (span.innerHTML !== text) node.replaceWith(...span.childNodes);
+      });
+    }
+
+    function renderAssistantContent(contentEl, text, typing, sources) {
+      decorateContent(contentEl, text, typing, sources);
+      if (!typing && sources && sources.length) {
+        applyCitationLinks(contentEl, sources);
+      }
+    }
+
     function setToolsBlock(parent, tools, active) {
       const items = Array.isArray(tools) ? tools : [];
       const existing = parent.querySelector(".tools-block");
       if (!items.length) {
-        if (existing) existing.classList.remove("is-active", "waiting");
+        if (existing) existing.remove();
         return;
       }
-      const block = ensureToolsBlock(parent);
-      block.classList.add("is-active");
-      block.classList.toggle("waiting", !!active && items.some((t) => t.status === "running"));
-      const list = block.querySelector(".tools-list");
-      list.innerHTML = "";
+      const wasOpen = existing?.open === true;
+      const isWaiting = !!active && items.some((t) => t.status === "running");
+      if (existing) existing.remove();
+
+      const block = document.createElement("details");
+      block.className = "tools-block";
+      if (isWaiting) block.classList.add("waiting");
+      block.open = wasOpen || isWaiting;
+
+      const summary = document.createElement("summary");
+      summary.textContent = "工具调用（" + items.length + "）";
+
+      const body = document.createElement("div");
+      body.className = "tools-body";
+      const list = document.createElement("ul");
+      list.className = "tools-list";
       items.forEach((tool) => {
         list.appendChild(renderToolItem(tool));
       });
+      body.appendChild(list);
+      block.appendChild(summary);
+      block.appendChild(body);
+
+      const content = parent.querySelector(".content");
+      parent.insertBefore(block, content);
     }
 
     window.appendMessage = function(role, text, options) {
@@ -659,7 +925,7 @@
         content.className = "content plain";
         content.textContent = text;
       } else {
-        decorateContent(content, text, false);
+        renderAssistantContent(content, text, false, options.sources);
       }
       wrap.appendChild(roleEl);
       wrap.appendChild(content);
@@ -668,6 +934,9 @@
       }
       if (role === "assistant" && options.tools && options.tools.length) {
         setToolsBlock(wrap, options.tools, false);
+      }
+      if (role === "assistant" && options.sources && options.sources.length) {
+        setSourcesBlock(wrap, options.sources);
       }
       container.appendChild(wrap);
       window.scrollToBottom();
@@ -687,7 +956,8 @@
         if (block) block.classList.remove("thinking");
       }
       const content = last.querySelector(".content");
-      decorateContent(content, text, !!typing);
+      const sources = last._citationSources || null;
+      renderAssistantContent(content, text, !!typing, sources);
       window.scrollToBottom();
     };
 
@@ -698,6 +968,18 @@
         last = window.appendMessage("assistant", "", {});
       }
       setToolsBlock(last, tools, !!active);
+      window.scrollToBottom();
+    };
+
+    window.updateLastAssistantSources = function(sources) {
+      let nodes = container.querySelectorAll(".msg.assistant");
+      let last = nodes[nodes.length - 1];
+      if (!last) return;
+      last._citationSources = sources || [];
+      setSourcesBlock(last, sources);
+      const content = last.querySelector(".content");
+      const raw = content.dataset.rawMarkdown || "";
+      renderAssistantContent(content, raw, false, sources);
       window.scrollToBottom();
     };
 

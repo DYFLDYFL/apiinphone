@@ -8,6 +8,7 @@ import type {
 } from "../types";
 import { getProvider, modelSupportsThinking, providerSupportsVision, resolveModel } from "./apiProviders";
 import { normalizeMessagesForApi } from "./attachments";
+import { renumberSearchOutput } from "./searchSources";
 import { effectiveMaxToolRounds, effectiveModel, thinkingActive } from "./settings";
 import {
   buildTools,
@@ -584,6 +585,7 @@ export async function chatStream(
   let lastReasoning = "";
   let note = "";
   let lastStreamedContent = "";
+  let searchCitationNext = 1;
 
   try {
     const maxRounds = effectiveMaxToolRounds(settings);
@@ -657,6 +659,11 @@ export async function chatStream(
           }
           if (!toolOut.trim()) {
             toolOut = "工具未返回内容。";
+          }
+          if (name === "web_search") {
+            const numbered = renumberSearchOutput(toolOut, searchCitationNext);
+            toolOut = numbered.text;
+            searchCitationNext = numbered.nextIndex;
           }
           const toolMsg: ChatMessage = {
             role: "tool",

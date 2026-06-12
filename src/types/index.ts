@@ -73,11 +73,19 @@ export interface ToolTraceItem {
   result?: string;
 }
 
+export interface NumberedSource {
+  n: number;
+  title: string;
+  url: string;
+}
+
 export interface DisplayMessage {
   role: "user" | "assistant";
   content: string;
   reasoning?: string;
   toolTrace?: ToolTraceItem[] | string;
+  /** Numbered web search hits cited in this reply. */
+  sources?: NumberedSource[];
   note?: string;
 }
 

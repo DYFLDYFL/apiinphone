@@ -49,7 +49,7 @@ function buildWebSearchTool(settings: AppSettings) {
     function: {
       name: "web_search",
       description:
-        "搜索公开互联网，返回标题、链接与摘要。时事、新闻、政策、价格等时效问题应优先调用。",
+        "搜索公开互联网，返回带 [1][2]… 编号的标题、链接与摘要。回答正文只能用 [1][2] 引用，不要用 [标题](url)。",
       parameters: {
         type: "object",
         properties: {

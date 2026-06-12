@@ -21,6 +21,9 @@ export interface ViewerHandle {
     }>,
     active?: boolean,
   ): void;
+  updateLastAssistantSources(
+    sources: Array<{ n: number; title: string; url: string }>,
+  ): void;
   showError(text: string): void;
   scrollToBottom(): void;
 }

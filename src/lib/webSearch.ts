@@ -1,4 +1,5 @@
 import type { AppSettings } from "../types";
+import { formatNumberedSearchResults } from "./searchSources";
 import { resolveWebSearchTopK } from "./settings";
 import { httpJson, httpText } from "./nativeHttp";
 
@@ -33,16 +34,7 @@ export function formatSearchResults(
   query: string,
   results: SearchResult[],
 ): string {
-  const lines = [`query: ${query}`, `\nresults (${results.length}):`];
-  if (!results.length) {
-    lines.push("\n(无结果)");
-  }
-  results.forEach((r, i) => {
-    lines.push(`\n${i + 1}. ${r.title}`);
-    lines.push(`   ${r.url}`);
-    if (r.snippet) lines.push(`   ${r.snippet}`);
-  });
-  return lines.join("\n");
+  return formatNumberedSearchResults(query, results, 1);
 }
 
 function decodeHtmlEntities(text: string): string {

@@ -187,12 +187,13 @@ export async function deleteSession(id: string): Promise<ChatSession | null> {
   const index = await loadIndex();
   index.order = index.order.filter((sid) => sid !== id);
   delete index.meta[id];
-  if (!index.order.length) {
-    const session = await createNewSession();
-    return session;
-  }
   if (index.activeId === id) {
-    index.activeId = index.order[index.order.length - 1];
+    index.activeId = index.order[index.order.length - 1] ?? "";
+  }
+  if (!index.order.length) {
+    // Persist removal before createNewSession — it reloads index from disk.
+    await saveIndex(index);
+    return createNewSession();
   }
   await saveIndex(index);
   return loadSession(index.activeId);

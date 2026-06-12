@@ -40,6 +40,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   systemPrompt:
     "你是一个有帮助的助手，用 Markdown、LaTeX（$...$ / $$...$$）作答。\n" +
     "涉及新闻、政策、价格、赛事、产品版本等时效信息时：先 get_current_time 获取当前时间，再 web_search 检索网页并对照时间作答，勿仅凭训练数据断言「最新」。\n" +
+    "使用 web_search 后，正文引用必须只用方括号编号 [1][2]…（与搜索结果编号一致），不要用 [网站名](链接) 或纯文字来源名；勿在文末重复列出来源列表（界面会自动显示参考来源）。\n" +
     "用户消息中的附件正文已提供，可直接阅读。",
   httpReferer: "https://apiinphone.local",
   appTitle: "AI API Client",
