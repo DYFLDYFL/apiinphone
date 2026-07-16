@@ -25,15 +25,23 @@ export function formatSessionUsage(
   promptTokens: number,
   completionTokens: number,
   totalTokens: number,
+  cacheHitTokens = 0,
 ): string {
   if (totalTokens <= 0 && promptTokens <= 0 && completionTokens <= 0) {
     return "本对话：尚无 API 用量记录";
   }
-  return [
+  const lines = [
     "本对话累计",
     `输入 ${promptTokens.toLocaleString()} · 输出 ${completionTokens.toLocaleString()}`,
     `合计 ${totalTokens.toLocaleString()} tokens`,
-  ].join("\n");
+  ];
+  if (cacheHitTokens > 0 && promptTokens > 0) {
+    const hitPct = Math.min(100, (cacheHitTokens / promptTokens) * 100);
+    lines.push(
+      `缓存命中 ${cacheHitTokens.toLocaleString()}（占累计输入 ${hitPct.toFixed(1)}%）`,
+    );
+  }
+  return lines.join("\n");
 }
 
 export function formatLastRequestUsage(usage: TokenUsage | null): string {
@@ -43,33 +51,28 @@ export function formatLastRequestUsage(usage: TokenUsage | null): string {
     `输入 ${usage.promptTokens.toLocaleString()} · 输出 ${usage.completionTokens.toLocaleString()}`,
     `合计 ${usage.totalTokens.toLocaleString()} tokens`,
   ];
-  if (usage.promptCacheHitTokens > 0) {
-    lines.push(`缓存命中 ${usage.promptCacheHitTokens.toLocaleString()}`);
+  if (usage.promptCacheHitTokens > 0 && usage.promptTokens > 0) {
+    const hitPct = Math.min(
+      100,
+      (usage.promptCacheHitTokens / usage.promptTokens) * 100,
+    );
+    lines.push(
+      `缓存命中 ${usage.promptCacheHitTokens.toLocaleString()}（占本次输入 ${hitPct.toFixed(1)}%）`,
+    );
   }
   return lines.join("\n");
 }
 
-export function formatContextUsage(
-  contextTokens: number,
-  model: string,
-  cacheHitTokens = 0,
-): string {
+export function formatContextUsage(contextTokens: number, model: string): string {
   const limit = contextLimitForModel(model);
   if (contextTokens <= 0) {
     return `当前上下文：尚无记录\n上限 ${limit.toLocaleString()} tokens`;
   }
   const pct = Math.min(100, (contextTokens / limit) * 100);
-  const lines = [
+  return [
     `${contextTokens.toLocaleString()} / ${limit.toLocaleString()}`,
     `占用 ${pct.toFixed(1)}%`,
-  ];
-  if (cacheHitTokens > 0) {
-    const hitPct = (cacheHitTokens / contextTokens) * 100;
-    lines.push(
-      `缓存命中 ${cacheHitTokens.toLocaleString()} (${hitPct.toFixed(1)}%)`,
-    );
-  }
-  return lines.join("\n");
+  ].join("\n");
 }
 
 export function balanceUnavailableText(settings: AppSettings): string {

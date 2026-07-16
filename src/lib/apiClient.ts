@@ -775,10 +775,8 @@ export async function listModels(settings: AppSettings): Promise<string[]> {
   const url = base.endsWith("/v1") ? `${base}/models` : `${base}/v1/models`;
   const resp = await fetch(url, { headers: buildHeaders(settings) });
   if (!resp.ok) {
-    if (settings.apiProvider === "poe") {
-      throw friendlyApiError(new ApiError(`API 错误 (${resp.status})`));
-    }
-    return [...getProvider(settings.apiProvider).models];
+    const detail = (await resp.text()).slice(0, 200);
+    throw new ApiError(`获取模型列表失败 (${resp.status})：${detail}`);
   }
   const data = (await resp.json()) as {
     data?: Array<{ id?: string }>;
@@ -786,7 +784,10 @@ export async function listModels(settings: AppSettings): Promise<string[]> {
   const ids = (data.data ?? [])
     .map((m) => m.id)
     .filter((id): id is string => Boolean(id));
-  return ids.length
-    ? [...ids].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }))
-    : [...getProvider(settings.apiProvider).models];
+  if (!ids.length) {
+    throw new ApiError("API 未返回可用模型");
+  }
+  return [...ids].sort((a, b) =>
+    a.localeCompare(b, undefined, { sensitivity: "base" }),
+  );
 }

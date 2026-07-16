@@ -3,7 +3,6 @@ export interface AppSettings {
   apiKey: string;
   baseUrl: string;
   model: string;
-  modelPreset: "flash" | "pro" | "custom";
   temperature: number;
   maxTokens: number | null;
   stream: boolean;

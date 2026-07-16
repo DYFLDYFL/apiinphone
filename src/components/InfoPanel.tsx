@@ -55,11 +55,7 @@ export function InfoPanel({
         <section className="info-block">
           <div className="info-label">当前上下文</div>
           <pre className="info-pre">
-            {formatContextUsage(
-              session.contextTokens,
-              model,
-              session.cacheHitTokens,
-            )}
+            {formatContextUsage(session.contextTokens, model)}
           </pre>
         </section>
 
@@ -70,6 +66,7 @@ export function InfoPanel({
               session.promptTokens,
               session.completionTokens,
               session.totalTokens,
+              session.cacheHitTokens,
             )}
           </pre>
         </section>

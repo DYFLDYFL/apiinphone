@@ -23,11 +23,37 @@ export function SettingsPanel({
   onSave,
 }: SettingsPanelProps) {
   const [draft, setDraft] = useState(settings);
-  const [modelOptions, setModelOptions] = useState<string[]>(settings.recentModels);
+  const [modelOptions, setModelOptions] = useState<string[]>([]);
+  const [modelsLoading, setModelsLoading] = useState(false);
+  const [modelsError, setModelsError] = useState("");
+
+  const loadModelOptions = async (source: AppSettings) => {
+    if (!source.apiKey.trim()) {
+      setModelOptions([]);
+      setModelsError("请先填写 API Key");
+      return [];
+    }
+    setModelsLoading(true);
+    setModelsError("");
+    try {
+      const models = await listModels(source);
+      setModelOptions(models);
+      return models;
+    } catch (err) {
+      setModelOptions([]);
+      setModelsError(err instanceof Error ? err.message : String(err));
+      throw err;
+    } finally {
+      setModelsLoading(false);
+    }
+  };
 
   useEffect(() => {
     setDraft(settings);
-    setModelOptions(settings.recentModels);
+    setModelOptions([]);
+    setModelsError("");
+    if (!open) return;
+    void loadModelOptions(settings).catch(() => {});
   }, [settings, open]);
 
   if (!open) return null;
@@ -39,26 +65,18 @@ export function SettingsPanel({
   };
 
   const provider = getProvider(draft.apiProvider);
-  const resolvedModel =
-    draft.modelPreset === "flash"
-      ? "deepseek-v4-flash"
-      : draft.modelPreset === "pro"
-        ? "deepseek-v4-pro"
-        : draft.model;
+  const modelChoices = [...new Set([...modelOptions, draft.model])].filter(
+    Boolean,
+  );
   const thinkingVisible =
-    draft.apiProvider === "deepseek" && modelSupportsThinking(resolvedModel);
-  const thinkingOn = thinkingActive({ ...draft, model: resolvedModel });
+    draft.apiProvider === "deepseek" && modelSupportsThinking(draft.model);
+  const thinkingOn = thinkingActive({ ...draft, model: draft.model });
 
   const refreshModels = async () => {
     try {
-      const models = await listModels(draft);
-      const merged = [...new Set([...models, ...draft.recentModels])].slice(
-        0,
-        200,
-      );
-      setModelOptions(merged);
-      if (models.length && !merged.includes(draft.model)) {
-        update({ model: models[0], modelPreset: "custom" });
+      const models = await loadModelOptions(draft);
+      if (models.length && !models.includes(draft.model)) {
+        update({ model: models[0] });
       }
     } catch (err) {
       alert(String(err));
@@ -121,43 +139,41 @@ export function SettingsPanel({
             />
           </label>
 
-          {draft.apiProvider === "deepseek" && (
-            <label>
-              模型预设
-              <select
-                value={draft.modelPreset}
-                onChange={(e) =>
-                  update({
-                    modelPreset: e.target.value as AppSettings["modelPreset"],
-                  })
-                }
-              >
-                <option value="flash">快速 (v4-flash)</option>
-                <option value="pro">深度 (v4-pro)</option>
-                <option value="custom">自定义</option>
-              </select>
-            </label>
-          )}
-
           <label className="row-label">
             模型
             <div className="row">
-              <input
-                list="model-options"
+              <select
                 value={draft.model}
-                onChange={(e) =>
-                  update({ model: e.target.value, modelPreset: "custom" })
-                }
-              />
-              <datalist id="model-options">
-                {modelOptions.map((m) => (
-                  <option key={m} value={m} />
+                onChange={(e) => update({ model: e.target.value })}
+              >
+                {modelChoices.map((m) => (
+                  <option key={m} value={m}>
+                    {m}
+                  </option>
                 ))}
-              </datalist>
-              <button type="button" className="secondary-btn" onClick={() => void refreshModels()}>
-                刷新
+              </select>
+              <button
+                type="button"
+                className="secondary-btn"
+                disabled={modelsLoading}
+                onClick={() => void refreshModels()}
+              >
+                {modelsLoading ? "刷新中…" : "刷新"}
               </button>
             </div>
+            {modelsError ? (
+              <div className="info-muted" style={{ marginTop: 6, fontSize: 12 }}>
+                {modelsError}
+              </div>
+            ) : modelOptions.length > 0 ? (
+              <div className="info-muted" style={{ marginTop: 6, fontSize: 12 }}>
+                共 {modelOptions.length} 个可用模型（来自 API）
+              </div>
+            ) : (
+              <div className="info-muted" style={{ marginTop: 6, fontSize: 12 }}>
+                填写 API Key 后点刷新，获取账号可用模型
+              </div>
+            )}
           </label>
 
           {thinkingVisible && (

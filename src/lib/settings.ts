@@ -7,6 +7,11 @@ import {
   resolveModel,
 } from "./apiProviders";
 
+const LEGACY_MODEL_PRESETS: Record<string, string> = {
+  flash: "deepseek-v4-flash",
+  pro: "deepseek-v4-pro",
+};
+
 const SETTINGS_KEY = "settings";
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -14,7 +19,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
   apiKey: "",
   baseUrl: "https://api.deepseek.com",
   model: "deepseek-v4-flash",
-  modelPreset: "flash",
   temperature: 0.7,
   maxTokens: 4096,
   stream: true,
@@ -100,8 +104,14 @@ export async function loadSettings(): Promise<AppSettings> {
   const { value } = await Preferences.get({ key: SETTINGS_KEY });
   if (!value) return { ...DEFAULT_SETTINGS };
   try {
-    const raw = JSON.parse(value) as Partial<AppSettings>;
+    const raw = JSON.parse(value) as Partial<AppSettings> & {
+      modelPreset?: string;
+    };
     const merged = { ...DEFAULT_SETTINGS, ...raw };
+    if (!merged.model?.trim() && raw.modelPreset) {
+      merged.model =
+        LEGACY_MODEL_PRESETS[raw.modelPreset] ?? merged.model;
+    }
     merged.apiProvider = inferProviderId(merged.baseUrl, merged.apiProvider);
     if (!merged.recentModels?.length) {
       merged.recentModels = defaultRecentModels();

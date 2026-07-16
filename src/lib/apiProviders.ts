@@ -47,17 +47,8 @@ export const PROVIDERS: Record<string, ApiProvider> = {
 
 export const PROVIDER_ORDER: Array<"poe" | "deepseek"> = ["deepseek", "poe"];
 
-const MODEL_PRESETS: Record<string, string> = {
-  flash: "deepseek-v4-flash",
-  pro: "deepseek-v4-pro",
-};
-
 export function defaultRecentModels(): string[] {
-  const models: string[] = [];
-  for (const pid of PROVIDER_ORDER) {
-    models.push(...PROVIDERS[pid].models);
-  }
-  return [...new Set(models)];
+  return PROVIDER_ORDER.map((id) => PROVIDERS[id].defaultModel);
 }
 
 export function getProvider(providerId: string): ApiProvider {
@@ -89,13 +80,9 @@ export function modelSupportsThinking(model: string): boolean {
 }
 
 export function resolveModel(settings: AppSettings): string {
-  if (
-    settings.apiProvider === "deepseek" &&
-    settings.modelPreset in MODEL_PRESETS
-  ) {
-    return MODEL_PRESETS[settings.modelPreset];
-  }
-  return settings.model;
+  const model = settings.model?.trim();
+  if (model) return model;
+  return getProvider(settings.apiProvider).defaultModel;
 }
 
 export function providerSupportsVision(settings: AppSettings): boolean {
@@ -112,6 +99,5 @@ export function applyProviderPreset(
     apiProvider: providerId,
     baseUrl: provider.baseUrl,
     model: provider.defaultModel,
-    modelPreset: providerId === "deepseek" ? "flash" : "custom",
   };
 }
