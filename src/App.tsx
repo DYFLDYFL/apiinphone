@@ -29,7 +29,6 @@ import {
   thinkingActive,
   thinkingChainVisible,
 } from "./lib/settings";
-import { warmupPythonSandbox } from "./lib/sandbox/pythonSandbox";
 import {
   createNewSession,
   deleteSession,
@@ -128,19 +127,29 @@ export default function App() {
       setSession(active);
       await refreshSessions();
       if (!loaded.apiKey.trim()) setSettingsOpen(true);
-      if (loaded.toolsEnabled && loaded.toolsPythonSandbox) {
-        void warmupPythonSandbox().catch(() => {
-          /* first-run download may fail offline */
-        });
-      }
       await configureNativeChrome(loaded.theme);
     })();
   }, [refreshSessions]);
 
   useEffect(() => {
     if (!settings || !session || !viewerReady) return;
-    renderSession(session, settings.theme, thinkingChainVisible(settings));
-  }, [session?.id, viewerReady, settings, renderSession]);
+    if (busy) return;
+    renderSession(
+      session,
+      settings.theme,
+      thinkingChainVisible(settings),
+    );
+  }, [
+    session?.id,
+    viewerReady,
+    settings?.theme,
+    settings?.showThinking,
+    settings?.thinkingMode,
+    settings?.apiProvider,
+    settings?.model,
+    busy,
+    renderSession,
+  ]);
 
   const refreshBalance = useCallback(async (current: AppSettings) => {
     if (current.apiProvider !== "deepseek" || !current.apiKey.trim()) {
@@ -290,10 +299,14 @@ export default function App() {
 
       const sources = collectNumberedSources(toolTrace);
 
-      if (response.note === "已取消" && streamText.trim()) {
+      if (response.note === "已取消") {
+        const cancelContent =
+          streamText.trim() ||
+          response.content.trim() ||
+          (toolTrace.length ? "已停止（工具可能已执行）。" : "已停止生成。");
         const assistantDisplay: DisplayMessage = {
           role: "assistant",
-          content: streamText,
+          content: cancelContent,
           reasoning: thinkingActive(settings) ? streamReasoning : undefined,
           toolTrace,
           sources: sources.length ? sources : undefined,
@@ -310,14 +323,20 @@ export default function App() {
             (response.usage?.completionTokens ?? 0),
           totalTokens:
             sessionBase.totalTokens + (response.usage?.totalTokens ?? 0),
-          contextTokens: response.usage?.promptTokens ?? sessionBase.contextTokens,
+          contextTokens:
+            response.usage?.promptTokens ?? sessionBase.contextTokens,
           cacheHitTokens:
             sessionBase.cacheHitTokens +
             (response.usage?.promptCacheHitTokens ?? 0),
         };
         await persistSession(finalSession);
         setLastUsage(response.usage);
-        viewer?.updateLastAssistant(streamText, false, streamReasoning, false);
+        viewer?.updateLastAssistant(
+          cancelContent,
+          false,
+          streamReasoning,
+          false,
+        );
         viewer?.updateLastAssistantSources(sources);
         setStatusText("已取消");
         return;
@@ -432,6 +451,7 @@ export default function App() {
     setSession(nextSession);
     setInput("");
     setAttachments([]);
+    await persistSession(nextSession);
 
     await runChat(history, nextSession.display, nextSession, false);
   };
@@ -494,7 +514,7 @@ export default function App() {
   const handleDeleteSession = async (id: string) => {
     if (busy) return;
     if (!window.confirm("确定删除此对话？")) return;
-    const next = await deleteSession(id);
+    const next = (await deleteSession(id)) ?? (await createNewSession());
     setSession(next);
     await refreshSessions();
   };

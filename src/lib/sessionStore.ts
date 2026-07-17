@@ -196,7 +196,9 @@ export async function deleteSession(id: string): Promise<ChatSession | null> {
     return createNewSession();
   }
   await saveIndex(index);
-  return loadSession(index.activeId);
+  const loaded = await loadSession(index.activeId);
+  if (loaded) return loaded;
+  return createNewSession();
 }
 
 export async function renameSession(

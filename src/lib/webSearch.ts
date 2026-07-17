@@ -334,10 +334,11 @@ async function searchPublicSearxng(
   );
 }
 
-function normalizeSearxngEndpoint(raw: string): string {
-  let text = raw.trim() || "http://localhost:8080";
-  if (!text.includes("://")) text = `http://${text}`;
-  return text.replace(/\/$/, "");
+function normalizeSearxngEndpoint(raw: string): string | null {
+  const text = raw.trim();
+  if (!text) return null;
+  const withScheme = text.includes("://") ? text : `http://${text}`;
+  return withScheme.replace(/\/$/, "");
 }
 
 function fallbackEngines(primary: string): string[] {
@@ -400,6 +401,9 @@ async function searchWithEngine(
   }
   if (engine === "searxng") {
     const base = normalizeSearxngEndpoint(settings.webSearchEndpoint);
+    if (!base) {
+      return searchPublicSearxng(query, topK);
+    }
     try {
       const { status, data } = await httpJson<{
         results?: Array<{ title?: string; url?: string; content?: string }>;

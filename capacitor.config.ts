@@ -8,9 +8,10 @@ const config: CapacitorConfig = {
     allowMixedContent: true,
   },
   plugins: {
-    // Patch fetch/XHR to native HTTP — fixes Android WebView failing on external search URLs
+    // Keep false so chat SSE can use WebView fetch + getReader().
+    // Search/fetch still call CapacitorHttp directly via nativeHttp.ts.
     CapacitorHttp: {
-      enabled: true,
+      enabled: false,
     },
     StatusBar: {
       overlaysWebView: false,

@@ -18,7 +18,14 @@ import {
   waitingLabel,
 } from "./tools";
 
-export class ApiError extends Error {}
+export class ApiError extends Error {
+  status?: number;
+
+  constructor(message: string, status?: number) {
+    super(message);
+    this.status = status;
+  }
+}
 
 export interface StreamControl {
   cancelled: boolean;
@@ -40,6 +47,7 @@ export function createStreamControl(): StreamControl {
 
 const RETRYABLE_STATUS = new Set([408, 429, 500, 502, 503, 504]);
 
+/** Accumulate billed tokens across rounds: sum completions; keep last-round prompt/cache. */
 function mergeUsage(
   base: TokenUsage | null,
   extra: TokenUsage | null,
@@ -47,13 +55,12 @@ function mergeUsage(
   if (!base) return extra;
   if (!extra) return base;
   return {
-    promptTokens: base.promptTokens + extra.promptTokens,
+    promptTokens: extra.promptTokens,
     completionTokens: base.completionTokens + extra.completionTokens,
-    totalTokens: base.totalTokens + extra.totalTokens,
-    promptCacheHitTokens:
-      base.promptCacheHitTokens + extra.promptCacheHitTokens,
-    promptCacheMissTokens:
-      base.promptCacheMissTokens + extra.promptCacheMissTokens,
+    totalTokens:
+      extra.promptTokens + base.completionTokens + extra.completionTokens,
+    promptCacheHitTokens: extra.promptCacheHitTokens,
+    promptCacheMissTokens: extra.promptCacheMissTokens,
   };
 }
 
@@ -177,7 +184,10 @@ async function withRetry<T>(
       return await action();
     } catch (err) {
       lastErr = err;
-      const status = (err as { status?: number }).status;
+      const status =
+        err instanceof ApiError
+          ? err.status
+          : (err as { status?: number }).status;
       const retryable =
         status !== undefined
           ? RETRYABLE_STATUS.has(status)
@@ -248,85 +258,98 @@ async function streamChat(
   const controller = new AbortController();
   if (control) control.abortController = controller;
 
-  const timeout = setTimeout(
-    () => controller.abort(),
-    settings.httpReadTimeout * 1000,
-  );
-
-  const resp = await fetch(chatUrl(settings), {
-    method: "POST",
-    headers: buildHeaders(settings),
-    body: JSON.stringify(body),
-    signal: controller.signal,
-  });
-  clearTimeout(timeout);
-
-  if (!resp.ok) {
-    const detail = (await resp.text()).slice(0, 200);
-    throw new ApiError(`API 错误 (${resp.status})：${detail}`);
-  }
-  if (!resp.body) throw new ApiError("流式响应不可用");
-
-  const reader = resp.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-  let content = "";
-  let reasoning = "";
-  let finishReason: string | null = null;
-  let usage: TokenUsage | null = null;
-  const toolAcc = new ToolCallAccumulator();
-
-  while (true) {
-    if (control?.cancelled) break;
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split("\n");
-    buffer = lines.pop() ?? "";
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed.startsWith("data:")) continue;
-      const payload = trimmed.slice(5).trim();
-      if (!payload || payload === "[DONE]") continue;
-      let chunk: Record<string, unknown>;
-      try {
-        chunk = JSON.parse(payload) as Record<string, unknown>;
-      } catch {
-        continue;
-      }
-      const parsedUsage = parseUsage(chunk);
-      if (parsedUsage) usage = parsedUsage;
-      const choices = chunk.choices as Array<Record<string, unknown>> | undefined;
-      const choice = choices?.[0];
-      if (!choice) continue;
-      finishReason = String(choice.finish_reason ?? finishReason ?? "");
-      const delta = (choice.delta ?? {}) as Record<string, unknown>;
-      const reasoningDelta = pickText(delta, "reasoning_content", "reasoning");
-      if (reasoningDelta) {
-        reasoning += reasoningDelta;
-        onReasoningDelta?.(reasoningDelta);
-      }
-      const textDelta = pickText(delta, "content");
-      if (textDelta) {
-        content += textDelta;
-        onDelta?.(textDelta);
-      }
-      toolAcc.feed(delta.tool_calls);
-    }
-  }
-
-  return {
-    content,
-    reasoning,
-    toolCalls:
-      finishReason === "stop" ||
-      finishReason === "length" ||
-      finishReason === "content_filter"
-        ? []
-        : toolAcc.finish(),
-    finishReason,
-    usage,
+  const timeoutMs = settings.httpReadTimeout * 1000;
+  let timeout = setTimeout(() => controller.abort(), timeoutMs);
+  const bumpTimeout = () => {
+    clearTimeout(timeout);
+    timeout = setTimeout(() => controller.abort(), timeoutMs);
   };
+
+  try {
+    const resp = await fetch(chatUrl(settings), {
+      method: "POST",
+      headers: buildHeaders(settings),
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+
+    if (!resp.ok) {
+      const detail = (await resp.text()).slice(0, 200);
+      throw new ApiError(`API 错误 (${resp.status})：${detail}`, resp.status);
+    }
+    if (!resp.body) throw new ApiError("流式响应不可用");
+
+    bumpTimeout();
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let content = "";
+    let reasoning = "";
+    let finishReason: string | null = null;
+    let usage: TokenUsage | null = null;
+    const toolAcc = new ToolCallAccumulator();
+
+    try {
+      while (true) {
+        if (control?.cancelled) {
+          await reader.cancel().catch(() => undefined);
+          break;
+        }
+        const { done, value } = await reader.read();
+        if (done) break;
+        bumpTimeout();
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed.startsWith("data:")) continue;
+          const payload = trimmed.slice(5).trim();
+          if (!payload || payload === "[DONE]") continue;
+          let chunk: Record<string, unknown>;
+          try {
+            chunk = JSON.parse(payload) as Record<string, unknown>;
+          } catch {
+            continue;
+          }
+          const parsedUsage = parseUsage(chunk);
+          if (parsedUsage) usage = parsedUsage;
+          const choices = chunk.choices as
+            | Array<Record<string, unknown>>
+            | undefined;
+          const choice = choices?.[0];
+          if (!choice) continue;
+          finishReason = String(choice.finish_reason ?? finishReason ?? "");
+          const delta = (choice.delta ?? {}) as Record<string, unknown>;
+          const reasoningDelta = pickText(delta, "reasoning_content", "reasoning");
+          if (reasoningDelta) {
+            reasoning += reasoningDelta;
+            onReasoningDelta?.(reasoningDelta);
+          }
+          const textDelta = pickText(delta, "content");
+          if (textDelta) {
+            content += textDelta;
+            onDelta?.(textDelta);
+          }
+          toolAcc.feed(delta.tool_calls);
+        }
+      }
+    } finally {
+      clearTimeout(timeout);
+    }
+
+    const tools = toolAcc.finish();
+    return {
+      content,
+      reasoning,
+      toolCalls: tools.length ? tools : [],
+      finishReason,
+      usage,
+    };
+  } catch (err) {
+    clearTimeout(timeout);
+    throw err;
+  }
 }
 
 /** Simulate token streaming when API returns one JSON blob (stream off). */
@@ -369,7 +392,7 @@ async function completeChat(
   clearTimeout(timeout);
   if (!resp.ok) {
     const detail = (await resp.text()).slice(0, 200);
-    throw new ApiError(`API 错误 (${resp.status})：${detail}`);
+    throw new ApiError(`API 错误 (${resp.status})：${detail}`, resp.status);
   }
   const data = (await resp.json()) as Record<string, unknown>;
   const choices = data.choices as Array<Record<string, unknown>>;
@@ -525,6 +548,13 @@ async function finalizeAfterToolLimit(
     control?: StreamControl;
   },
 ): Promise<{ content: string; reasoning: string; usage: TokenUsage | null }> {
+  if (options?.control?.cancelled) {
+    return {
+      content: lastStreamedContent.trim() || summarizeFromToolMessages(apiMessages),
+      reasoning: lastReasoning,
+      usage: null,
+    };
+  }
   const wrapUpConvo: ChatMessage[] = [
     ...convo,
     {
@@ -611,13 +641,18 @@ export async function chatStream(
       const result = await withRetry(settings, run);
       totalUsage = mergeUsage(totalUsage, result.usage);
       if (result.reasoning) lastReasoning = result.reasoning;
-      if (round === 0 && result.content.trim()) {
+      if (result.content.trim()) {
         lastStreamedContent = result.content;
       }
 
       if (options?.control?.cancelled) {
-        note = "已取消";
-        break;
+        return {
+          content: lastStreamedContent,
+          reasoning: lastReasoning,
+          note: "已取消",
+          usage: totalUsage,
+          apiMessages,
+        };
       }
 
       if (result.toolCalls.length) {

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { AppSettings } from "../types";
 import { listModels } from "../lib/apiClient";
 import {
@@ -8,6 +8,7 @@ import {
   PROVIDER_ORDER,
 } from "../lib/apiProviders";
 import { thinkingActive } from "../lib/settings";
+import { warmupPythonSandbox } from "../lib/sandbox/pythonSandbox";
 
 interface SettingsPanelProps {
   open: boolean;
@@ -26,6 +27,10 @@ export function SettingsPanel({
   const [modelOptions, setModelOptions] = useState<string[]>([]);
   const [modelsLoading, setModelsLoading] = useState(false);
   const [modelsError, setModelsError] = useState("");
+  const fetchGen = useRef(0);
+  const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
 
   const loadModelOptions = async (source: AppSettings) => {
     if (!source.apiKey.trim()) {
@@ -33,28 +38,45 @@ export function SettingsPanel({
       setModelsError("请先填写 API Key");
       return [];
     }
+    const gen = ++fetchGen.current;
     setModelsLoading(true);
     setModelsError("");
     try {
       const models = await listModels(source);
+      if (gen !== fetchGen.current) return models;
       setModelOptions(models);
       return models;
     } catch (err) {
+      if (gen !== fetchGen.current) return [];
       setModelOptions([]);
       setModelsError(err instanceof Error ? err.message : String(err));
       throw err;
     } finally {
-      setModelsLoading(false);
+      if (gen === fetchGen.current) setModelsLoading(false);
     }
   };
 
   useEffect(() => {
+    if (!open) {
+      if (debounceTimer.current) clearTimeout(debounceTimer.current);
+      return;
+    }
     setDraft(settings);
-    setModelOptions([]);
-    setModelsError("");
-    if (!open) return;
     void loadModelOptions(settings).catch(() => {});
-  }, [settings, open]);
+    // Only re-sync when panel opens (avoid refetch on every keystroke save).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    if (debounceTimer.current) clearTimeout(debounceTimer.current);
+    debounceTimer.current = setTimeout(() => {
+      void loadModelOptions(draftRef.current).catch(() => {});
+    }, 600);
+    return () => {
+      if (debounceTimer.current) clearTimeout(debounceTimer.current);
+    };
+  }, [open, draft.apiKey, draft.baseUrl, draft.apiProvider]);
 
   if (!open) return null;
 
@@ -62,6 +84,13 @@ export function SettingsPanel({
     const next = { ...draft, ...patch };
     setDraft(next);
     onSave(next);
+    if (
+      patch.toolsPythonSandbox === true &&
+      next.toolsEnabled &&
+      !draft.toolsPythonSandbox
+    ) {
+      void warmupPythonSandbox().catch(() => undefined);
+    }
   };
 
   const provider = getProvider(draft.apiProvider);
@@ -358,17 +387,17 @@ export function SettingsPanel({
                   value={draft.webSearchEngine}
                   onChange={(e) => update({ webSearchEngine: e.target.value })}
                 >
-                  <option value="bing_cn">Bing 中国</option>
+                  <option value="bing_cn">Bing 中国（默认，免 Key）</option>
                   <option value="bing_intl">Bing 国际</option>
-                  <option value="bing_rss">Bing RSS（移动端推荐）</option>
+                  <option value="bing_rss">Bing RSS</option>
                   <option value="searxng">SearXNG</option>
                   <option value="duckduckgo">DuckDuckGo HTML</option>
-                  <option value="ddg_api">DuckDuckGo API（备用推荐）</option>
+                  <option value="ddg_api">DuckDuckGo API（备用）</option>
                   <option value="metaso">Metaso</option>
                   <option value="baidu">百度 AI 搜索</option>
                 </select>
                 <p className="settings-hint">
-                  手机端若 Bing/DDG 网络失败，推荐 Metaso 或百度 Key（国内 API 最稳）。
+                  手机端若 Bing/DDG 失败，推荐配置 Metaso 或百度 Key。
                 </p>
               </label>
               {draft.webSearchEngine === "searxng" && (
@@ -376,10 +405,14 @@ export function SettingsPanel({
                   SearXNG 地址
                   <input
                     value={draft.webSearchEndpoint}
+                    placeholder="https://your-searxng.example"
                     onChange={(e) =>
                       update({ webSearchEndpoint: e.target.value })
                     }
                   />
+                  <p className="settings-hint">
+                    手机不要填 localhost。留空时使用公共 SearXNG 回退。
+                  </p>
                 </label>
               )}
               {draft.webSearchEngine === "metaso" && (
