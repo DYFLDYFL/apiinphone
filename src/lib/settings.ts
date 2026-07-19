@@ -1,4 +1,3 @@
-import { Capacitor } from "@capacitor/core";
 import { Preferences } from "@capacitor/preferences";
 import type { AppSettings } from "../types";
 import {
@@ -14,6 +13,15 @@ const LEGACY_MODEL_PRESETS: Record<string, string> = {
 
 const SETTINGS_KEY = "settings";
 
+/** Always-on features — no longer exposed as settings toggles. */
+const FORCED_ON = {
+  stream: true,
+  showThinking: true,
+  toolsEnabled: true,
+  toolsWebSearch: true,
+  toolsPythonSandbox: true,
+} as const;
+
 export const DEFAULT_SETTINGS: AppSettings = {
   apiProvider: "deepseek",
   apiKey: "",
@@ -21,13 +29,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   model: "deepseek-v4-flash",
   temperature: 0.7,
   maxTokens: 4096,
-  stream: true,
-  showThinking: true,
+  ...FORCED_ON,
   thinkingMode: "enabled",
   reasoningEffort: "high",
-  toolsEnabled: true,
-  toolsWebSearch: true,
-  toolsPythonSandbox: !Capacitor.isNativePlatform(),
   pythonSandboxTimeout: 15,
   maxToolRounds: 24,
   webSearchEngine: "bing_cn",
@@ -51,6 +55,10 @@ export const DEFAULT_SETTINGS: AppSettings = {
   theme: "light",
   recentModels: defaultRecentModels(),
 };
+
+function applyForcedOn(settings: AppSettings): AppSettings {
+  return { ...settings, ...FORCED_ON };
+}
 
 export function effectiveModel(settings: AppSettings): string {
   return resolveModel(settings);
@@ -107,7 +115,7 @@ export async function loadSettings(): Promise<AppSettings> {
     const raw = JSON.parse(value) as Partial<AppSettings> & {
       modelPreset?: string;
     };
-    const merged = { ...DEFAULT_SETTINGS, ...raw };
+    const merged = applyForcedOn({ ...DEFAULT_SETTINGS, ...raw });
     if (!merged.model?.trim() && raw.modelPreset) {
       merged.model =
         LEGACY_MODEL_PRESETS[raw.modelPreset] ?? merged.model;
@@ -118,7 +126,7 @@ export async function loadSettings(): Promise<AppSettings> {
     }
     merged.webSearchMaxTopK = effectiveWebSearchMaxTopK(merged);
     merged.webSearchDefaultTopK = effectiveWebSearchDefaultTopK(merged);
-    return merged;
+    return applyForcedOn(merged);
   } catch {
     return { ...DEFAULT_SETTINGS };
   }
@@ -127,7 +135,7 @@ export async function loadSettings(): Promise<AppSettings> {
 export async function saveSettings(settings: AppSettings): Promise<void> {
   await Preferences.set({
     key: SETTINGS_KEY,
-    value: JSON.stringify(settings),
+    value: JSON.stringify(applyForcedOn(settings)),
   });
 }
 
