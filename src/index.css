@@ -299,6 +299,20 @@ body {
 .modal-body .checkbox {
   flex-direction: row;
   align-items: center;
+  gap: 10px;
+  min-height: 28px;
+}
+
+.modal-body .checkbox input[type="checkbox"] {
+  width: 1.1em;
+  height: 1.1em;
+  margin: 0;
+  padding: 0;
+  flex-shrink: 0;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  accent-color: var(--accent);
 }
 
 .modal-body .row {
