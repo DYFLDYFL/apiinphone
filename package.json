@@ -13,12 +13,16 @@
     "android:release": "npm run cap:sync && cd android && .\\gradlew.bat assembleRelease"
   },
   "dependencies": {
+    "@capacitor-community/file-opener": "^7.0.1",
     "@capacitor/android": "^7.2.0",
     "@capacitor/app": "^7.0.1",
     "@capacitor/core": "^7.2.0",
     "@capacitor/filesystem": "^7.0.1",
     "@capacitor/preferences": "^7.0.1",
+    "@capacitor/share": "^7.0.4",
     "@capacitor/status-bar": "^7.0.1",
+    "docx": "^9.7.1",
+    "pdf-lib": "^1.17.1",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "sandpy": "^0.3.1"

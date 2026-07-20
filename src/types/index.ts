@@ -32,6 +32,8 @@ export interface AppSettings {
   appTitle: string;
   theme: "dark" | "light";
   recentModels: string[];
+  /** Where generated documents are saved. */
+  exportLocation: "documents" | "data" | "cache";
 }
 
 export interface TokenUsage {
@@ -70,6 +72,18 @@ export interface ToolTraceItem {
   args?: string;
   /** Full tool output for expandable UI (search hits, page text, etc.). */
   result?: string;
+  /** Structured export info when tool is save_document. */
+  exportedFile?: {
+    id: string;
+    name: string;
+    format: "txt" | "docx" | "pdf";
+    mime: string;
+    path: string;
+    uri: string;
+    directory: string;
+    locationLabel: string;
+    createdAt: string;
+  };
 }
 
 export interface NumberedSource {

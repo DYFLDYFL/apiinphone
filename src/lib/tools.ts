@@ -3,6 +3,12 @@ import {
   customToolExtensions,
   executeCustomTool,
 } from "./customTools";
+import {
+  formatExportToolResult,
+  saveExportedFile,
+  type ExportFormat,
+  type ExportedFile,
+} from "./documentExport";
 import { runPython, SandboxError } from "./sandbox/pythonSandbox";
 import {
   buildToolTraceFromApiMessages,
@@ -25,6 +31,11 @@ export const DEFAULT_MAX_TOOL_ROUNDS = 24;
 
 export { waitingLabel, buildToolTraceFromApiMessages as buildToolTrace };
 
+export interface ToolExecutionResult {
+  content: string;
+  exportedFile?: ExportedFile;
+}
+
 const BUILTIN_TOOLS = [
   {
     type: "function",
@@ -40,6 +51,41 @@ const BUILTIN_TOOLS = [
     },
   },
 ];
+
+const SAVE_DOCUMENT_TOOL = {
+  type: "function",
+  function: {
+    name: "save_document",
+    description:
+      "将文本生成为 txt / docx / pdf 并保存到手机本地导出目录。" +
+      "用户要求导出、保存、下载、生成 Word/PDF/文本文件时必须调用。" +
+      "保存后用户可在界面点击「打开」或「发送」，无需自己找文件夹。",
+    parameters: {
+      type: "object",
+      properties: {
+        filename: {
+          type: "string",
+          description: "文件名（可无扩展名）",
+        },
+        format: {
+          type: "string",
+          enum: ["txt", "docx", "pdf"],
+          description: "文件格式",
+        },
+        content: {
+          type: "string",
+          description: "文件正文（纯文本，可用换行分段）",
+        },
+        title: {
+          type: "string",
+          description: "可选标题（用于 docx/pdf）",
+        },
+      },
+      required: ["filename", "format", "content"],
+      additionalProperties: false,
+    },
+  },
+};
 
 function buildWebSearchTool(settings: AppSettings) {
   const def = effectiveWebSearchDefaultTopK(settings);
@@ -107,7 +153,7 @@ const RUN_PYTHON_TOOL = {
 type ToolHandler = (
   args: Record<string, unknown>,
   settings: AppSettings,
-) => Promise<string>;
+) => Promise<string | ToolExecutionResult>;
 
 const BUILTIN_HANDLERS: Record<string, ToolHandler> = {
   get_current_time: async () => new Date().toISOString(),
@@ -131,6 +177,32 @@ const BUILTIN_HANDLERS: Record<string, ToolHandler> = {
       throw new ToolError(String(err));
     }
   },
+  save_document: async (args, settings) => {
+    const format = String(args.format ?? "txt").toLowerCase() as ExportFormat;
+    if (format !== "txt" && format !== "docx" && format !== "pdf") {
+      throw new ToolError("format 必须是 txt、docx 或 pdf。");
+    }
+    const filename = String(args.filename ?? "").trim();
+    const content = String(args.content ?? "");
+    if (!filename) throw new ToolError("缺少 filename。");
+    if (!content.trim()) throw new ToolError("content 不能为空。");
+    try {
+      const file = await saveExportedFile(settings, {
+        filename,
+        format,
+        content,
+        title: args.title != null ? String(args.title) : undefined,
+      });
+      return {
+        content: formatExportToolResult(file),
+        exportedFile: file,
+      };
+    } catch (err) {
+      throw new ToolError(
+        err instanceof Error ? err.message : `保存失败：${String(err)}`,
+      );
+    }
+  },
 };
 
 function parseToolArgs(argumentsJson: string): Record<string, unknown> {
@@ -150,7 +222,10 @@ export function buildTools(
   settings: AppSettings,
 ): Array<Record<string, unknown>> | null {
   if (!settings.toolsEnabled) return null;
-  const tools: Array<Record<string, unknown>> = [...BUILTIN_TOOLS];
+  const tools: Array<Record<string, unknown>> = [
+    ...BUILTIN_TOOLS,
+    SAVE_DOCUMENT_TOOL,
+  ];
   if (settings.toolsWebSearch) {
     tools.push(buildWebSearchTool(settings), WEB_FETCH_TOOL);
     if (settings.apiProvider === "poe") {
@@ -183,17 +258,19 @@ export async function executeTool(
   name: string,
   argumentsJson: string,
   settings: AppSettings,
-): Promise<string> {
+): Promise<ToolExecutionResult> {
   const payload = parseToolArgs(argumentsJson);
 
   const custom = customToolExtensions(settings).get(name);
   if (custom) {
-    return executeCustomTool(name, payload, custom);
+    return { content: await executeCustomTool(name, payload, custom) };
   }
 
   const handler = BUILTIN_HANDLERS[name];
   if (handler) {
-    return handler(payload, settings);
+    const out = await handler(payload, settings);
+    if (typeof out === "string") return { content: out };
+    return out;
   }
 
   throw new ToolError(
@@ -207,7 +284,7 @@ export function toolStatusLabel(
   args = "",
 ): string {
   if (phase === "start") return runningLabel(name, args);
-  if (phase === "done") return doneLabel(name);
+  if (phase === "done") return doneLabel(name, args);
   return errorLabel(name);
 }
 

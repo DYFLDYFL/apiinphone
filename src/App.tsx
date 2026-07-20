@@ -42,9 +42,12 @@ import {
 import { collectNumberedSources } from "./lib/searchSources";
 import { buildToolTrace } from "./lib/tools";
 import { ChatViewer, useChatViewerRef, viewerFromRef } from "./components/ChatViewer";
+import { ExportFileCard } from "./components/ExportFileCard";
 import { InfoPanel } from "./components/InfoPanel";
 import { RenameDialog } from "./components/RenameDialog";
 import { SettingsPanel } from "./components/SettingsPanel";
+import type { ExportedFile } from "./lib/documentExport";
+import { loadExportHistory, pushExportHistory } from "./lib/exportHistory";
 import "./index.css";
 
 interface SessionMeta {
@@ -66,6 +69,21 @@ function normalizeToolTrace(
   }));
 }
 
+function exportsFromSession(current: ChatSession): ExportedFile[] {
+  const files: ExportedFile[] = [];
+  const seen = new Set<string>();
+  for (const msg of current.display) {
+    if (msg.role !== "assistant" || !Array.isArray(msg.toolTrace)) continue;
+    for (const tool of msg.toolTrace) {
+      const file = tool.exportedFile;
+      if (!file || seen.has(file.uri)) continue;
+      seen.add(file.uri);
+      files.push(file as ExportedFile);
+    }
+  }
+  return files;
+}
+
 export default function App() {
   const viewerRef = useChatViewerRef();
   const [settings, setSettings] = useState<AppSettings | null>(null);
@@ -85,6 +103,8 @@ export default function App() {
   const [renameOpen, setRenameOpen] = useState(false);
   const [renameId, setRenameId] = useState("");
   const [statusText, setStatusText] = useState("");
+  const [exportHistory, setExportHistory] = useState<ExportedFile[]>([]);
+  const [sessionExports, setSessionExports] = useState<ExportedFile[]>([]);
   const streamControlRef = useRef(createStreamControl());
   const toolTraceRef = useRef<ToolTraceItem[]>([]);
   const composingRef = useRef(false);
@@ -125,7 +145,9 @@ export default function App() {
       setSettings(loaded);
       const active = await loadActiveSession();
       setSession(active);
+      setSessionExports(exportsFromSession(active));
       await refreshSessions();
+      setExportHistory(await loadExportHistory());
       if (!loaded.apiKey.trim()) setSettingsOpen(true);
       await configureNativeChrome(loaded.theme);
     })();
@@ -272,16 +294,33 @@ export default function App() {
               entry.label = label;
               if (meta?.name) entry.name = meta.name;
               if (meta?.result) entry.result = meta.result;
+              if (meta?.exportedFile) {
+                entry.exportedFile = meta.exportedFile;
+                const file = meta.exportedFile;
+                setSessionExports((prev) =>
+                  [file, ...prev.filter((f) => f.uri !== file.uri)].slice(0, 20),
+                );
+                void pushExportHistory(file).then(setExportHistory);
+              }
             }
           }
           viewer?.updateLastAssistantTools(toolTraceRef.current, true);
         },
       });
 
-      const toolTrace =
-        buildToolTrace([
-          ...response.apiMessages.filter((m) => m.role !== "user"),
-        ]) || toolTraceRef.current;
+      const rebuilt = buildToolTrace([
+        ...response.apiMessages.filter((m) => m.role !== "user"),
+      ]);
+      const byId = new Map(toolTraceRef.current.map((t) => [t.id, t]));
+      const toolTrace = (
+        rebuilt.length ? rebuilt : toolTraceRef.current
+      ).map((item) => {
+        const live = byId.get(item.id);
+        if (live?.exportedFile) {
+          return { ...item, exportedFile: live.exportedFile };
+        }
+        return item;
+      });
       const hadTools =
         toolTrace.length > 0 ||
         response.apiMessages.some((m) => m.role === "tool");
@@ -499,6 +538,7 @@ export default function App() {
     if (busy) return;
     const next = await createNewSession();
     setSession(next);
+    setSessionExports([]);
     setDrawerOpen(false);
     await refreshSessions();
   };
@@ -508,6 +548,7 @@ export default function App() {
     await setActiveSession(id);
     const loaded = await loadActiveSession();
     setSession(loaded);
+    setSessionExports(exportsFromSession(loaded));
     setDrawerOpen(false);
   };
 
@@ -516,6 +557,7 @@ export default function App() {
     if (!window.confirm("确定删除此对话？")) return;
     const next = (await deleteSession(id)) ?? (await createNewSession());
     setSession(next);
+    setSessionExports(exportsFromSession(next));
     await refreshSessions();
   };
 
@@ -623,6 +665,13 @@ export default function App() {
       </main>
 
       <footer className="composer">
+        {sessionExports.length > 0 && (
+          <div className="export-session-bar">
+            {sessionExports.slice(0, 3).map((file) => (
+              <ExportFileCard key={file.id} file={file} />
+            ))}
+          </div>
+        )}
         {attachments.length > 0 && (
           <div className="attachment-bar">
             {attachments.map((att, idx) => (
@@ -751,6 +800,7 @@ export default function App() {
         balanceError={balanceError}
         balanceLoading={balanceLoading}
         onRefreshBalance={() => void refreshBalance(settings)}
+        exportHistory={exportHistory}
       />
 
       <RenameDialog

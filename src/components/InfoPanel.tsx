@@ -1,5 +1,6 @@
 import type { AppSettings, ChatSession, TokenUsage } from "../types";
 import { getProvider } from "../lib/apiProviders";
+import type { ExportedFile } from "../lib/documentExport";
 import { effectiveModel } from "../lib/settings";
 import {
   balanceUnavailableText,
@@ -7,6 +8,7 @@ import {
   formatLastRequestUsage,
   formatSessionUsage,
 } from "../lib/usageInfo";
+import { ExportFileCard } from "./ExportFileCard";
 
 interface InfoPanelProps {
   open: boolean;
@@ -18,6 +20,7 @@ interface InfoPanelProps {
   balanceError: string;
   balanceLoading: boolean;
   onRefreshBalance: () => void;
+  exportHistory: ExportedFile[];
 }
 
 export function InfoPanel({
@@ -30,6 +33,7 @@ export function InfoPanel({
   balanceError,
   balanceLoading,
   onRefreshBalance,
+  exportHistory,
 }: InfoPanelProps) {
   if (!open) return null;
 
@@ -74,6 +78,19 @@ export function InfoPanel({
         <section className="info-block">
           <div className="info-label">上次请求</div>
           <pre className="info-pre">{formatLastRequestUsage(lastUsage)}</pre>
+        </section>
+
+        <section className="info-block">
+          <div className="info-label">最近导出</div>
+          {exportHistory.length ? (
+            <div className="export-history-list">
+              {exportHistory.slice(0, 8).map((file) => (
+                <ExportFileCard key={file.id} file={file} compact />
+              ))}
+            </div>
+          ) : (
+            <div className="info-muted">尚无导出文件</div>
+          )}
         </section>
 
         <section className="info-block">

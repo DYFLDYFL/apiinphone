@@ -5,6 +5,7 @@ const TOOL_LABELS: Record<string, string> = {
   web_fetch: "抓取网页",
   get_current_time: "获取时间",
   run_python: "运行 Python",
+  save_document: "保存文档",
 };
 
 export function toolDisplayName(name: string): string {
@@ -35,16 +36,29 @@ export function toolDetail(name: string, argsJson: string): string {
     const code = String(args.code ?? "").trim();
     return code.replace(/\s+/g, " ").slice(0, 80);
   }
+  if (name === "save_document") {
+    const filename = String(args.filename ?? "").trim();
+    const format = String(args.format ?? "").trim();
+    return [filename, format].filter(Boolean).join(" · ").slice(0, 80);
+  }
   return "";
 }
 
 export function runningLabel(name: string, argsJson = ""): string {
+  if (name === "save_document") {
+    const detail = toolDetail(name, argsJson);
+    return detail ? `正在生成文档… · ${detail}` : "正在生成文档…";
+  }
   const label = toolDisplayName(name);
   const detail = toolDetail(name, argsJson);
   return detail ? `正在 ${label}… · ${detail}` : `正在 ${label}…`;
 }
 
-export function doneLabel(name: string): string {
+export function doneLabel(name: string, argsJson = ""): string {
+  if (name === "save_document") {
+    const filename = String(parseArgs(argsJson).filename ?? "").trim();
+    return filename ? `已保存 ${filename}` : "已保存文档";
+  }
   return `${toolDisplayName(name)} 完成`;
 }
 
@@ -65,7 +79,7 @@ export function traceItem(
 ): ToolTraceItem {
   let label: string;
   if (status === "running") label = runningLabel(name, argsJson);
-  else if (status === "done") label = doneLabel(name);
+  else if (status === "done") label = doneLabel(name, argsJson);
   else if (status === "error") label = errorLabel(name);
   else label = toolDisplayName(name);
   const item: ToolTraceItem = {
@@ -109,7 +123,7 @@ export function buildToolTraceFromApiMessages(
         item.detail = content.slice(0, 160);
       } else {
         item.status = "done";
-        item.label = doneLabel(item.name);
+        item.label = doneLabel(item.name, item.args);
         const preview = content.trim().replace(/\n/g, " ").slice(0, 160);
         if (preview) item.detail = preview;
       }

@@ -599,7 +599,12 @@ export async function chatStream(
       phase: "start" | "done" | "error" | "waiting",
       id: string,
       label: string,
-      meta?: { name?: string; args?: string; result?: string },
+      meta?: {
+        name?: string;
+        args?: string;
+        result?: string;
+        exportedFile?: import("./documentExport").ExportedFile;
+      },
     ) => void;
     control?: StreamControl;
   },
@@ -679,13 +684,16 @@ export async function chatStream(
             { name, args },
           );
           let toolOut: string;
+          let exportedFile: import("./documentExport").ExportedFile | undefined;
           try {
-            toolOut = await executeTool(name, args, settings);
+            const executed = await executeTool(name, args, settings);
+            toolOut = executed.content;
+            exportedFile = executed.exportedFile;
             options?.onToolStatus?.(
               "done",
               tid,
               toolStatusLabel("done", name, args),
-              { name, args, result: toolOut },
+              { name, args, result: toolOut, exportedFile },
             );
           } catch (err) {
             toolOut = `工具错误：${err instanceof Error ? err.message : String(err)}`;

@@ -264,6 +264,31 @@ export function SettingsPanel({
           </label>
 
           <label>
+            文件导出目录
+            <select
+              value={draft.exportLocation ?? "documents"}
+              onChange={(e) =>
+                update({
+                  exportLocation: e.target
+                    .value as AppSettings["exportLocation"],
+                })
+              }
+            >
+              <option value="documents">文档（推荐）</option>
+              <option value="data">应用数据</option>
+              <option value="cache">缓存（可能被清理）</option>
+            </select>
+            <p className="settings-hint">
+              {draft.exportLocation === "data"
+                ? "当前路径：Data/AIExports/"
+                : draft.exportLocation === "cache"
+                  ? "当前路径：Cache/AIExports/"
+                  : "当前路径：Documents/AIExports/"}
+              保存后可在聊天界面点「打开」或「发送」，无需自己翻文件夹。
+            </p>
+          </label>
+
+          <label>
             工具调用轮次上限
             <input
               type="number"
