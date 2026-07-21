@@ -53,6 +53,7 @@ import {
   pushExportHistory,
   removeExportHistory,
 } from "./lib/exportHistory";
+import { startChatKeepAlive, stopChatKeepAlive } from "./lib/chatKeepAlive";
 import "./index.css";
 
 interface SessionMeta {
@@ -248,6 +249,7 @@ export default function App() {
 
     setBusy(true);
     setStatusText("正在请求…");
+    void startChatKeepAlive("AI API Client", "正在生成…");
     streamControlRef.current = createStreamControl();
     toolTraceRef.current = [];
     let streamText = "";
@@ -484,6 +486,7 @@ export default function App() {
     } finally {
       if (viewerRaf) cancelAnimationFrame(viewerRaf);
       setBusy(false);
+      void stopChatKeepAlive();
     }
   };
 
