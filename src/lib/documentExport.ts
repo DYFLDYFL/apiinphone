@@ -1,5 +1,5 @@
 import { Capacitor } from "@capacitor/core";
-import { Directory, Encoding, Filesystem } from "@capacitor/filesystem";
+import { Directory, Filesystem } from "@capacitor/filesystem";
 import { Share } from "@capacitor/share";
 import { FileOpener } from "@capacitor-community/file-opener";
 import { Document, Packer, Paragraph, TextRun, HeadingLevel } from "docx";
@@ -22,13 +22,16 @@ export interface ExportedFile {
 }
 
 export const EXPORT_FOLDER = "AIExports";
+const SHARE_FOLDER = "AIExportsShare";
 export const MAX_EXPORT_CHARS = 200_000;
 
 const MIME: Record<ExportFormat, string> = {
-  txt: "text/plain",
+  txt: "text/plain;charset=utf-8",
   docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
   pdf: "application/pdf",
 };
+
+const UTF8_BOM = new Uint8Array([0xef, 0xbb, 0xbf]);
 
 export function resolveExportRoot(settings: AppSettings): {
   directory: Directory;
@@ -86,9 +89,24 @@ function uint8ToBase64(bytes: Uint8Array): string {
   return btoa(binary);
 }
 
-async function buildTxt(content: string, title?: string): Promise<string> {
+function base64ToUint8(b64: string): Uint8Array {
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes;
+}
+
+function textToUtf8Base64WithBom(text: string): string {
+  const encoded = new TextEncoder().encode(text);
+  const withBom = new Uint8Array(UTF8_BOM.length + encoded.length);
+  withBom.set(UTF8_BOM, 0);
+  withBom.set(encoded, UTF8_BOM.length);
+  return uint8ToBase64(withBom);
+}
+
+async function buildTxtBase64(content: string, title?: string): Promise<string> {
   const head = title?.trim() ? `${title.trim()}\n\n` : "";
-  return head + content;
+  return textToUtf8Base64WithBom(head + content);
 }
 
 async function buildDocxBase64(
@@ -253,7 +271,7 @@ export async function generateDocument(
   format: ExportFormat,
   content: string,
   title?: string,
-): Promise<{ data: string; encoding?: Encoding; mime: string }> {
+): Promise<{ data: string; mime: string }> {
   const text = content ?? "";
   if (text.length > MAX_EXPORT_CHARS) {
     throw new Error(
@@ -261,11 +279,7 @@ export async function generateDocument(
     );
   }
   if (format === "txt") {
-    return {
-      data: await buildTxt(text, title),
-      encoding: Encoding.UTF8,
-      mime: MIME.txt,
-    };
+    return { data: await buildTxtBase64(text, title), mime: MIME.txt };
   }
   if (format === "docx") {
     return { data: await buildDocxBase64(text, title), mime: MIME.docx };
@@ -309,7 +323,6 @@ export async function saveExportedFile(
     path: relativePath,
     directory: root.directory,
     data: generated.data,
-    encoding: generated.encoding,
     recursive: true,
   });
 
@@ -331,6 +344,46 @@ export async function saveExportedFile(
   };
 }
 
+export function isShareDismissedError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err ?? "");
+  if (/share\s*cancel/i.test(msg)) return true;
+  if (/分享/.test(msg) && /取消|拒绝/.test(msg)) return true;
+  if (/user\s*cancel/i.test(msg)) return true;
+  return false;
+}
+
+async function ensureShareCacheCopy(file: ExportedFile): Promise<string> {
+  try {
+    await Filesystem.mkdir({
+      path: SHARE_FOLDER,
+      directory: Directory.Cache,
+      recursive: true,
+    });
+  } catch {
+    /* exists */
+  }
+  const destPath = `${SHARE_FOLDER}/${file.name}`;
+  try {
+    await Filesystem.deleteFile({
+      path: destPath,
+      directory: Directory.Cache,
+    });
+  } catch {
+    /* may not exist */
+  }
+  await Filesystem.copy({
+    from: file.path,
+    directory: file.directory,
+    to: destPath,
+    toDirectory: Directory.Cache,
+  });
+  const { uri } = await Filesystem.getUri({
+    path: destPath,
+    directory: Directory.Cache,
+  });
+  return uri;
+}
+
 export async function openExportedFile(file: ExportedFile): Promise<void> {
   if (!Capacitor.isNativePlatform()) {
     await downloadOnWeb(file);
@@ -338,7 +391,7 @@ export async function openExportedFile(file: ExportedFile): Promise<void> {
   }
   await FileOpener.open({
     filePath: file.uri,
-    contentType: file.mime,
+    contentType: file.mime || MIME[file.format],
     openWithDefault: true,
   });
 }
@@ -348,30 +401,58 @@ export async function shareExportedFile(file: ExportedFile): Promise<void> {
     await downloadOnWeb(file);
     return;
   }
-  await Share.share({
-    title: file.name,
-    text: file.name,
-    files: [file.uri],
-    dialogTitle: "发送文件",
-  });
+  const shareUri = await ensureShareCacheCopy(file);
+  try {
+    await Share.share({
+      title: file.name,
+      files: [shareUri],
+      dialogTitle: "发送文件",
+    });
+  } catch (err) {
+    if (isShareDismissedError(err)) return;
+    throw err;
+  }
+}
+
+export async function deleteExportedFile(file: ExportedFile): Promise<void> {
+  try {
+    await Filesystem.deleteFile({
+      path: file.path,
+      directory: file.directory,
+    });
+  } catch {
+    /* already gone — still clear UI */
+  }
+  try {
+    await Filesystem.deleteFile({
+      path: `${SHARE_FOLDER}/${file.name}`,
+      directory: Directory.Cache,
+    });
+  } catch {
+    /* optional share cache */
+  }
 }
 
 async function downloadOnWeb(file: ExportedFile): Promise<void> {
   const result = await Filesystem.readFile({
     path: file.path,
     directory: file.directory,
-    encoding: file.format === "txt" ? Encoding.UTF8 : undefined,
   });
   const data = result.data;
   let blob: Blob;
   if (typeof data === "string") {
+    const bytes = base64ToUint8(data);
     if (file.format === "txt") {
-      blob = new Blob([data], { type: file.mime });
+      const hasBom =
+        bytes.length >= 3 &&
+        bytes[0] === 0xef &&
+        bytes[1] === 0xbb &&
+        bytes[2] === 0xbf;
+      const body = hasBom ? bytes.subarray(3) : bytes;
+      const text = new TextDecoder("utf-8").decode(body);
+      blob = new Blob([text], { type: file.mime || MIME.txt });
     } else {
-      const bin = atob(data);
-      const bytes = new Uint8Array(bin.length);
-      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-      blob = new Blob([bytes], { type: file.mime });
+      blob = new Blob([bytes as BlobPart], { type: file.mime });
     }
   } else {
     blob = new Blob([data as BlobPart], { type: file.mime });

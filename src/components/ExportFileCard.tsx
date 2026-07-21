@@ -1,5 +1,6 @@
 import type { ExportedFile } from "../lib/documentExport";
 import {
+  isShareDismissedError,
   openExportedFile,
   shareExportedFile,
 } from "../lib/documentExport";
@@ -7,9 +8,14 @@ import {
 interface ExportFileCardProps {
   file: ExportedFile;
   compact?: boolean;
+  onRemove?: (file: ExportedFile) => void;
 }
 
-export function ExportFileCard({ file, compact }: ExportFileCardProps) {
+export function ExportFileCard({
+  file,
+  compact,
+  onRemove,
+}: ExportFileCardProps) {
   const handleOpen = async () => {
     try {
       await openExportedFile(file);
@@ -22,6 +28,7 @@ export function ExportFileCard({ file, compact }: ExportFileCardProps) {
     try {
       await shareExportedFile(file);
     } catch (err) {
+      if (isShareDismissedError(err)) return;
       alert(err instanceof Error ? err.message : String(err));
     }
   };
@@ -41,6 +48,15 @@ export function ExportFileCard({ file, compact }: ExportFileCardProps) {
         <button type="button" className="secondary-btn" onClick={() => void handleShare()}>
           发送
         </button>
+        {onRemove && (
+          <button
+            type="button"
+            className="secondary-btn"
+            onClick={() => onRemove(file)}
+          >
+            删除
+          </button>
+        )}
       </div>
     </div>
   );

@@ -23,3 +23,13 @@ export async function pushExportHistory(
   await Preferences.set({ key: KEY, value: JSON.stringify(next) });
   return next;
 }
+
+export async function removeExportHistory(
+  id: string,
+  uri?: string,
+): Promise<ExportedFile[]> {
+  const prev = await loadExportHistory();
+  const next = prev.filter((f) => f.id !== id && (!uri || f.uri !== uri));
+  await Preferences.set({ key: KEY, value: JSON.stringify(next) });
+  return next;
+}

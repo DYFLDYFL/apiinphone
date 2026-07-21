@@ -47,7 +47,12 @@ import { InfoPanel } from "./components/InfoPanel";
 import { RenameDialog } from "./components/RenameDialog";
 import { SettingsPanel } from "./components/SettingsPanel";
 import type { ExportedFile } from "./lib/documentExport";
-import { loadExportHistory, pushExportHistory } from "./lib/exportHistory";
+import { deleteExportedFile } from "./lib/documentExport";
+import {
+  loadExportHistory,
+  pushExportHistory,
+  removeExportHistory,
+} from "./lib/exportHistory";
 import "./index.css";
 
 interface SessionMeta {
@@ -209,6 +214,29 @@ export default function App() {
     await refreshSessions();
   };
 
+  const handleRemoveExport = async (file: ExportedFile) => {
+    await deleteExportedFile(file);
+    setSessionExports((prev) =>
+      prev.filter((f) => f.id !== file.id && f.uri !== file.uri),
+    );
+    setExportHistory(await removeExportHistory(file.id, file.uri));
+    if (!session) return;
+    const nextDisplay = session.display.map((msg) => {
+      if (msg.role !== "assistant" || !Array.isArray(msg.toolTrace)) return msg;
+      const toolTrace = msg.toolTrace.map((tool) => {
+        if (
+          tool.exportedFile?.id !== file.id &&
+          tool.exportedFile?.uri !== file.uri
+        ) {
+          return tool;
+        }
+        const { exportedFile: _removed, ...rest } = tool;
+        return rest;
+      });
+      return { ...msg, toolTrace };
+    });
+    await persistSession({ ...session, display: nextDisplay });
+  };
 
   const runChat = async (
     history: ChatMessage[],
@@ -668,7 +696,11 @@ export default function App() {
         {sessionExports.length > 0 && (
           <div className="export-session-bar">
             {sessionExports.slice(0, 3).map((file) => (
-              <ExportFileCard key={file.id} file={file} />
+              <ExportFileCard
+                key={file.id}
+                file={file}
+                onRemove={(f) => void handleRemoveExport(f)}
+              />
             ))}
           </div>
         )}
@@ -801,6 +833,7 @@ export default function App() {
         balanceLoading={balanceLoading}
         onRefreshBalance={() => void refreshBalance(settings)}
         exportHistory={exportHistory}
+        onRemoveExport={(f) => void handleRemoveExport(f)}
       />
 
       <RenameDialog

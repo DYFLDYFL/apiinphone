@@ -21,6 +21,7 @@ interface InfoPanelProps {
   balanceLoading: boolean;
   onRefreshBalance: () => void;
   exportHistory: ExportedFile[];
+  onRemoveExport: (file: ExportedFile) => void;
 }
 
 export function InfoPanel({
@@ -34,6 +35,7 @@ export function InfoPanel({
   balanceLoading,
   onRefreshBalance,
   exportHistory,
+  onRemoveExport,
 }: InfoPanelProps) {
   if (!open) return null;
 
@@ -85,7 +87,12 @@ export function InfoPanel({
           {exportHistory.length ? (
             <div className="export-history-list">
               {exportHistory.slice(0, 8).map((file) => (
-                <ExportFileCard key={file.id} file={file} compact />
+                <ExportFileCard
+                  key={file.id}
+                  file={file}
+                  compact
+                  onRemove={onRemoveExport}
+                />
               ))}
             </div>
           ) : (
