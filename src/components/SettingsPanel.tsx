@@ -197,72 +197,6 @@ export function SettingsPanel({
             )}
           </label>
 
-          {thinkingVisible && (
-            <>
-              <label>
-                思考模式
-                <select
-                  value={draft.thinkingMode}
-                  onChange={(e) =>
-                    update({
-                      thinkingMode: e.target.value as AppSettings["thinkingMode"],
-                    })
-                  }
-                >
-                  <option value="enabled">开启思考</option>
-                  <option value="disabled">关闭思考（更省）</option>
-                </select>
-              </label>
-              <label>
-                思考深度
-                <select
-                  value={draft.reasoningEffort}
-                  onChange={(e) =>
-                    update({
-                      reasoningEffort: e.target
-                        .value as AppSettings["reasoningEffort"],
-                    })
-                  }
-                >
-                  <option value="high">high（默认）</option>
-                  <option value="max">max（更深）</option>
-                </select>
-              </label>
-            </>
-          )}
-
-          <label>
-            Temperature
-            <input
-              type="number"
-              min={0}
-              max={2}
-              step={0.1}
-              value={draft.temperature}
-              disabled={thinkingOn}
-              onChange={(e) =>
-                update({ temperature: Number(e.target.value) })
-              }
-            />
-          </label>
-          {thinkingOn && (
-            <p className="settings-hint">思考模式开启时，Temperature 由 API 忽略。</p>
-          )}
-
-          <label>
-            Max tokens
-            <input
-              type="number"
-              min={256}
-              max={384000}
-              step={256}
-              value={draft.maxTokens ?? 4096}
-              onChange={(e) =>
-                update({ maxTokens: Number(e.target.value) || null })
-              }
-            />
-          </label>
-
           <label>
             文件导出目录
             <select
@@ -288,127 +222,208 @@ export function SettingsPanel({
             </p>
           </label>
 
-          <label>
-            工具调用轮次上限
-            <input
-              type="number"
-              min={1}
-              max={64}
-              value={draft.maxToolRounds}
-              onChange={(e) =>
-                update({ maxToolRounds: Number(e.target.value) })
-              }
-            />
-            <p className="settings-hint">
-              单条消息内模型可连续调用工具的最大轮数（默认 24）。用满后会自动汇总回答，不会报错。
-            </p>
-          </label>
-          <label>
-            沙盒超时（秒）
-            <input
-              type="number"
-              min={3}
-              max={120}
-              value={draft.pythonSandboxTimeout}
-              onChange={(e) =>
-                update({ pythonSandboxTimeout: Number(e.target.value) })
-              }
-            />
-            <p className="settings-hint">
-              Python 沙盒首次运行约需下载 15MB（Pyodide）。
-            </p>
-          </label>
-          <label>
-            每次搜索默认条数
-            <input
-              type="number"
-              min={1}
-              max={30}
-              value={draft.webSearchDefaultTopK}
-              onChange={(e) =>
-                update({ webSearchDefaultTopK: Number(e.target.value) })
-              }
-            />
-          </label>
-          <label>
-            每次搜索条数上限
-            <input
-              type="number"
-              min={1}
-              max={30}
-              value={draft.webSearchMaxTopK}
-              onChange={(e) =>
-                update({ webSearchMaxTopK: Number(e.target.value) })
-              }
-            />
-          </label>
-          <label>
-            搜索引擎
-            <select
-              value={draft.webSearchEngine}
-              onChange={(e) => update({ webSearchEngine: e.target.value })}
-            >
-              <option value="bing_cn">Bing 中国（默认，免 Key）</option>
-              <option value="bing_intl">Bing 国际</option>
-              <option value="bing_rss">Bing RSS</option>
-              <option value="searxng">SearXNG</option>
-              <option value="duckduckgo">DuckDuckGo HTML</option>
-              <option value="ddg_api">DuckDuckGo API（备用）</option>
-              <option value="metaso">Metaso</option>
-              <option value="baidu">百度 AI 搜索</option>
-            </select>
-            <p className="settings-hint">
-              手机端若 Bing/DDG 失败，推荐配置 Metaso 或百度 Key。
-            </p>
-          </label>
-          {draft.webSearchEngine === "searxng" && (
+          <details className="advanced-block">
+            <summary>思考与采样</summary>
+            {thinkingVisible && (
+              <>
+                <label>
+                  思考模式
+                  <select
+                    value={draft.thinkingMode}
+                    onChange={(e) =>
+                      update({
+                        thinkingMode: e.target
+                          .value as AppSettings["thinkingMode"],
+                      })
+                    }
+                  >
+                    <option value="enabled">开启思考</option>
+                    <option value="disabled">关闭思考（更省）</option>
+                  </select>
+                </label>
+                <label>
+                  思考深度
+                  <select
+                    value={draft.reasoningEffort}
+                    onChange={(e) =>
+                      update({
+                        reasoningEffort: e.target
+                          .value as AppSettings["reasoningEffort"],
+                      })
+                    }
+                  >
+                    <option value="high">high（默认）</option>
+                    <option value="max">max（更深）</option>
+                  </select>
+                </label>
+              </>
+            )}
             <label>
-              SearXNG 地址
+              Temperature
               <input
-                value={draft.webSearchEndpoint}
-                placeholder="https://your-searxng.example"
+                type="number"
+                min={0}
+                max={2}
+                step={0.1}
+                value={draft.temperature}
+                disabled={thinkingOn}
                 onChange={(e) =>
-                  update({ webSearchEndpoint: e.target.value })
+                  update({ temperature: Number(e.target.value) })
+                }
+              />
+            </label>
+            {thinkingOn && (
+              <p className="settings-hint">
+                思考模式开启时，Temperature 由 API 忽略。
+              </p>
+            )}
+          </details>
+
+          <details className="advanced-block">
+            <summary>搜索设置</summary>
+            <label>
+              搜索引擎
+              <select
+                value={draft.webSearchEngine}
+                onChange={(e) => update({ webSearchEngine: e.target.value })}
+              >
+                <option value="bing_cn">Bing 中国（默认，免 Key）</option>
+                <option value="bing_intl">Bing 国际</option>
+                <option value="bing_rss">Bing RSS</option>
+                <option value="searxng">SearXNG</option>
+                <option value="duckduckgo">DuckDuckGo HTML</option>
+                <option value="ddg_api">DuckDuckGo API（备用）</option>
+                <option value="metaso">Metaso</option>
+                <option value="baidu">百度 AI 搜索</option>
+              </select>
+              <p className="settings-hint">
+                手机端若 Bing/DDG 失败，推荐配置 Metaso 或百度 Key。
+              </p>
+            </label>
+            {draft.webSearchEngine === "searxng" && (
+              <label>
+                SearXNG 地址
+                <input
+                  value={draft.webSearchEndpoint}
+                  placeholder="https://your-searxng.example"
+                  onChange={(e) =>
+                    update({ webSearchEndpoint: e.target.value })
+                  }
+                />
+                <p className="settings-hint">
+                  手机不要填 localhost。留空时使用公共 SearXNG 回退。
+                </p>
+              </label>
+            )}
+            {draft.webSearchEngine === "metaso" && (
+              <label>
+                Metaso API Key
+                <input
+                  type="password"
+                  value={draft.webSearchMetasoKey}
+                  onChange={(e) =>
+                    update({ webSearchMetasoKey: e.target.value })
+                  }
+                />
+              </label>
+            )}
+            {draft.webSearchEngine === "baidu" && (
+              <label>
+                百度 API Key
+                <input
+                  type="password"
+                  value={draft.webSearchBaiduKey}
+                  onChange={(e) =>
+                    update({ webSearchBaiduKey: e.target.value })
+                  }
+                />
+              </label>
+            )}
+            <label>
+              每次搜索默认条数
+              <input
+                type="number"
+                min={1}
+                max={30}
+                value={draft.webSearchDefaultTopK}
+                onChange={(e) =>
+                  update({ webSearchDefaultTopK: Number(e.target.value) })
+                }
+              />
+            </label>
+            <label>
+              每次搜索条数上限
+              <input
+                type="number"
+                min={1}
+                max={30}
+                value={draft.webSearchMaxTopK}
+                onChange={(e) =>
+                  update({ webSearchMaxTopK: Number(e.target.value) })
+                }
+              />
+            </label>
+          </details>
+
+          <details className="advanced-block">
+            <summary>超时与上限</summary>
+            <label>
+              Max tokens
+              <input
+                type="number"
+                min={256}
+                max={384000}
+                step={256}
+                value={draft.maxTokens ?? 4096}
+                onChange={(e) =>
+                  update({ maxTokens: Number(e.target.value) || null })
+                }
+              />
+            </label>
+            <label>
+              工具调用轮次上限
+              <input
+                type="number"
+                min={1}
+                max={64}
+                value={draft.maxToolRounds}
+                onChange={(e) =>
+                  update({ maxToolRounds: Number(e.target.value) })
                 }
               />
               <p className="settings-hint">
-                手机不要填 localhost。留空时使用公共 SearXNG 回退。
+                单条消息内模型可连续调用工具的最大轮数（默认 24）。用满后会自动汇总回答，不会报错。
               </p>
             </label>
-          )}
-          {draft.webSearchEngine === "metaso" && (
             <label>
-              Metaso API Key
+              沙盒超时（秒）
               <input
-                type="password"
-                value={draft.webSearchMetasoKey}
+                type="number"
+                min={3}
+                max={120}
+                value={draft.pythonSandboxTimeout}
                 onChange={(e) =>
-                  update({ webSearchMetasoKey: e.target.value })
+                  update({ pythonSandboxTimeout: Number(e.target.value) })
                 }
               />
+              <p className="settings-hint">
+                Python 沙盒首次运行约需下载 15MB（Pyodide）。
+              </p>
             </label>
-          )}
-          {draft.webSearchEngine === "baidu" && (
+          </details>
+
+          <details className="advanced-block">
+            <summary>自定义工具</summary>
             <label>
-              百度 API Key
-              <input
-                type="password"
-                value={draft.webSearchBaiduKey}
-                onChange={(e) =>
-                  update({ webSearchBaiduKey: e.target.value })
-                }
+              自定义工具 JSON（数组，可选 x-apiinphone 扩展）
+              <textarea
+                rows={5}
+                value={draft.toolsCustomJson}
+                placeholder={`[\n  {\n    "type": "function",\n    "function": {\n      "name": "echo_tool",\n      "description": "Echo args",\n      "parameters": { "type": "object", "properties": { "text": { "type": "string" } } }\n    },\n    "x-apiinphone": { "type": "js", "handler": "echo" }\n  }\n]`}
+                onChange={(e) => update({ toolsCustomJson: e.target.value })}
               />
             </label>
-          )}
-          <label>
-            自定义工具 JSON（数组，可选 x-apiinphone 扩展）
-            <textarea
-              rows={5}
-              value={draft.toolsCustomJson}
-              placeholder={`[\n  {\n    "type": "function",\n    "function": {\n      "name": "echo_tool",\n      "description": "Echo args",\n      "parameters": { "type": "object", "properties": { "text": { "type": "string" } } }\n    },\n    "x-apiinphone": { "type": "js", "handler": "echo" }\n  }\n]`}
-              onChange={(e) => update({ toolsCustomJson: e.target.value })}
-            />
-          </label>
+          </details>
 
           <details className="advanced-block">
             <summary>高级网络设置</summary>
