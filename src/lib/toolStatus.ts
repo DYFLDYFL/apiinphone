@@ -46,8 +46,11 @@ export function toolDetail(name: string, argsJson: string): string {
 
 export function runningLabel(name: string, argsJson = ""): string {
   if (name === "save_document") {
+    const format = String(parseArgs(argsJson).format ?? "").toLowerCase();
     const detail = toolDetail(name, argsJson);
-    return detail ? `正在生成文档… · ${detail}` : "正在生成文档…";
+    const verb =
+      format === "excalidraw" ? "正在生成 Excalidraw 表格…" : "正在生成文档…";
+    return detail ? `${verb} · ${detail}` : verb;
   }
   const label = toolDisplayName(name);
   const detail = toolDetail(name, argsJson);

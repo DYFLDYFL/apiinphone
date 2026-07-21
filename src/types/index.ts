@@ -76,7 +76,7 @@ export interface ToolTraceItem {
   exportedFile?: {
     id: string;
     name: string;
-    format: "txt" | "docx" | "pdf";
+    format: "txt" | "docx" | "pdf" | "excalidraw";
     mime: string;
     path: string;
     uri: string;

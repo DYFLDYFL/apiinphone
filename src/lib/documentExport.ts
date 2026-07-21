@@ -5,8 +5,9 @@ import { FileOpener } from "@capacitor-community/file-opener";
 import { Document, Packer, Paragraph, TextRun, HeadingLevel } from "docx";
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import type { AppSettings } from "../types";
+import { buildExcalidrawTableJson, parseTableRows } from "./excalidrawTable";
 
-export type ExportFormat = "txt" | "docx" | "pdf";
+export type ExportFormat = "txt" | "docx" | "pdf" | "excalidraw";
 export type ExportLocation = "documents" | "data" | "cache";
 
 export interface ExportedFile {
@@ -29,6 +30,7 @@ const MIME: Record<ExportFormat, string> = {
   txt: "text/plain;charset=utf-8",
   docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
   pdf: "application/pdf",
+  excalidraw: "application/vnd.excalidraw+json",
 };
 
 const UTF8_BOM = new Uint8Array([0xef, 0xbb, 0xbf]);
@@ -271,8 +273,17 @@ export async function generateDocument(
   format: ExportFormat,
   content: string,
   title?: string,
+  rows?: unknown,
 ): Promise<{ data: string; mime: string }> {
   const text = content ?? "";
+  if (format === "excalidraw") {
+    const grid = parseTableRows(rows ?? content);
+    const json = buildExcalidrawTableJson(grid, { title });
+    return {
+      data: uint8ToBase64(new TextEncoder().encode(json)),
+      mime: MIME.excalidraw,
+    };
+  }
   if (text.length > MAX_EXPORT_CHARS) {
     throw new Error(
       `内容过长（${text.length} 字），上限 ${MAX_EXPORT_CHARS} 字。`,
@@ -297,6 +308,7 @@ export async function saveExportedFile(
     format: ExportFormat;
     content: string;
     title?: string;
+    rows?: unknown;
   },
 ): Promise<ExportedFile> {
   const format = options.format;
@@ -306,6 +318,7 @@ export async function saveExportedFile(
     format,
     options.content,
     options.title,
+    options.rows,
   );
 
   try {
@@ -442,7 +455,7 @@ async function downloadOnWeb(file: ExportedFile): Promise<void> {
   let blob: Blob;
   if (typeof data === "string") {
     const bytes = base64ToUint8(data);
-    if (file.format === "txt") {
+    if (file.format === "txt" || file.format === "excalidraw") {
       const hasBom =
         bytes.length >= 3 &&
         bytes[0] === 0xef &&
@@ -450,7 +463,9 @@ async function downloadOnWeb(file: ExportedFile): Promise<void> {
         bytes[2] === 0xbf;
       const body = hasBom ? bytes.subarray(3) : bytes;
       const text = new TextDecoder("utf-8").decode(body);
-      blob = new Blob([text], { type: file.mime || MIME.txt });
+      blob = new Blob([text], {
+        type: file.mime || MIME[file.format] || MIME.txt,
+      });
     } else {
       blob = new Blob([bytes as BlobPart], { type: file.mime });
     }
@@ -466,10 +481,14 @@ async function downloadOnWeb(file: ExportedFile): Promise<void> {
 }
 
 export function formatExportToolResult(file: ExportedFile): string {
+  const tip =
+    file.format === "excalidraw"
+      ? "请提示用户在聊天界面点击「打开」或「发送」；也可发送到电脑后在 https://excalidraw.com 打开编辑。"
+      : "请提示用户在聊天界面点击「打开」或「发送」。";
   return [
     `已保存：${file.name}`,
     `目录：${file.locationLabel}/${EXPORT_FOLDER}`,
     `路径：${file.path}`,
-    "请提示用户在聊天界面点击「打开」或「发送」。",
+    tip,
   ].join("\n");
 }

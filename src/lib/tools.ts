@@ -57,9 +57,11 @@ const SAVE_DOCUMENT_TOOL = {
   function: {
     name: "save_document",
     description:
-      "将文本生成为 txt / docx / pdf 并保存到手机本地导出目录。" +
-      "用户要求导出、保存、下载、生成 Word/PDF/文本文件时必须调用。" +
-      "保存后用户可在界面点击「打开」或「发送」，无需自己找文件夹。",
+      "将内容保存到手机本地导出目录。" +
+      "支持 txt / docx / pdf，以及 excalidraw（表格白板，生成 .excalidraw 文件）。" +
+      "用户要求导出、保存、下载、生成 Word/PDF/文本/Excalidraw 表格时必须调用。" +
+      "Excalidraw 表格请传 format=excalidraw，并用 rows 二维数组（首行可为表头）；也可用 content 传 JSON 二维数组或 TSV。" +
+      "保存后用户可在界面点击「打开」或「发送」。手机端可发送到电脑后在 https://excalidraw.com 打开。",
     parameters: {
       type: "object",
       properties: {
@@ -69,19 +71,29 @@ const SAVE_DOCUMENT_TOOL = {
         },
         format: {
           type: "string",
-          enum: ["txt", "docx", "pdf"],
-          description: "文件格式",
+          enum: ["txt", "docx", "pdf", "excalidraw"],
+          description: "文件格式；excalidraw 用于表格白板",
         },
         content: {
           type: "string",
-          description: "文件正文（纯文本，可用换行分段）",
+          description:
+            "正文。format=excalidraw 时可省略（若已传 rows）；也可为 JSON 二维数组或 TSV 文本。",
+        },
+        rows: {
+          type: "array",
+          description:
+            "仅 excalidraw：二维字符串数组，如 [[\"姓名\",\"分数\"],[\"张三\",\"90\"]]",
+          items: {
+            type: "array",
+            items: { type: "string" },
+          },
         },
         title: {
           type: "string",
-          description: "可选标题（用于 docx/pdf）",
+          description: "可选标题（docx/pdf/excalidraw 表格上方标题）",
         },
       },
-      required: ["filename", "format", "content"],
+      required: ["filename", "format"],
       additionalProperties: false,
     },
   },
@@ -179,19 +191,35 @@ const BUILTIN_HANDLERS: Record<string, ToolHandler> = {
   },
   save_document: async (args, settings) => {
     const format = String(args.format ?? "txt").toLowerCase() as ExportFormat;
-    if (format !== "txt" && format !== "docx" && format !== "pdf") {
-      throw new ToolError("format 必须是 txt、docx 或 pdf。");
+    if (
+      format !== "txt" &&
+      format !== "docx" &&
+      format !== "pdf" &&
+      format !== "excalidraw"
+    ) {
+      throw new ToolError("format 必须是 txt、docx、pdf 或 excalidraw。");
     }
     const filename = String(args.filename ?? "").trim();
-    const content = String(args.content ?? "");
     if (!filename) throw new ToolError("缺少 filename。");
-    if (!content.trim()) throw new ToolError("content 不能为空。");
+    const content = args.content != null ? String(args.content) : "";
+    const rows = args.rows;
+    if (format === "excalidraw") {
+      if (
+        rows == null &&
+        !content.trim()
+      ) {
+        throw new ToolError("excalidraw 需提供 rows 二维数组或 content（JSON/TSV）。");
+      }
+    } else if (!content.trim()) {
+      throw new ToolError("content 不能为空。");
+    }
     try {
       const file = await saveExportedFile(settings, {
         filename,
         format,
         content,
         title: args.title != null ? String(args.title) : undefined,
+        rows,
       });
       return {
         content: formatExportToolResult(file),
