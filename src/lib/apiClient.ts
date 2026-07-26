@@ -30,22 +30,39 @@ export class ApiError extends Error {
 export interface StreamControl {
   cancelled: boolean;
   abortController?: AbortController;
+  /** Aborted for the whole turn — tool calls and searches included, not just the HTTP stream. */
+  signal: AbortSignal;
   cancel(): void;
 }
 
 export function createStreamControl(): StreamControl {
+  const turn = new AbortController();
   const control: StreamControl = {
     cancelled: false,
     abortController: undefined,
+    signal: turn.signal,
     cancel() {
       control.cancelled = true;
       control.abortController?.abort();
+      turn.abort();
     },
   };
   return control;
 }
 
 const RETRYABLE_STATUS = new Set([408, 429, 500, 502, 503, 504]);
+
+/**
+ * Tool output is replayed in every later round, so uncapped results (search hits,
+ * fetched pages, python stdout) compound into the context window.
+ */
+const MAX_TOOL_RESULT_CHARS = 8000;
+
+function capToolResult(text: string): string {
+  if (text.length <= MAX_TOOL_RESULT_CHARS) return text;
+  const dropped = text.length - MAX_TOOL_RESULT_CHARS;
+  return `${text.slice(0, MAX_TOOL_RESULT_CHARS)}\n\n…（内容过长，已截断 ${dropped} 字符）`;
+}
 
 /** Accumulate billed tokens across rounds: sum completions; keep last-round prompt/cache. */
 function mergeUsage(
@@ -113,6 +130,27 @@ function buildHeaders(settings: AppSettings): Record<string, string> {
   return headers;
 }
 
+/** GET/POST JSON under one deadline that also covers reading the response body. */
+async function fetchJson(
+  url: string,
+  init: RequestInit,
+  timeoutMs: number,
+  errorLabel: string,
+): Promise<Record<string, unknown>> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const resp = await fetch(url, { ...init, signal: controller.signal });
+    if (!resp.ok) {
+      const detail = (await resp.text()).slice(0, 200);
+      throw new ApiError(`${errorLabel} (${resp.status})：${detail}`, resp.status);
+    }
+    return (await resp.json()) as Record<string, unknown>;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 function apiRoot(settings: AppSettings): string {
   const url = settings.baseUrl.replace(/\/$/, "");
   return url.endsWith("/v1") ? url.slice(0, -3) : url;
@@ -169,21 +207,39 @@ function buildChatBody(
   return body;
 }
 
-async function sleep(ms: number): Promise<void> {
-  await new Promise((resolve) => setTimeout(resolve, ms));
+/** Backoff sleep that gives up early when the user stops generation. */
+async function sleep(ms: number, control?: StreamControl): Promise<void> {
+  if (!control) {
+    await new Promise((resolve) => setTimeout(resolve, ms));
+    return;
+  }
+  const step = 100;
+  for (let waited = 0; waited < ms; waited += step) {
+    if (control.cancelled) return;
+    await new Promise((resolve) => setTimeout(resolve, Math.min(step, ms - waited)));
+  }
+}
+
+interface RetryOptions<T> {
+  control?: StreamControl;
+  /** Fired before every retry so the UI can drop text streamed by the failed attempt. */
+  onAttemptStart?: (attempt: number) => void;
+  action: () => Promise<T>;
 }
 
 async function withRetry<T>(
   settings: AppSettings,
-  action: () => Promise<T>,
+  options: RetryOptions<T>,
 ): Promise<T> {
   const attempts = Math.max(1, settings.retryCount + 1);
   let lastErr: unknown;
   for (let attempt = 0; attempt < attempts; attempt++) {
+    if (attempt > 0) options.onAttemptStart?.(attempt);
     try {
-      return await action();
+      return await options.action();
     } catch (err) {
       lastErr = err;
+      if (options.control?.cancelled) throw err;
       const status =
         err instanceof ApiError
           ? err.status
@@ -195,6 +251,7 @@ async function withRetry<T>(
       if (attempt >= attempts - 1 || !retryable) throw err;
       await sleep(
         Math.min(30000, (settings.retryBackoffMs / 1000) * 2 ** attempt * 1000),
+        options.control,
       );
     }
   }
@@ -336,6 +393,12 @@ async function streamChat(
       }
     } finally {
       clearTimeout(timeout);
+      await reader.cancel().catch(() => undefined);
+      try {
+        reader.releaseLock();
+      } catch {
+        /* already released by cancel() */
+      }
     }
 
     const tools = toolAcc.finish();
@@ -383,18 +446,23 @@ async function completeChat(
     () => controller.abort(),
     settings.httpReadTimeout * 1000,
   );
-  const resp = await fetch(chatUrl(settings), {
-    method: "POST",
-    headers: buildHeaders(settings),
-    body: JSON.stringify({ ...body, stream: false }),
-    signal: controller.signal,
-  });
-  clearTimeout(timeout);
-  if (!resp.ok) {
-    const detail = (await resp.text()).slice(0, 200);
-    throw new ApiError(`API 错误 (${resp.status})：${detail}`, resp.status);
+  let data: Record<string, unknown>;
+  // The deadline has to cover reading the body too, not just the response headers.
+  try {
+    const resp = await fetch(chatUrl(settings), {
+      method: "POST",
+      headers: buildHeaders(settings),
+      body: JSON.stringify({ ...body, stream: false }),
+      signal: controller.signal,
+    });
+    if (!resp.ok) {
+      const detail = (await resp.text()).slice(0, 200);
+      throw new ApiError(`API 错误 (${resp.status})：${detail}`, resp.status);
+    }
+    data = (await resp.json()) as Record<string, unknown>;
+  } finally {
+    clearTimeout(timeout);
   }
-  const data = (await resp.json()) as Record<string, unknown>;
   const choices = data.choices as Array<Record<string, unknown>>;
   const message = (choices?.[0]?.message ?? {}) as Record<string, unknown>;
   const content = String(message.content ?? "");
@@ -545,6 +613,7 @@ async function finalizeAfterToolLimit(
   options?: {
     onDelta?: (text: string) => void;
     onReasoningDelta?: (text: string) => void;
+    onStreamRoundStart?: (round: number) => void;
     control?: StreamControl;
   },
 ): Promise<{ content: string; reasoning: string; usage: TokenUsage | null }> {
@@ -564,9 +633,11 @@ async function finalizeAfterToolLimit(
     },
   ];
   try {
-    const forced = await withRetry(settings, () =>
-      runSingleCompletion(settings, wrapUpConvo, false, options),
-    );
+    const forced = await withRetry(settings, {
+      control: options?.control,
+      onAttemptStart: () => options?.onStreamRoundStart?.(1),
+      action: () => runSingleCompletion(settings, wrapUpConvo, false, options),
+    });
     const content =
       forced.content.trim() ||
       lastStreamedContent.trim() ||
@@ -641,9 +712,11 @@ export async function chatStream(
       if (round > 0) {
         options?.onStreamRoundStart?.(round);
       }
-      const run = () => runSingleCompletion(settings, convo, true, options);
-
-      const result = await withRetry(settings, run);
+      const result = await withRetry(settings, {
+        control: options?.control,
+        onAttemptStart: () => options?.onStreamRoundStart?.(round),
+        action: () => runSingleCompletion(settings, convo, true, options),
+      });
       totalUsage = mergeUsage(totalUsage, result.usage);
       if (result.reasoning) lastReasoning = result.reasoning;
       if (result.content.trim()) {
@@ -686,7 +759,12 @@ export async function chatStream(
           let toolOut: string;
           let exportedFile: import("./documentExport").ExportedFile | undefined;
           try {
-            const executed = await executeTool(name, args, settings);
+            const executed = await executeTool(
+              name,
+              args,
+              settings,
+              options?.control?.signal,
+            );
             toolOut = executed.content;
             exportedFile = executed.exportedFile;
             options?.onToolStatus?.(
@@ -714,7 +792,7 @@ export async function chatStream(
           }
           const toolMsg: ChatMessage = {
             role: "tool",
-            content: toolOut,
+            content: capToolResult(toolOut),
             toolCallId: tc.id,
           };
           convo.push(toolMsg);
@@ -751,7 +829,7 @@ export async function chatStream(
     return {
       content: finalized.content,
       reasoning: lastReasoning,
-      note: "",
+      note: `已达工具调用上限（${maxRounds} 轮），已让模型直接总结现有结果。`,
       usage: totalUsage,
       apiMessages,
     };
@@ -775,24 +853,17 @@ export async function fetchDeepseekBalance(
   if (!settings.apiKey.trim()) {
     throw new ApiError("请先在设置中填写 API Key");
   }
-  const controller = new AbortController();
-  const timeout = setTimeout(
-    () => controller.abort(),
-    settings.httpConnectTimeout * 1000,
-  );
-  const resp = await fetch(`${apiRoot(settings)}/user/balance`, {
-    headers: {
-      Authorization: `Bearer ${settings.apiKey.trim()}`,
-      Accept: "application/json",
+  const data = await fetchJson(
+    `${apiRoot(settings)}/user/balance`,
+    {
+      headers: {
+        Authorization: `Bearer ${settings.apiKey.trim()}`,
+        Accept: "application/json",
+      },
     },
-    signal: controller.signal,
-  });
-  clearTimeout(timeout);
-  if (!resp.ok) {
-    const detail = (await resp.text()).slice(0, 160);
-    throw new ApiError(`查询余额失败 (${resp.status})：${detail}`);
-  }
-  const data = (await resp.json()) as Record<string, unknown>;
+    settings.httpConnectTimeout * 1000,
+    "查询余额失败",
+  );
   const infos = Array.isArray(data.balance_infos)
     ? data.balance_infos.map((item) => {
         const row = item as Record<string, unknown>;
@@ -816,14 +887,12 @@ export async function listModels(settings: AppSettings): Promise<string[]> {
   }
   const base = settings.baseUrl.replace(/\/$/, "");
   const url = base.endsWith("/v1") ? `${base}/models` : `${base}/v1/models`;
-  const resp = await fetch(url, { headers: buildHeaders(settings) });
-  if (!resp.ok) {
-    const detail = (await resp.text()).slice(0, 200);
-    throw new ApiError(`获取模型列表失败 (${resp.status})：${detail}`);
-  }
-  const data = (await resp.json()) as {
-    data?: Array<{ id?: string }>;
-  };
+  const data = (await fetchJson(
+    url,
+    { headers: buildHeaders(settings) },
+    settings.httpConnectTimeout * 1000,
+    "获取模型列表失败",
+  )) as { data?: Array<{ id?: string }> };
   const ids = (data.data ?? [])
     .map((m) => m.id)
     .filter((id): id is string => Boolean(id));

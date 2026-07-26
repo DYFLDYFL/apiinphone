@@ -59,6 +59,40 @@
       padding: 16px 20px 24px;
       display: flex; flex-direction: column; gap: 14px;
       background: var(--chat-bg);
+      overflow-anchor: auto;
+    }
+    #jump-bottom {
+      position: fixed;
+      right: 14px;
+      bottom: 14px;
+      width: 44px;
+      height: 44px;
+      border-radius: 50%;
+      border: 1px solid var(--border);
+      background: var(--panel);
+      color: var(--accent);
+      font-size: 20px;
+      line-height: 1;
+      cursor: pointer;
+      display: grid;
+      place-items: center;
+      box-shadow: 0 2px 8px var(--shadow);
+      opacity: 0;
+      visibility: hidden;
+      transition: opacity 0.18s ease;
+      z-index: 10;
+    }
+    #jump-bottom.is-visible {
+      opacity: 0.95;
+      visibility: visible;
+    }
+    #jump-bottom.is-streaming {
+      border-color: var(--accent);
+      animation: pulse-ring 1.4s ease-in-out infinite;
+    }
+    @keyframes pulse-ring {
+      0%, 100% { box-shadow: 0 2px 8px var(--shadow); }
+      50% { box-shadow: 0 0 0 4px var(--blockquote-border); }
     }
     .msg {
       border: 1px solid var(--border);
@@ -467,8 +501,10 @@
 </head>
 <body class="light">
   <div id="messages"></div>
+  <button id="jump-bottom" type="button" title="回到最新" aria-label="回到最新">↓</button>
   <script>
     const container = document.getElementById("messages");
+    const jumpBtn = document.getElementById("jump-bottom");
     marked.setOptions({ breaks: true, gfm: true });
 
     const mathPattern = /\$\$([\s\S]+?)\$\$|\\\[([\s\S]+?)\\\]|\\\((.+?)\\\)|(?<!\$)\$(?!\$)([^\$\n]+?)(?<!\$)\$(?!\$)/g;
@@ -606,6 +642,8 @@
 
     window.clearMessages = function() {
       container.innerHTML = "";
+      lastAssistantEl = null;
+      window.setStickToBottom(true);
     };
 
     function ensureReasoningBlock(parent) {
@@ -748,27 +786,50 @@
       return '<pre class="tool-fetch-body">' + escapeHtml(text.slice(0, 12000)) + "</pre>";
     }
 
-    function renderToolItem(tool) {
+    function toolItemKey(tool, index) {
+      const id = tool.id == null ? "" : String(tool.id);
+      return id || "idx-" + index;
+    }
+
+    function createToolItem() {
       const li = document.createElement("li");
-      li.className = "tool-item " + (tool.status || "done");
+      li.className = "tool-item";
       const head = document.createElement("div");
       head.className = "tool-head";
-      head.textContent = tool.label || tool.name || "工具";
       li.appendChild(head);
-      const result = (tool.result || "").trim();
-      if (result && tool.status !== "running") {
-        const details = document.createElement("details");
-        details.className = "tool-result";
-        const summary = document.createElement("summary");
-        summary.textContent = resultSummaryLabel(tool.name || "");
-        const body = document.createElement("div");
-        body.className = "tool-result-body";
-        body.innerHTML = formatToolResultHtml(tool.name || "", result);
-        details.appendChild(summary);
-        details.appendChild(body);
-        li.appendChild(details);
-      }
       return li;
+    }
+
+    /** Patch in place: keeps user-toggled result panels open and avoids re-parsing
+     *  large search results every time another tool changes status. */
+    function syncToolItem(li, tool) {
+      const status = tool.status || "done";
+      const className = "tool-item " + status;
+      if (li.className !== className) li.className = className;
+      const label = tool.label || tool.name || "工具";
+      const head = li.querySelector(".tool-head");
+      if (head.textContent !== label) head.textContent = label;
+
+      const result = (tool.result || "").trim();
+      const existing = li.querySelector(".tool-result");
+      if (!result || status === "running") {
+        if (existing) existing.remove();
+        li._renderedResult = "";
+        return;
+      }
+      if (existing && li._renderedResult === result) return;
+      if (existing) existing.remove();
+      const details = document.createElement("details");
+      details.className = "tool-result";
+      const summary = document.createElement("summary");
+      summary.textContent = resultSummaryLabel(tool.name || "");
+      const body = document.createElement("div");
+      body.className = "tool-result-body";
+      body.innerHTML = formatToolResultHtml(tool.name || "", result);
+      details.appendChild(summary);
+      details.appendChild(body);
+      li.appendChild(details);
+      li._renderedResult = result;
     }
 
     function setSourcesBlock(parent, sources) {
@@ -882,36 +943,53 @@
 
     function setToolsBlock(parent, tools, active) {
       const items = Array.isArray(tools) ? tools : [];
-      const existing = parent.querySelector(".tools-block");
+      let block = parent.querySelector(".tools-block");
       if (!items.length) {
-        if (existing) existing.remove();
+        if (block) block.remove();
         return;
       }
-      const wasOpen = existing?.open === true;
       const isWaiting = !!active && items.some((t) => t.status === "running");
-      if (existing) existing.remove();
 
-      const block = document.createElement("details");
-      block.className = "tools-block";
-      if (isWaiting) block.classList.add("waiting");
-      block.open = wasOpen || isWaiting;
+      if (!block) {
+        block = document.createElement("details");
+        block.className = "tools-block";
+        const summary = document.createElement("summary");
+        const body = document.createElement("div");
+        body.className = "tools-body";
+        const list = document.createElement("ul");
+        list.className = "tools-list";
+        body.appendChild(list);
+        block.appendChild(summary);
+        block.appendChild(body);
+        parent.insertBefore(block, parent.querySelector(".content"));
+      }
 
-      const summary = document.createElement("summary");
-      summary.textContent = "工具调用（" + items.length + "）";
+      block.classList.toggle("waiting", isWaiting);
+      if (isWaiting) block.open = true;
+      const summary = block.querySelector("summary");
+      const summaryText = "工具调用（" + items.length + "）";
+      if (summary.textContent !== summaryText) summary.textContent = summaryText;
 
-      const body = document.createElement("div");
-      body.className = "tools-body";
-      const list = document.createElement("ul");
-      list.className = "tools-list";
-      items.forEach((tool) => {
-        list.appendChild(renderToolItem(tool));
+      const list = block.querySelector(".tools-list");
+      const reusable = new Map();
+      for (const li of Array.from(list.children)) {
+        reusable.set(li.dataset.toolKey, li);
+      }
+      items.forEach((tool, index) => {
+        const key = toolItemKey(tool, index);
+        let li = reusable.get(key);
+        if (li) {
+          reusable.delete(key);
+        } else {
+          li = createToolItem();
+          li.dataset.toolKey = key;
+        }
+        syncToolItem(li, tool);
+        if (list.children[index] !== li) {
+          list.insertBefore(li, list.children[index] || null);
+        }
       });
-      body.appendChild(list);
-      block.appendChild(summary);
-      block.appendChild(body);
-
-      const content = parent.querySelector(".content");
-      parent.insertBefore(block, content);
+      reusable.forEach((li) => li.remove());
     }
 
     window.appendMessage = function(role, text, options) {
@@ -943,16 +1021,32 @@
         setSourcesBlock(wrap, options.sources);
       }
       container.appendChild(wrap);
-      window.scrollToBottom();
+      if (role === "assistant") lastAssistantEl = wrap;
+      // A message the user just sent always brings the view back to the latest.
+      if (role === "user") {
+        window.setStickToBottom(true);
+      } else {
+        maybeScrollToBottom();
+      }
       return wrap;
     };
 
-    window.updateLastAssistant = function(text, typing, reasoning, reasoningTyping) {
-      let nodes = container.querySelectorAll(".msg.assistant");
-      let last = nodes[nodes.length - 1];
-      if (!last) {
-        last = window.appendMessage("assistant", "", { typing: !!typing });
+    /** Cached tail of the transcript so streaming updates skip a full DOM scan. */
+    let lastAssistantEl = null;
+
+    function currentAssistant(createOptions) {
+      if (lastAssistantEl && lastAssistantEl.isConnected) return lastAssistantEl;
+      const nodes = container.querySelectorAll(".msg.assistant");
+      lastAssistantEl = nodes[nodes.length - 1] || null;
+      if (!lastAssistantEl && createOptions) {
+        lastAssistantEl = window.appendMessage("assistant", "", createOptions);
       }
+      return lastAssistantEl;
+    }
+
+    window.updateLastAssistant = function(text, typing, reasoning, reasoningTyping) {
+      const last = currentAssistant({ typing: !!typing });
+      if (!last) return;
       last.classList.toggle("typing", !!typing);
       setReasoningBlock(last, reasoning, reasoningTyping);
       if (!reasoningTyping && (reasoning || "").trim()) {
@@ -962,29 +1056,25 @@
       const content = last.querySelector(".content");
       const sources = last._citationSources || null;
       renderAssistantContent(content, text, !!typing, sources);
-      window.scrollToBottom();
+      maybeScrollToBottom();
     };
 
     window.updateLastAssistantTools = function(tools, active) {
-      let nodes = container.querySelectorAll(".msg.assistant");
-      let last = nodes[nodes.length - 1];
-      if (!last) {
-        last = window.appendMessage("assistant", "", {});
-      }
+      const last = currentAssistant({});
+      if (!last) return;
       setToolsBlock(last, tools, !!active);
-      window.scrollToBottom();
+      maybeScrollToBottom();
     };
 
     window.updateLastAssistantSources = function(sources) {
-      let nodes = container.querySelectorAll(".msg.assistant");
-      let last = nodes[nodes.length - 1];
+      const last = currentAssistant(null);
       if (!last) return;
       last._citationSources = sources || [];
       setSourcesBlock(last, sources);
       const content = last.querySelector(".content");
       const raw = content.dataset.rawMarkdown || "";
       renderAssistantContent(content, raw, false, sources);
-      window.scrollToBottom();
+      maybeScrollToBottom();
     };
 
     window.showError = function(text) {
@@ -993,10 +1083,83 @@
       if (last) last.querySelector(".content").classList.add("error");
     };
 
-    window.scrollToBottom = function() {
+    /**
+     * Stick-to-bottom state machine (modelled on use-stick-to-bottom):
+     * new content only pulls the view down while the reader is already near the
+     * bottom, so scrolling up to re-read earlier context is never interrupted.
+     */
+    const STICK_THRESHOLD_PX = 80;
+    let stickToBottom = true;
+    let streaming = false;
+    let lastScrollY = 0;
+
+    function distanceFromBottom() {
+      const doc = document.documentElement;
+      const height = Math.max(document.body.scrollHeight, doc.scrollHeight);
+      return height - window.scrollY - window.innerHeight;
+    }
+
+    function isNearBottom() {
+      return distanceFromBottom() <= STICK_THRESHOLD_PX;
+    }
+
+    function syncJumpButton() {
+      jumpBtn.classList.toggle("is-visible", !stickToBottom);
+      jumpBtn.classList.toggle("is-streaming", !stickToBottom && streaming);
+    }
+
+    function forceScrollToBottom() {
       requestAnimationFrame(() => {
         window.scrollTo(0, document.body.scrollHeight);
       });
+    }
+
+    function maybeScrollToBottom() {
+      if (!stickToBottom) {
+        syncJumpButton();
+        return;
+      }
+      forceScrollToBottom();
+    }
+
+    window.addEventListener(
+      "scroll",
+      () => {
+        const y = window.scrollY;
+        const scrolledUp = y < lastScrollY - 2;
+        lastScrollY = y;
+        // Only an upward move detaches: content growing below must never unstick,
+        // and coming back near the bottom always re-attaches.
+        const next = isNearBottom() ? true : scrolledUp ? false : stickToBottom;
+        if (next !== stickToBottom) {
+          stickToBottom = next;
+          syncJumpButton();
+        }
+      },
+      { passive: true },
+    );
+
+    jumpBtn.addEventListener("click", () => {
+      stickToBottom = true;
+      syncJumpButton();
+      forceScrollToBottom();
+    });
+
+    window.setStickToBottom = function(value) {
+      stickToBottom = !!value;
+      syncJumpButton();
+      if (stickToBottom) forceScrollToBottom();
+    };
+
+    window.setStreaming = function(value) {
+      streaming = !!value;
+      syncJumpButton();
+    };
+
+    window.scrollToBottom = function() {
+      stickToBottom = true;
+      syncJumpButton();
+      forceScrollToBottom();
     };
   </script>
 </body>

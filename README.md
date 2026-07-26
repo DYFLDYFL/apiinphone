@@ -1,6 +1,6 @@
 # apiinphone
 
-**Version 1.2.5**
+**Version 1.3.0**
 
 Android 版 AI API 客户端，功能对齐桌面项目 [aiusingapi](../aiusingapi)。
 
@@ -8,6 +8,7 @@ Android 版 AI API 客户端，功能对齐桌面项目 [aiusingapi](../aiusinga
 
 - Poe / DeepSeek OpenAI 兼容 API 对话
 - 流式回复、思考过程展示
+- 生成过程中可自由上翻查看上文（不会被拽回底部），右下角「↓」一键回到最新
 - Markdown + LaTeX 渲染（本地 KaTeX）
 - 多会话管理（新建 / 重命名 / 删除 / 清空）
 - 附件（图片、文本、小体积二进制 Base64；粘贴图片）

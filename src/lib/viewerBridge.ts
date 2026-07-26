@@ -26,6 +26,8 @@ export interface ViewerHandle {
   ): void;
   showError(text: string): void;
   scrollToBottom(): void;
+  setStickToBottom(value: boolean): void;
+  setStreaming(value: boolean): void;
 }
 
 export function getViewerWindow(iframe: HTMLIFrameElement | null): ViewerHandle | null {

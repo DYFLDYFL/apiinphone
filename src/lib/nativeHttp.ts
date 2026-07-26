@@ -42,6 +42,16 @@ function responseText(data: unknown): string {
   return String(data);
 }
 
+export class AbortedError extends Error {
+  constructor() {
+    super("已取消");
+  }
+}
+
+function throwIfAborted(signal?: AbortSignal | null): void {
+  if (signal?.aborted) throw new AbortedError();
+}
+
 /** Native HTTP on Android/iOS; fetch on web. Community fix for WebView fetch failures. */
 export async function httpText(
   url: string,
@@ -51,6 +61,8 @@ export async function httpText(
   const method = (init.method ?? "GET").toUpperCase();
   const headers = normalizeHeaders(init);
   const data = bodyToString(init.body);
+  const outerSignal = init.signal ?? undefined;
+  throwIfAborted(outerSignal);
 
   if (Capacitor.isNativePlatform()) {
     const options = {
@@ -65,17 +77,22 @@ export async function httpText(
       method === "GET"
         ? await CapacitorHttp.get(options)
         : await CapacitorHttp.request({ ...options, method });
+    // CapacitorHttp has no abort support: discard a result the caller no longer wants.
+    throwIfAborted(outerSignal);
     return { status: resp.status, text: responseText(resp.data) };
   }
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const relay = () => controller.abort();
+  outerSignal?.addEventListener("abort", relay);
   try {
     const resp = await fetch(url, { ...init, signal: controller.signal });
     const text = await resp.text();
     return { status: resp.status, text };
   } finally {
     clearTimeout(timer);
+    outerSignal?.removeEventListener("abort", relay);
   }
 }
 

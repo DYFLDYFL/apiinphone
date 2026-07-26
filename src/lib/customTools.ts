@@ -75,6 +75,7 @@ export async function executeCustomTool(
   name: string,
   args: Record<string, unknown>,
   extension: CustomToolExtension,
+  signal?: AbortSignal,
 ): Promise<string> {
   if (extension.type === "js") {
     const handler = JS_HANDLERS[extension.handler];
@@ -114,6 +115,8 @@ export async function executeCustomTool(
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 30000);
+  const relay = () => controller.abort();
+  signal?.addEventListener("abort", relay);
   try {
     const resp = await fetch(url, {
       method,
@@ -130,8 +133,10 @@ export async function executeCustomTool(
     return text.slice(0, 12000);
   } catch (err) {
     if (err instanceof ToolError) throw err;
+    if (signal?.aborted) throw new ToolError(`HTTP 工具 ${name} 已取消`);
     throw new ToolError(`HTTP 工具 ${name} 请求失败：${String(err)}`);
   } finally {
     clearTimeout(timer);
+    signal?.removeEventListener("abort", relay);
   }
 }

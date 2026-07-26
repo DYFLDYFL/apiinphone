@@ -26,9 +26,7 @@ import { webFetchForTool, webSearchForTool } from "./webSearch";
 
 export class ToolError extends Error {}
 
-/** Default max agent tool loops per user message. */
-export const DEFAULT_MAX_TOOL_ROUNDS = 24;
-
+export { DEFAULT_MAX_TOOL_ROUNDS } from "./settings";
 export { waitingLabel, buildToolTraceFromApiMessages as buildToolTrace };
 
 export interface ToolExecutionResult {
@@ -165,18 +163,19 @@ const RUN_PYTHON_TOOL = {
 type ToolHandler = (
   args: Record<string, unknown>,
   settings: AppSettings,
+  signal?: AbortSignal,
 ) => Promise<string | ToolExecutionResult>;
 
 const BUILTIN_HANDLERS: Record<string, ToolHandler> = {
   get_current_time: async () => new Date().toISOString(),
-  web_search: async (args, settings) => {
+  web_search: async (args, settings, signal) => {
     const query = String(args.query ?? "").trim();
     const topK = resolveWebSearchTopK(settings, args.topK);
-    return webSearchForTool(query, settings, topK);
+    return webSearchForTool(query, settings, topK, signal);
   },
-  web_fetch: async (args) => {
+  web_fetch: async (args, _settings, signal) => {
     const url = String(args.url ?? "").trim();
-    return webFetchForTool(url);
+    return webFetchForTool(url, signal);
   },
   run_python: async (args, settings) => {
     const code = String(args.code ?? "");
@@ -286,17 +285,19 @@ export async function executeTool(
   name: string,
   argumentsJson: string,
   settings: AppSettings,
+  signal?: AbortSignal,
 ): Promise<ToolExecutionResult> {
+  if (signal?.aborted) throw new ToolError("已取消");
   const payload = parseToolArgs(argumentsJson);
 
   const custom = customToolExtensions(settings).get(name);
   if (custom) {
-    return { content: await executeCustomTool(name, payload, custom) };
+    return { content: await executeCustomTool(name, payload, custom, signal) };
   }
 
   const handler = BUILTIN_HANDLERS[name];
   if (handler) {
-    const out = await handler(payload, settings);
+    const out = await handler(payload, settings, signal);
     if (typeof out === "string") return { content: out };
     return out;
   }

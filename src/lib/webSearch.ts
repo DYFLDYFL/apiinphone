@@ -258,10 +258,15 @@ function parseBingRss(xml: string, topK: number): SearchResult[] {
   return results;
 }
 
-async function searchJina(query: string, topK: number): Promise<SearchResult[]> {
+async function searchJina(
+  query: string,
+  topK: number,
+  signal?: AbortSignal,
+): Promise<SearchResult[]> {
   const text = await fetchText(
     `https://s.jina.ai/${encodeURIComponent(query)}`,
     {
+      signal,
       headers: {
         Accept: "text/plain, text/markdown, */*",
         "X-Respond-With": "no-content",
@@ -294,9 +299,11 @@ async function searchJina(query: string, topK: number): Promise<SearchResult[]> 
 async function searchPublicSearxng(
   query: string,
   topK: number,
+  signal?: AbortSignal,
 ): Promise<SearchResult[]> {
   const errors: string[] = [];
   for (const base of PUBLIC_SEARXNG) {
+    if (signal?.aborted) break;
     try {
       const url = `${base}/search?q=${encodeURIComponent(query)}&format=json`;
       const { status, data } = await httpJson<{
@@ -304,6 +311,7 @@ async function searchPublicSearxng(
       }>(
         url,
         {
+          signal,
           headers: {
             Accept: "application/json",
             "User-Agent": SEARCH_UA,
@@ -352,25 +360,34 @@ async function searchWithEngine(
   query: string,
   settings: AppSettings,
   topK: number,
+  signal?: AbortSignal,
 ): Promise<SearchResult[]> {
   if (engine === "bing_cn") {
-    const html = await fetchText(`${BING_CN}?q=${encodeURIComponent(query)}`);
+    const html = await fetchText(`${BING_CN}?q=${encodeURIComponent(query)}`, {
+      signal,
+    });
     return parseBingResults(html, topK, BING_CN);
   }
   if (engine === "bing_intl") {
-    const html = await fetchText(`${BING_INTL}?q=${encodeURIComponent(query)}`);
+    const html = await fetchText(`${BING_INTL}?q=${encodeURIComponent(query)}`, {
+      signal,
+    });
     return parseBingResults(html, topK, BING_INTL);
   }
   if (engine === "bing_rss") {
     const xml = await fetchText(
       `${BING_RSS}?q=${encodeURIComponent(query)}&format=rss`,
-      { headers: { Accept: "application/rss+xml, application/xml, text/xml" } },
+      {
+        signal,
+        headers: { Accept: "application/rss+xml, application/xml, text/xml" },
+      },
     );
     return parseBingRss(xml, topK);
   }
   if (engine === "duckduckgo") {
     const html = await fetchText(DDG_HTML, {
       method: "POST",
+      signal,
       headers: {
         "Content-Type": "application/x-www-form-urlencoded",
         Referer: "https://html.duckduckgo.com/",
@@ -382,7 +399,7 @@ async function searchWithEngine(
   if (engine === "ddg_api") {
     const json = await fetchText(
       `${DDG_API}?q=${encodeURIComponent(query)}&format=json&no_html=1&skip_disambig=1`,
-      { headers: { Accept: "application/json" } },
+      { signal, headers: { Accept: "application/json" } },
     );
     let data: Record<string, unknown>;
     try {
@@ -397,19 +414,22 @@ async function searchWithEngine(
     return results;
   }
   if (engine === "jina") {
-    return searchJina(query, topK);
+    return searchJina(query, topK, signal);
   }
   if (engine === "searxng") {
     const base = normalizeSearxngEndpoint(settings.webSearchEndpoint);
     if (!base) {
-      return searchPublicSearxng(query, topK);
+      return searchPublicSearxng(query, topK, signal);
     }
     try {
       const { status, data } = await httpJson<{
         results?: Array<{ title?: string; url?: string; content?: string }>;
       }>(
         `${base}/search?q=${encodeURIComponent(query)}&format=json`,
-        { headers: { Accept: "application/json", "User-Agent": SEARCH_UA } },
+        {
+          signal,
+          headers: { Accept: "application/json", "User-Agent": SEARCH_UA },
+        },
         18000,
       );
       if (status >= 200 && status < 300) {
@@ -425,6 +445,7 @@ async function searchWithEngine(
     }
     const html = await fetchText(
       `${base}/search?q=${encodeURIComponent(query)}&format=html`,
+      { signal },
     );
     const articleRe = /<article[^>]*\bresult\b[^>]*>[\s\S]*?<\/article>/gi;
     const results: SearchResult[] = [];
@@ -452,6 +473,7 @@ async function searchWithEngine(
       "https://metaso.cn/api/v1/search",
       {
         method: "POST",
+        signal,
         headers: {
           Authorization: `Bearer ${key}`,
           "Content-Type": "application/json",
@@ -485,6 +507,7 @@ async function searchWithEngine(
       "https://qianfan.baidubce.com/v2/ai_search/web_search",
       {
         method: "POST",
+        signal,
         headers: {
           Authorization: `Bearer ${key}`,
           "Content-Type": "application/json",
@@ -503,14 +526,23 @@ async function searchWithEngine(
       snippet: r.snippet ?? r.content ?? "",
     }));
   }
-  const html = await fetchText(`${BING_CN}?q=${encodeURIComponent(query)}`);
+  const html = await fetchText(`${BING_CN}?q=${encodeURIComponent(query)}`, {
+    signal,
+  });
   return parseBingResults(html, topK, BING_CN);
 }
+
+/**
+ * Walking the whole fallback chain can take minutes; cap the entire search so a
+ * cancelled or slow turn cannot stall the tool loop.
+ */
+const SEARCH_BUDGET_MS = 25000;
 
 export async function webSearch(
   query: string,
   settings: AppSettings,
   topK?: number,
+  signal?: AbortSignal,
 ): Promise<SearchResult[]> {
   const q = query.trim();
   if (!q) throw new WebSearchError("搜索词不能为空");
@@ -519,22 +551,44 @@ export async function webSearch(
   const engines = [primary, ...fallbackEngines(primary)];
   const errors: string[] = [];
 
-  for (const engine of engines) {
-    try {
-      const results = await searchWithEngine(engine, q, settings, k);
-      if (results.length) return results;
-      errors.push(`${engine}: 无结果`);
-    } catch (err) {
-      const msg = err instanceof WebSearchError ? err.message : String(err);
-      errors.push(`${engine}: ${msg}`);
-    }
-  }
+  const budget = new AbortController();
+  const budgetTimer = setTimeout(() => budget.abort(), SEARCH_BUDGET_MS);
+  const relay = () => budget.abort();
+  signal?.addEventListener("abort", relay);
+  const runSignal = budget.signal;
+  const stopped = () => runSignal.aborted;
 
   try {
-    return await searchPublicSearxng(q, k);
-  } catch (err) {
-    const msg = err instanceof WebSearchError ? err.message : String(err);
-    errors.push(`public_searxng: ${msg}`);
+    for (const engine of engines) {
+      if (stopped()) break;
+      try {
+        const results = await searchWithEngine(engine, q, settings, k, runSignal);
+        if (results.length) return results;
+        errors.push(`${engine}: 无结果`);
+      } catch (err) {
+        const msg = err instanceof WebSearchError ? err.message : String(err);
+        errors.push(`${engine}: ${msg}`);
+      }
+    }
+
+    if (!stopped()) {
+      try {
+        return await searchPublicSearxng(q, k, runSignal);
+      } catch (err) {
+        const msg = err instanceof WebSearchError ? err.message : String(err);
+        errors.push(`public_searxng: ${msg}`);
+      }
+    }
+  } finally {
+    clearTimeout(budgetTimer);
+    signal?.removeEventListener("abort", relay);
+  }
+
+  if (signal?.aborted) throw new WebSearchError("已取消");
+  if (runSignal.aborted) {
+    throw new WebSearchError(
+      `搜索超时（超过 ${Math.round(SEARCH_BUDGET_MS / 1000)} 秒）。详情：${errors.join("；")}`,
+    );
   }
 
   throw new WebSearchError(
@@ -543,7 +597,7 @@ export async function webSearch(
   );
 }
 
-export async function webFetch(url: string): Promise<string> {
+export async function webFetch(url: string, signal?: AbortSignal): Promise<string> {
   if (!url.startsWith("http://") && !url.startsWith("https://")) {
     throw new WebSearchError("url 必须是 http:// 或 https:// 开头的绝对地址。");
   }
@@ -565,7 +619,7 @@ export async function webFetch(url: string): Promise<string> {
     throw new WebSearchError("不允许访问内网或本地地址。");
   }
   try {
-    const html = await fetchText(url, {}, 20000);
+    const html = await fetchText(url, { signal }, 20000);
     const bodyMatch = html.match(/<body[\s\S]*?>([\s\S]*?)<\/body>/i);
     const text = stripTags(bodyMatch?.[1] ?? html);
     return text.slice(0, 12000);
@@ -580,12 +634,14 @@ export async function webSearchForTool(
   query: string,
   settings: AppSettings,
   topK?: number,
+  signal?: AbortSignal,
 ): Promise<string> {
   try {
-    const results = await webSearch(query, settings, topK);
+    const results = await webSearch(query, settings, topK, signal);
     return formatSearchResults(query, results);
   } catch (err) {
     const msg = err instanceof WebSearchError ? err.message : String(err);
+    if (signal?.aborted) return `搜索已取消：${msg}`;
     return (
       `搜索失败：${msg}\n\n` +
       "建议：Android 需重新安装最新 APK（已启用原生 HTTP）；在设置中填写 Metaso/百度 Key（国内最稳）；或关闭 VPN 后重试。"
@@ -593,9 +649,12 @@ export async function webSearchForTool(
   }
 }
 
-export async function webFetchForTool(url: string): Promise<string> {
+export async function webFetchForTool(
+  url: string,
+  signal?: AbortSignal,
+): Promise<string> {
   try {
-    return await webFetch(url);
+    return await webFetch(url, signal);
   } catch (err) {
     const msg = err instanceof WebSearchError ? err.message : String(err);
     return `抓取失败：${msg}`;

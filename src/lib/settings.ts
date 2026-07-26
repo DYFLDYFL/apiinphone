@@ -13,6 +13,9 @@ const LEGACY_MODEL_PRESETS: Record<string, string> = {
 
 const SETTINGS_KEY = "settings";
 
+/** Default max agent tool loops per user message. */
+export const DEFAULT_MAX_TOOL_ROUNDS = 12;
+
 /** Always-on features — no longer exposed as settings toggles. */
 const FORCED_ON = {
   stream: true,
@@ -33,7 +36,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   thinkingMode: "enabled",
   reasoningEffort: "high",
   pythonSandboxTimeout: 15,
-  maxToolRounds: 24,
+  maxToolRounds: DEFAULT_MAX_TOOL_ROUNDS,
   webSearchEngine: "bing_cn",
   webSearchEndpoint: "",
   webSearchMetasoKey: "",
@@ -79,8 +82,8 @@ export function thinkingChainVisible(settings: AppSettings): boolean {
 }
 
 export function effectiveMaxToolRounds(settings: AppSettings): number {
-  const n = Number(settings.maxToolRounds ?? 24);
-  if (Number.isNaN(n)) return 24;
+  const n = Number(settings.maxToolRounds ?? DEFAULT_MAX_TOOL_ROUNDS);
+  if (Number.isNaN(n)) return DEFAULT_MAX_TOOL_ROUNDS;
   return Math.min(64, Math.max(1, Math.round(n)));
 }
 

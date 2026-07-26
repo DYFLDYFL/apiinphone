@@ -3,7 +3,9 @@ param(
     [string]$Variant = "debug"
 )
 
-$ErrorActionPreference = "Stop"
+# "Continue": npm/gradle write notices to stderr, which "Stop" turns into a
+# terminating error. Each step below checks $LASTEXITCODE instead.
+$ErrorActionPreference = "Continue"
 Set-Location $PSScriptRoot
 
 $sdkRoot = Join-Path $PSScriptRoot "android-sdk"

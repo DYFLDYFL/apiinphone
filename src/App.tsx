@@ -114,20 +114,21 @@ export default function App() {
   const streamControlRef = useRef(createStreamControl());
   const toolTraceRef = useRef<ToolTraceItem[]>([]);
   const composingRef = useRef(false);
+  const busyRef = useRef(false);
+
+  const markBusy = useCallback((value: boolean) => {
+    busyRef.current = value;
+    setBusy(value);
+  }, []);
 
   const refreshSessions = useCallback(async () => {
     setSessions(await listSessions());
   }, []);
 
   const renderSession = useCallback(
-    (
-      current: ChatSession,
-      theme: "light" | "dark",
-      showThinkingChain: boolean,
-    ) => {
+    (current: ChatSession, showThinkingChain: boolean) => {
       const viewer = viewerFromRef(viewerRef);
       if (!viewer) return;
-      viewer.setTheme(theme);
       viewer.clearMessages();
       for (const msg of current.display) {
         if (msg.role === "user") {
@@ -159,25 +160,15 @@ export default function App() {
     })();
   }, [refreshSessions]);
 
+  const showThinkingChain = settings ? thinkingChainVisible(settings) : false;
+
+  // Rebuild the whole transcript only when the session or 思考链 visibility changes.
+  // Theme is applied by ChatViewer, and streaming updates the tail in place — a
+  // rebuild here would wipe the reader's scroll position.
   useEffect(() => {
-    if (!settings || !session || !viewerReady) return;
-    if (busy) return;
-    renderSession(
-      session,
-      settings.theme,
-      thinkingChainVisible(settings),
-    );
-  }, [
-    session?.id,
-    viewerReady,
-    settings?.theme,
-    settings?.showThinking,
-    settings?.thinkingMode,
-    settings?.apiProvider,
-    settings?.model,
-    busy,
-    renderSession,
-  ]);
+    if (!session || !viewerReady || busyRef.current) return;
+    renderSession(session, showThinkingChain);
+  }, [session?.id, viewerReady, showThinkingChain, renderSession]);
 
   const refreshBalance = useCallback(async (current: AppSettings) => {
     if (current.apiProvider !== "deepseek" || !current.apiKey.trim()) {
@@ -247,7 +238,7 @@ export default function App() {
   ) => {
     if (!settings) return;
 
-    setBusy(true);
+    markBusy(true);
     setStatusText("正在请求…");
     void startChatKeepAlive("AI API Client", "正在生成…");
     streamControlRef.current = createStreamControl();
@@ -255,6 +246,7 @@ export default function App() {
     let streamText = "";
     let streamReasoning = "";
     const viewer = viewerFromRef(viewerRef);
+    viewer?.setStreaming(true);
 
     if (!userAlreadyShown && displayBase.length) {
       const last = displayBase[displayBase.length - 1];
@@ -454,7 +446,7 @@ export default function App() {
         viewer?.updateLastAssistant(finalContent, false);
       }
       viewer?.updateLastAssistantSources(sources);
-      setStatusText("完成");
+      setStatusText(response.note || "完成");
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       const toolTrace = [...toolTraceRef.current];
@@ -481,11 +473,12 @@ export default function App() {
       };
 
       await persistSession(failedSession);
-      renderSession(failedSession, settings.theme, thinkingChainVisible(settings));
+      renderSession(failedSession, thinkingChainVisible(settings));
       setStatusText(message);
     } finally {
       if (viewerRaf) cancelAnimationFrame(viewerRaf);
-      setBusy(false);
+      viewer?.setStreaming(false);
+      markBusy(false);
       void stopChatKeepAlive();
     }
   };
@@ -521,6 +514,7 @@ export default function App() {
     setSession(nextSession);
     setInput("");
     setAttachments([]);
+    viewerFromRef(viewerRef)?.setStickToBottom(true);
     await persistSession(nextSession);
 
     await runChat(history, nextSession.display, nextSession, false);
@@ -543,7 +537,7 @@ export default function App() {
     const trimmedDisplay = session.display.slice(0, -1);
     const baseSession = { ...session, history: trimmedHistory, display: trimmedDisplay };
     setSession(baseSession);
-    renderSession(baseSession, settings.theme, thinkingChainVisible(settings));
+    renderSession(baseSession, thinkingChainVisible(settings));
 
     const history: ChatMessage[] = [];
     if (settings.systemPrompt.trim()) {

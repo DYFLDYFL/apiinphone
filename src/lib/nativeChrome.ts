@@ -11,6 +11,8 @@ function attachAndroidSafeAreaListeners(): void {
   safeAreaListenersAttached = true;
 
   const root = document.documentElement;
+  // Keyboard insets get their own vars: writing them into --safe-area-* left stale
+  // padding behind once the keyboard closed.
   const update = () => {
     const vv = window.visualViewport;
     if (!vv) return;
@@ -21,8 +23,8 @@ function attachAndroidSafeAreaListeners(): void {
       Math.round(window.innerHeight - vv.height - vv.offsetTop),
     );
 
-    if (top > 0) root.style.setProperty("--safe-area-top", `${top}px`);
-    if (bottom > 0) root.style.setProperty("--safe-area-bottom", `${bottom}px`);
+    root.style.setProperty("--keyboard-inset-top", `${top}px`);
+    root.style.setProperty("--keyboard-inset-bottom", `${bottom}px`);
   };
 
   update();
