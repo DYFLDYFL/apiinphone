@@ -7,6 +7,7 @@ public class MainActivity extends BridgeActivity {
     @Override
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(ChatKeepAlivePlugin.class);
+        registerPlugin(PythonSandboxPlugin.class);
         super.onCreate(savedInstanceState);
     }
 }

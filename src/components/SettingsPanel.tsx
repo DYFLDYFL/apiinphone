@@ -407,7 +407,8 @@ export function SettingsPanel({
                 }
               />
               <p className="settings-hint">
-                Python 沙盒首次运行约需下载 15MB（Pyodide）。
+                Android App 使用 Chaquopy 真 Python；浏览器使用 Pyodide（首次约
+                15MB）。首启可能略慢。
               </p>
             </label>
           </details>

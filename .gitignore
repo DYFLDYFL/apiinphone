@@ -10,3 +10,7 @@ android/build/
 .env
 .idea/
 tsconfig.tsbuildinfo
+
+__pycache__/
+*.pyc
+

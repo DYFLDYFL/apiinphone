@@ -1,4 +1,5 @@
 import type { AppSettings, ChatMessage } from "../types";
+import { Capacitor } from "@capacitor/core";
 import {
   customToolExtensions,
   executeCustomTool,
@@ -9,6 +10,7 @@ import {
   type ExportFormat,
   type ExportedFile,
 } from "./documentExport";
+import { isNativePythonAvailable } from "./nativePython";
 import { runPython, SandboxError } from "./sandbox/pythonSandbox";
 import {
   buildToolTraceFromApiMessages,
@@ -25,6 +27,12 @@ import {
 import { webFetchForTool, webSearchForTool } from "./webSearch";
 
 export class ToolError extends Error {}
+
+/** Web (Sandpy/Pyodide) or Android (Chaquopy). iOS and other native stay off. */
+export function isPythonSandboxAvailable(): boolean {
+  if (!Capacitor.isNativePlatform()) return true;
+  return isNativePythonAvailable();
+}
 
 export { DEFAULT_MAX_TOOL_ROUNDS } from "./settings";
 export { waitingLabel, buildToolTraceFromApiMessages as buildToolTrace };
@@ -178,6 +186,11 @@ const BUILTIN_HANDLERS: Record<string, ToolHandler> = {
     return webFetchForTool(url, signal);
   },
   run_python: async (args, settings) => {
+    if (!isPythonSandboxAvailable()) {
+      throw new ToolError(
+        "当前平台不支持 Python 沙盒（仅 Android App 与浏览器可用）。",
+      );
+    }
     const code = String(args.code ?? "");
     try {
       return await runPython(code, settings.pythonSandboxTimeout);
@@ -259,7 +272,7 @@ export function buildTools(
       tools.push({ type: "web_search_preview" });
     }
   }
-  if (settings.toolsPythonSandbox) {
+  if (settings.toolsPythonSandbox && isPythonSandboxAvailable()) {
     tools.push(RUN_PYTHON_TOOL);
   }
   const raw = settings.toolsCustomJson.trim();

@@ -1087,11 +1087,15 @@
      * Stick-to-bottom state machine (modelled on use-stick-to-bottom):
      * new content only pulls the view down while the reader is already near the
      * bottom, so scrolling up to re-read earlier context is never interrupted.
+     * Android WebView often delays `scroll` until touch ends, so we also detach
+     * on upward touchmove / wheel and block forced scrolls while interacting.
      */
     const STICK_THRESHOLD_PX = 80;
     let stickToBottom = true;
     let streaming = false;
-    let lastScrollY = 0;
+    let lastScrollY = window.scrollY || 0;
+    let userInteracting = false;
+    let lastTouchY = 0;
 
     function distanceFromBottom() {
       const doc = document.documentElement;
@@ -1108,14 +1112,23 @@
       jumpBtn.classList.toggle("is-streaming", !stickToBottom && streaming);
     }
 
+    function detachFromBottom() {
+      if (stickToBottom) {
+        stickToBottom = false;
+        syncJumpButton();
+      }
+    }
+
     function forceScrollToBottom() {
+      if (userInteracting || !stickToBottom) return;
       requestAnimationFrame(() => {
+        if (userInteracting || !stickToBottom) return;
         window.scrollTo(0, document.body.scrollHeight);
       });
     }
 
     function maybeScrollToBottom() {
-      if (!stickToBottom) {
+      if (!stickToBottom || userInteracting) {
         syncJumpButton();
         return;
       }
@@ -1129,7 +1142,11 @@
         const scrolledUp = y < lastScrollY - 2;
         lastScrollY = y;
         // Only an upward move detaches: content growing below must never unstick,
-        // and coming back near the bottom always re-attaches.
+        // and coming back near the bottom always re-attaches (unless touching).
+        if (userInteracting) {
+          if (scrolledUp) detachFromBottom();
+          return;
+        }
         const next = isNearBottom() ? true : scrolledUp ? false : stickToBottom;
         if (next !== stickToBottom) {
           stickToBottom = next;
@@ -1139,8 +1156,50 @@
       { passive: true },
     );
 
+    window.addEventListener(
+      "touchstart",
+      (e) => {
+        userInteracting = true;
+        if (e.touches && e.touches[0]) lastTouchY = e.touches[0].clientY;
+      },
+      { passive: true },
+    );
+
+    window.addEventListener(
+      "touchmove",
+      (e) => {
+        if (!e.touches || !e.touches[0]) return;
+        const y = e.touches[0].clientY;
+        // Finger moving down → content scrolls up → detach follow mode.
+        if (y - lastTouchY > 4) detachFromBottom();
+        lastTouchY = y;
+      },
+      { passive: true },
+    );
+
+    function endUserInteraction() {
+      userInteracting = false;
+      lastScrollY = window.scrollY || 0;
+      if (isNearBottom()) {
+        stickToBottom = true;
+        syncJumpButton();
+      }
+    }
+
+    window.addEventListener("touchend", endUserInteraction, { passive: true });
+    window.addEventListener("touchcancel", endUserInteraction, { passive: true });
+
+    window.addEventListener(
+      "wheel",
+      (e) => {
+        if (e.deltaY < 0) detachFromBottom();
+      },
+      { passive: true },
+    );
+
     jumpBtn.addEventListener("click", () => {
       stickToBottom = true;
+      userInteracting = false;
       syncJumpButton();
       forceScrollToBottom();
     });
@@ -1158,6 +1217,7 @@
 
     window.scrollToBottom = function() {
       stickToBottom = true;
+      userInteracting = false;
       syncJumpButton();
       forceScrollToBottom();
     };

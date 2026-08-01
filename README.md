@@ -1,6 +1,6 @@
 # apiinphone
 
-**Version 1.3.0**
+**Version 1.4.1**
 
 Android 版 AI API 客户端，功能对齐桌面项目 [aiusingapi](../aiusingapi)。
 
@@ -13,14 +13,14 @@ Android 版 AI API 客户端，功能对齐桌面项目 [aiusingapi](../aiusinga
 - 多会话管理（新建 / 重命名 / 删除 / 清空）
 - 附件（图片、文本、小体积二进制 Base64；粘贴图片）
 - Vision 识图（Poe；DeepSeek 自动降级为文本提示）
-- Tool Calls：`get_current_time`、联网搜索、`web_fetch`、**`run_python`（Pyodide 沙盒）**
+- Tool Calls：`get_current_time`、联网搜索、`web_fetch`、**`run_python`（Android: Chaquopy；浏览器: Pyodide）**
 - 自定义工具：JSON 定义 + `x-apiinphone` 扩展（HTTP / 内置 JS handler）
 - 用量面板：上下文占用、对话累计、上次请求、DeepSeek 余额
 - 重试上一条回复、复制回复、停止生成
 - 完整设置项（搜索引擎、SearXNG/Metaso/百度 Key、网络重试、Poe 头等）
 - 浅色 / 深色主题
 
-> **`run_python`**：基于 [Sandpy](https://github.com/Raynan00/sandpy)（Pyodide Web Worker），与桌面版类似的 import 白名单与超时；**首次运行需联网下载约 15MB**，之后浏览器会缓存。
+> **`run_python`**：Android App 使用 [Chaquopy](https://chaquo.com/chaquopy/)（真 CPython，stdlib 白名单 + 超时）；浏览器使用 [Sandpy](https://github.com/Raynan00/sandpy)（Pyodide Web Worker，首次约 15MB）。策略与桌面版类似。
 
 ### 自定义工具示例
 
@@ -71,12 +71,14 @@ npm run dev
 
 ## 构建 APK
 
-需要先安装 [Android SDK](https://developer.android.com/studio)（或 Android Studio），并设置环境变量：
+需要先安装 [Android SDK](https://developer.android.com/studio)（或 Android Studio），并设置环境变量。构建机还需 **Python 3.12**（Chaquopy `buildPython`，Windows 可用 `py -3.12`）：
 
 ```powershell
 $env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"
 $env:PATH += ";$env:ANDROID_HOME\platform-tools;$env:ANDROID_HOME\cmdline-tools\latest\bin"
 ```
+
+`minSdk` 为 **24**（Chaquopy 要求）。
 
 然后执行：
 
@@ -84,10 +86,14 @@ $env:PATH += ";$env:ANDROID_HOME\platform-tools;$env:ANDROID_HOME\cmdline-tools\
 .\build.ps1
 ```
 
+`build.ps1` 默认会自动把版本号 patch +1（`package.json` / `README` / `versionCode`），可用 `-SkipVersionBump` 跳过。
+
+Debug / Release 均使用仓库内固定签名（`android/keystore/`），换机构建也可覆盖安装。若手机上已装的是其它签名的旧包，需先卸载一次再装。
+
 输出：
 
-- Debug：`android\app\build\outputs\apk\debug\app-debug.apk`（或根目录 `AI-API-Client-debug.apk`）
-- Release：`android\app\build\outputs\apk\release\app-release-unsigned.apk`（或根目录 `AI-API-Client-release-unsigned.apk`）
+- Debug：`android\app\build\outputs\apk\debug\app-debug.apk`
+- Release：`android\app\build\outputs\apk\release\app-release.apk`
 
 项目内置 Android SDK 位于 `android-sdk\`，`build.ps1` 会自动写入 `android\local.properties`。
 

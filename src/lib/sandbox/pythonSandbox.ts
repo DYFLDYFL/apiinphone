@@ -1,4 +1,6 @@
+import { Capacitor } from "@capacitor/core";
 import { Sandpy } from "sandpy";
+import { isNativePythonAvailable, runNativePython } from "../nativePython";
 import { ALLOWED_IMPORTS } from "./policy";
 import { sanitizeCode } from "./sanitize";
 import { validateSource } from "./policy";
@@ -190,6 +192,26 @@ export async function runPython(
 ): Promise<string> {
   const sanitized = sanitizeCode(code);
   validateSource(sanitized);
+  const timeout = Math.min(120, Math.max(3, timeoutSec));
+
+  if (isNativePythonAvailable()) {
+    try {
+      return await runNativePython(sanitized, timeout);
+    } catch (err) {
+      if (err instanceof SandboxError) throw err;
+      const message =
+        err && typeof err === "object" && "message" in err
+          ? String((err as { message: unknown }).message)
+          : String(err);
+      throw new SandboxError(message || "Python 执行失败");
+    }
+  }
+
+  if (Capacitor.isNativePlatform()) {
+    throw new SandboxError(
+      "当前平台不支持 Python 沙盒（仅 Android App 与浏览器可用）。",
+    );
+  }
 
   let sandbox: Sandpy;
   try {
@@ -201,7 +223,7 @@ export async function runPython(
   }
 
   const script = buildRunnerScript(sanitized);
-  const timeoutMs = Math.min(120, Math.max(3, timeoutSec)) * 1000;
+  const timeoutMs = timeout * 1000;
 
   try {
     const raw = await sandbox.run(script, { timeout: timeoutMs });
@@ -213,6 +235,7 @@ export async function runPython(
 }
 
 export async function warmupPythonSandbox(): Promise<void> {
+  if (isNativePythonAvailable() || Capacitor.isNativePlatform()) return;
   await getSandbox();
 }
 

@@ -1,0 +1,39 @@
+// Prefer reachable Maven mirrors (Google Maven often times out).
+def huawei = 'https://repo.huaweicloud.com/repository/maven/'
+def tencent = 'https://mirrors.cloud.tencent.com/nexus/repository/maven-public/'
+def aliyunPublic = 'https://maven.aliyun.com/repository/public'
+def aliyunGoogle = 'https://maven.aliyun.com/repository/google'
+def aliyunCentral = 'https://maven.aliyun.com/repository/central'
+
+gradle.settingsEvaluated { settings ->
+    settings.pluginManagement.repositories.maven { url huawei }
+    settings.pluginManagement.repositories.maven { url tencent }
+    settings.pluginManagement.repositories.maven { url aliyunPublic }
+    settings.pluginManagement.repositories.maven { url aliyunGoogle }
+    settings.pluginManagement.repositories.maven { url aliyunCentral }
+    settings.pluginManagement.repositories.mavenCentral()
+    settings.pluginManagement.repositories.google()
+}
+
+allprojects { project ->
+    buildscript {
+        repositories {
+            maven { url huawei }
+            maven { url tencent }
+            maven { url aliyunPublic }
+            maven { url aliyunGoogle }
+            maven { url aliyunCentral }
+            mavenCentral()
+            google()
+        }
+    }
+    repositories {
+        maven { url huawei }
+        maven { url tencent }
+        maven { url aliyunPublic }
+        maven { url aliyunGoogle }
+        maven { url aliyunCentral }
+        mavenCentral()
+        google()
+    }
+}
