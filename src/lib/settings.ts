@@ -45,7 +45,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   thinkingMode: "enabled",
   reasoningEffort: "high",
   pythonSandboxTimeout: 15,
-  webSearchEngine: "bing_cn",
+  webSearchEngine: "mojeek",
   webSearchEndpoint: "",
   webSearchMetasoKey: "",
   webSearchBaiduKey: "",
@@ -141,6 +141,21 @@ export async function loadSettings(): Promise<AppSettings> {
         Number.isNaN(n) || n <= 0
           ? null
           : Math.min(384000, Math.max(256, Math.round(n)));
+    }
+    // Migrate legacy free default; prefer Metaso when a key is already saved.
+    if (!merged.webSearchEngine?.trim() || merged.webSearchEngine === "bing_cn") {
+      merged.webSearchEngine = merged.webSearchMetasoKey?.trim()
+        ? "metaso"
+        : "mojeek";
+    } else if (
+      merged.webSearchMetasoKey?.trim() &&
+      (merged.webSearchEngine === "mojeek" ||
+        merged.webSearchEngine === "bing_intl" ||
+        merged.webSearchEngine === "bing_rss" ||
+        merged.webSearchEngine === "duckduckgo" ||
+        merged.webSearchEngine === "ddg_api")
+    ) {
+      merged.webSearchEngine = "metaso";
     }
     merged.reasoningEffort = normalizeReasoningEffort(
       merged.reasoningEffort,

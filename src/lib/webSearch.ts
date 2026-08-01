@@ -18,6 +18,7 @@ const SEARCH_UA =
 const BING_CN = "https://cn.bing.com/search";
 const BING_INTL = "https://www.bing.com/search";
 const BING_RSS = "https://www.bing.com/search";
+const MOJEEK_SEARCH = "https://www.mojeek.com/search";
 const DDG_HTML = "https://html.duckduckgo.com/html/";
 const DDG_API = "https://api.duckduckgo.com/";
 
@@ -165,6 +166,62 @@ function parseBingResults(
     if (html.length > 4000) {
       throw new WebSearchError("未能解析 Bing 页面，可能被拦截或页面结构已变化。");
     }
+  }
+  return results;
+}
+
+/** Mojeek HTML results — same shape as SearXNG / Reasonix free default (no API key). */
+function parseMojeekResults(html: string, topK: number): SearchResult[] {
+  const blocked = blockedPageHint(html);
+  if (blocked) throw new WebSearchError(blocked);
+  if (
+    /altcha-widget|captcha-wrap|sending automated queries|robot/i.test(html) &&
+    !/results-standard/i.test(html)
+  ) {
+    throw new WebSearchError(
+      "Mojeek 触发验证或限流，请稍后重试，或在设置中填写秘塔 Key。",
+    );
+  }
+
+  const results: SearchResult[] = [];
+  const seen = new Set<string>();
+  const blocks =
+    html.match(/<li[^>]*>[\s\S]*?<a[^>]*\bclass="[^"]*\btitle\b[^"]*"[^>]*>[\s\S]*?<\/li>/gi) ??
+    [];
+  for (const block of blocks) {
+    if (results.length >= topK) break;
+    const linkM = block.match(
+      /<a[^>]*\bclass="[^"]*\btitle\b[^"]*"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/i,
+    ) ?? block.match(
+      /<a[^>]*href="([^"]+)"[^>]*\bclass="[^"]*\btitle\b[^"]*"[^>]*>([\s\S]*?)<\/a>/i,
+    );
+    if (!linkM) continue;
+    let url: string;
+    try {
+      const parsed = new URL(decodeHtmlEntities(linkM[1]), MOJEEK_SEARCH);
+      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") continue;
+      const host = parsed.hostname.toLowerCase();
+      if (host === "mojeek.com" || host.endsWith(".mojeek.com") || host.includes("mojeek.")) {
+        continue;
+      }
+      url = parsed.href;
+    } catch {
+      continue;
+    }
+    if (seen.has(url)) continue;
+    const title = stripTags(linkM[2]);
+    if (!title) continue;
+    const snipM = block.match(/<p[^>]*\bclass="[^"]*\bs\b[^"]*"[^>]*>([\s\S]*?)<\/p>/i);
+    seen.add(url);
+    results.push({
+      title,
+      url,
+      snippet: snipM ? stripTags(snipM[1]) : "",
+    });
+  }
+
+  if (!results.length && html.length > 2000) {
+    throw new WebSearchError("未能解析 Mojeek 页面，可能被拦截或页面结构已变化。");
   }
   return results;
 }
@@ -350,9 +407,19 @@ function normalizeSearxngEndpoint(raw: string): string | null {
 }
 
 function fallbackEngines(primary: string): string[] {
-  const chain = ["bing_rss", "duckduckgo", "bing_intl", "ddg_api", "jina"];
+  const chain = ["mojeek", "bing_rss", "duckduckgo", "bing_intl", "jina"];
   if (primary === "metaso" || primary === "baidu") return chain;
   return chain.filter((e) => e !== primary);
+}
+
+/** Effective primary engine: Metaso wins when a key is set and engine is still a free default. */
+export function resolveWebSearchEngine(settings: AppSettings): string {
+  const configured = (settings.webSearchEngine || "mojeek").trim() || "mojeek";
+  const hasMetaso = Boolean(settings.webSearchMetasoKey?.trim());
+  if (hasMetaso && (configured === "mojeek" || configured === "bing_cn")) {
+    return "metaso";
+  }
+  return configured;
 }
 
 async function searchWithEngine(
@@ -362,6 +429,17 @@ async function searchWithEngine(
   topK: number,
   signal?: AbortSignal,
 ): Promise<SearchResult[]> {
+  if (engine === "mojeek") {
+    const url = new URL(MOJEEK_SEARCH);
+    url.searchParams.set("q", query);
+    url.searchParams.set("safe", "0");
+    url.searchParams.set("t", String(Math.min(20, Math.max(1, topK))));
+    const html = await fetchText(url.toString(), {
+      signal,
+      headers: { Referer: "https://www.mojeek.com/" },
+    });
+    return parseMojeekResults(html, topK);
+  }
   if (engine === "bing_cn") {
     const html = await fetchText(`${BING_CN}?q=${encodeURIComponent(query)}`, {
       signal,
@@ -547,7 +625,7 @@ export async function webSearch(
   const q = query.trim();
   if (!q) throw new WebSearchError("搜索词不能为空");
   const k = resolveWebSearchTopK(settings, topK);
-  const primary = settings.webSearchEngine || "bing_rss";
+  const primary = resolveWebSearchEngine(settings);
   const engines = [primary, ...fallbackEngines(primary)];
   const errors: string[] = [];
 
@@ -644,7 +722,7 @@ export async function webSearchForTool(
     if (signal?.aborted) return `搜索已取消：${msg}`;
     return (
       `搜索失败：${msg}\n\n` +
-      "建议：Android 需重新安装最新 APK（已启用原生 HTTP）；在设置中填写 Metaso/百度 Key（国内最稳）；或关闭 VPN 后重试。"
+      "建议：默认已用 Mojeek（免 Key）；国内更稳请填写秘塔 Key；或稍后重试 / 关闭 VPN。"
     );
   }
 }

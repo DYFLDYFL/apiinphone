@@ -275,20 +275,24 @@ export function SettingsPanel({
             <label>
               搜索引擎
               <select
-                value={draft.webSearchEngine}
+                value={
+                  ["mojeek", "bing_cn", "searxng", "metaso", "baidu"].includes(
+                    draft.webSearchEngine,
+                  )
+                    ? draft.webSearchEngine
+                    : "mojeek"
+                }
                 onChange={(e) => update({ webSearchEngine: e.target.value })}
               >
-                <option value="bing_cn">Bing 中国（默认，免 Key）</option>
-                <option value="bing_intl">Bing 国际</option>
-                <option value="bing_rss">Bing RSS</option>
-                <option value="searxng">SearXNG</option>
-                <option value="duckduckgo">DuckDuckGo HTML</option>
-                <option value="ddg_api">DuckDuckGo API（备用）</option>
-                <option value="metaso">Metaso</option>
+                <option value="mojeek">Mojeek（默认，免 Key）</option>
+                <option value="bing_cn">Bing 中国</option>
+                <option value="searxng">SearXNG（自托管）</option>
+                <option value="metaso">秘塔 Metaso</option>
                 <option value="baidu">百度 AI 搜索</option>
               </select>
               <p className="settings-hint">
-                手机端若 Bing/DDG 失败，推荐配置 Metaso 或百度 Key。
+                对齐 Reasonix：默认 Mojeek HTML 抓取。失败时自动回退 Bing RSS /
+                DuckDuckGo。填写秘塔 Key 后优先用秘塔。
               </p>
             </label>
             {draft.webSearchEngine === "searxng" && (
@@ -306,18 +310,24 @@ export function SettingsPanel({
                 </p>
               </label>
             )}
-            {draft.webSearchEngine === "metaso" && (
-              <label>
-                Metaso API Key
-                <input
-                  type="password"
-                  value={draft.webSearchMetasoKey}
-                  onChange={(e) =>
-                    update({ webSearchMetasoKey: e.target.value })
-                  }
-                />
-              </label>
-            )}
+            <label>
+              秘塔 Metaso API Key（可选）
+              <input
+                type="password"
+                value={draft.webSearchMetasoKey}
+                placeholder="填写后优先使用秘塔"
+                onChange={(e) => {
+                  const key = e.target.value;
+                  update({
+                    webSearchMetasoKey: key,
+                    ...(key.trim() ? { webSearchEngine: "metaso" as const } : {}),
+                  });
+                }}
+              />
+              <p className="settings-hint">
+                约 ¥0.03/次；国内中文最稳。在 metaso.cn 创建 Key。
+              </p>
+            </label>
             {draft.webSearchEngine === "baidu" && (
               <label>
                 百度 API Key
