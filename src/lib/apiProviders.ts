@@ -15,12 +15,7 @@ export const DEEPSEEK_PROVIDER: ApiProvider = {
   label: "DeepSeek API",
   baseUrl: "https://api.deepseek.com",
   defaultModel: "deepseek-v4-flash",
-  models: [
-    "deepseek-v4-flash",
-    "deepseek-v4-pro",
-    "deepseek-chat",
-    "deepseek-reasoner",
-  ],
+  models: ["deepseek-v4-flash", "deepseek-v4-pro"],
   apiKeyHint: "在 https://platform.deepseek.com/api_keys 创建",
   apiKeyUrl: "https://platform.deepseek.com/api_keys",
 };

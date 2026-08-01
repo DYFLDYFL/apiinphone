@@ -99,9 +99,17 @@ export function SettingsPanel({
   };
 
   const provider = getProvider();
-  const modelChoices = [
-    ...new Set([...provider.models, ...modelOptions, draft.model]),
-  ].filter(Boolean);
+  // Prefer live /models list; avoid merging stale hardcoded presets into the dropdown.
+  const modelChoices =
+    modelOptions.length > 0
+      ? [...new Set([...modelOptions, draft.model].filter(Boolean))]
+      : [
+          ...new Set(
+            [draft.model, provider.defaultModel, ...provider.models].filter(
+              Boolean,
+            ),
+          ),
+        ];
   const thinkingVisible = modelSupportsThinking(draft.model);
   const effortLevels = reasoningEffortsForModel(draft.model);
   const tierValue = tierFromSettings(draft);
