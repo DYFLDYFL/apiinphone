@@ -30,6 +30,7 @@ import {
 import {
   composeSystemPrompt,
   effectiveModel,
+  isWebTransport,
   loadSettings,
   rememberModel,
   saveSettings,
@@ -52,6 +53,7 @@ import { ChatViewer, useChatViewerRef, viewerFromRef } from "./components/ChatVi
 import { ExportFileCard } from "./components/ExportFileCard";
 import { InfoPanel } from "./components/InfoPanel";
 import { RenameDialog } from "./components/RenameDialog";
+import { GameScreen } from "./components/game/GameScreen";
 import { ModelSwitcher } from "./components/ModelSwitcher";
 import { SettingsPanel } from "./components/SettingsPanel";
 import type { ExportedFile } from "./lib/documentExport";
@@ -119,6 +121,7 @@ export default function App() {
   const [renameOpen, setRenameOpen] = useState(false);
   const [renameId, setRenameId] = useState("");
   const [statusText, setStatusText] = useState("");
+  const [appMode, setAppMode] = useState<"chat" | "game">("chat");
   const [exportHistory, setExportHistory] = useState<ExportedFile[]>([]);
   const [sessionExports, setSessionExports] = useState<ExportedFile[]>([]);
   const streamControlRef = useRef(createStreamControl());
@@ -181,6 +184,11 @@ export default function App() {
   }, [session?.id, viewerReady, showThinkingChain, renderSession]);
 
   const refreshBalance = useCallback(async (current: AppSettings) => {
+    if (isWebTransport(current)) {
+      setBalanceLines(["网页会话（无余额）"]);
+      setBalanceError("");
+      return;
+    }
     if (!current.apiKey.trim()) {
       setBalanceLines([]);
       setBalanceError("");
@@ -201,7 +209,12 @@ export default function App() {
 
   useEffect(() => {
     if (settings) void refreshBalance(settings);
-  }, [settings?.apiKey, refreshBalance]);
+  }, [
+    settings?.apiKey,
+    settings?.deepseekTransport,
+    settings?.webSessionToken,
+    refreshBalance,
+  ]);
 
   const persistSettings = async (next: AppSettings) => {
     setSettings(next);
@@ -291,18 +304,23 @@ export default function App() {
 
     try {
       let balanceBefore: number | null = null;
-      try {
-        const beforeBal = await fetchDeepseekBalance(settings);
-        balanceBefore = cnyTotalFromBalance(beforeBal);
-        setBalanceLines(formatBalanceDisplay(beforeBal));
-        setBalanceError("");
-      } catch {
-        /* spend falls back to rate table */
+      if (!isWebTransport(settings)) {
+        try {
+          const beforeBal = await fetchDeepseekBalance(settings);
+          balanceBefore = cnyTotalFromBalance(beforeBal);
+          setBalanceLines(formatBalanceDisplay(beforeBal));
+          setBalanceError("");
+        } catch {
+          /* spend falls back to rate table */
+        }
       }
 
       const resolveSpend = async (
         usage: TokenUsage | null,
       ): Promise<{ amount: number; kind: SpendKind }> => {
+        if (isWebTransport(settings)) {
+          return { amount: 0, kind: "balance" };
+        }
         let fromBalance: number | null = null;
         try {
           const afterBal = await fetchDeepseekBalance(settings);
@@ -715,6 +733,41 @@ export default function App() {
     return <div className="boot">加载中…</div>;
   }
 
+  if (appMode === "game") {
+    return (
+      <div className={`app theme-${settings.theme}`}>
+        <GameScreen
+          settings={settings}
+          onSettingsChange={(next) => void persistSettings(next)}
+          onBack={() => setAppMode("chat")}
+          onOpenSettings={() => setSettingsOpen(true)}
+          onOpenInfo={() => setInfoOpen(true)}
+        />
+        <SettingsPanel
+          open={settingsOpen}
+          settings={settings}
+          onClose={() => setSettingsOpen(false)}
+          onSave={(next) => void persistSettings(next)}
+        />
+        <InfoPanel
+          open={infoOpen}
+          onClose={() => setInfoOpen(false)}
+          settings={settings}
+          session={session}
+          lastUsage={lastUsage}
+          lastSpentCny={lastSpentCny}
+          lastSpendKind={lastSpendKind}
+          balanceLines={balanceLines}
+          balanceError={balanceError}
+          balanceLoading={balanceLoading}
+          onRefreshBalance={() => void refreshBalance(settings)}
+          exportHistory={exportHistory}
+          onRemoveExport={(file) => void handleRemoveExport(file)}
+        />
+      </div>
+    );
+  }
+
   return (
     <div className={`app theme-${settings.theme}`}>
       <header className="topbar">
@@ -737,6 +790,10 @@ export default function App() {
                 void persistSettings(remembered);
               }}
             />
+            <span className="status-hint">
+              {" · "}
+              {isWebTransport(settings) ? "网页" : "官方"}
+            </span>
             {(statusText || balanceLines[0]) && (
               <span className="status-hint">
                 {" · "}
@@ -746,6 +803,15 @@ export default function App() {
           </div>
         </div>
         <div className="topbar-actions">
+          <button
+            type="button"
+            className="icon-btn"
+            onClick={() => setAppMode("game")}
+            title="游戏"
+            disabled={busy}
+          >
+            🎲
+          </button>
           <button type="button" className="icon-btn" onClick={() => setInfoOpen(true)} title="用量">
             ℹ
           </button>

@@ -39,11 +39,18 @@ const FORCED_ON = {
 export const DEFAULT_SETTINGS: AppSettings = {
   apiProvider: "deepseek",
   apiKey: "",
+  deepseekTransport: "official",
+  webSessionToken: "",
+  webSessionCookies: "",
+  webMinIntervalMs: 3000,
   model: "deepseek-v4-flash",
+  gameModel: "deepseek-v4-flash",
   maxTokens: null,
   ...FORCED_ON,
   thinkingMode: "enabled",
   reasoningEffort: "high",
+  gameThinkingMode: "enabled",
+  gameReasoningEffort: "high",
   pythonSandboxTimeout: 15,
   webSearchEngine: "mojeek",
   webSearchEndpoint: "",
@@ -60,12 +67,47 @@ export const DEFAULT_SETTINGS: AppSettings = {
   recentModels: defaultRecentModels(),
 };
 
+export function isWebTransport(settings: AppSettings): boolean {
+  return settings.deepseekTransport === "web";
+}
+
+/** 网页会话下单周期交互轮次封顶，降低请求量。 */
+export function effectiveGameMaxInteractionRounds(
+  settings: AppSettings,
+  gameMax: number,
+): number {
+  const n = Math.max(1, Math.round(gameMax || 6));
+  if (isWebTransport(settings)) return Math.min(n, 3);
+  return n;
+}
+
 function applyForcedOn(settings: AppSettings): AppSettings {
   return { ...settings, ...FORCED_ON };
 }
 
 export function effectiveModel(settings: AppSettings): string {
   return resolveModel(settings);
+}
+
+/** Settings view used for game completions (independent model fields). */
+export function settingsForGame(settings: AppSettings): AppSettings {
+  const gameModel =
+    settings.gameModel?.trim() ||
+    settings.model?.trim() ||
+    DEEPSEEK_PROVIDER.defaultModel;
+  return {
+    ...settings,
+    model: gameModel,
+    thinkingMode: settings.gameThinkingMode ?? settings.thinkingMode,
+    reasoningEffort: normalizeReasoningEffort(
+      settings.gameReasoningEffort ?? settings.reasoningEffort,
+      gameModel,
+    ),
+  };
+}
+
+export function effectiveGameModel(settings: AppSettings): string {
+  return resolveModel(settingsForGame(settings));
 }
 
 export function thinkingActive(settings: AppSettings): boolean {
@@ -132,6 +174,20 @@ export async function loadSettings(): Promise<AppSettings> {
         LEGACY_MODEL_PRESETS[raw.modelPreset] ?? merged.model;
     }
     merged.apiProvider = "deepseek";
+    if (merged.deepseekTransport !== "web") {
+      merged.deepseekTransport = "official";
+    }
+    if (typeof merged.webSessionToken !== "string") merged.webSessionToken = "";
+    if (typeof merged.webSessionCookies !== "string") {
+      merged.webSessionCookies = "";
+    }
+    {
+      const interval = Number(merged.webMinIntervalMs);
+      merged.webMinIntervalMs =
+        Number.isNaN(interval) || interval < 500
+          ? 3000
+          : Math.min(60000, Math.round(interval));
+    }
     if (!merged.recentModels?.length) {
       merged.recentModels = defaultRecentModels();
     }
@@ -161,6 +217,19 @@ export async function loadSettings(): Promise<AppSettings> {
       merged.reasoningEffort,
       merged.model,
     );
+    if (!merged.gameModel?.trim()) {
+      merged.gameModel = merged.model;
+    }
+    if (
+      merged.gameThinkingMode !== "enabled" &&
+      merged.gameThinkingMode !== "disabled"
+    ) {
+      merged.gameThinkingMode = merged.thinkingMode;
+    }
+    merged.gameReasoningEffort = normalizeReasoningEffort(
+      merged.gameReasoningEffort ?? merged.reasoningEffort,
+      merged.gameModel,
+    );
     return applyForcedOn(merged);
   } catch {
     return { ...DEFAULT_SETTINGS };
@@ -180,4 +249,11 @@ export function rememberModel(settings: AppSettings, model: string): AppSettings
   const recent = settings.recentModels.filter((m) => m !== trimmed);
   recent.unshift(trimmed);
   return { ...settings, recentModels: recent.slice(0, 12) };
+}
+
+export function rememberGameModel(
+  settings: AppSettings,
+  model: string,
+): AppSettings {
+  return rememberModel(settings, model);
 }

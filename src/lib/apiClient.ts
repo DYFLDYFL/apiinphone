@@ -8,8 +8,10 @@ import type {
 } from "../types";
 import { getProvider, modelSupportsThinking, normalizeReasoningEffort, providerSupportsVision, resolveModel } from "./apiProviders";
 import { normalizeMessagesForApi } from "./attachments";
+import { completeViaDeepseekWeb, DeepseekWebError } from "./deepseekWeb/client";
+import { withRequestGate } from "./requestGate";
 import { renumberSearchOutput } from "./searchSources";
-import { effectiveMaxToolRounds, effectiveModel } from "./settings";
+import { effectiveMaxToolRounds, effectiveModel, isWebTransport } from "./settings";
 import {
   buildTools,
   executeTool,
@@ -113,6 +115,9 @@ function friendlyApiError(err: unknown): ApiError {
     return new ApiError("无法连接 API 服务器，请检查网络或 API 地址。");
   }
   if (err instanceof ApiError) return err;
+  if (err instanceof DeepseekWebError) {
+    return new ApiError(err.message, err.status);
+  }
   if (err instanceof ToolError) return new ApiError(err.message);
   return new ApiError(String(err));
 }
@@ -557,27 +562,45 @@ async function runSingleCompletion(
     control?: StreamControl;
   },
 ): Promise<CompletionResult> {
+  if (isWebTransport(settings)) {
+    const web = await withRequestGate(settings, () =>
+      completeViaDeepseekWeb(settings, convo, {
+        onDelta: options?.onDelta,
+        onReasoningDelta: options?.onReasoningDelta,
+        signal: options?.control?.signal,
+      }),
+    );
+    return {
+      content: web.content,
+      reasoning: web.reasoning,
+      toolCalls: [],
+      finishReason: "stop",
+      usage: null,
+    };
+  }
+
   const body = buildChatBody(settings, convo);
   if (!includeTools) {
     delete body.tools;
     delete body.tool_choice;
   }
-  if (settings.stream) {
-    return streamChat(
-      settings,
-      body,
-      options?.onDelta,
-      options?.onReasoningDelta,
-      options?.control,
-    );
-  }
-  return completeChat(
-    settings,
-    body,
-    options?.onDelta,
-    options?.onReasoningDelta,
-    options?.control,
-  );
+  const action = () =>
+    settings.stream
+      ? streamChat(
+          settings,
+          body,
+          options?.onDelta,
+          options?.onReasoningDelta,
+          options?.control,
+        )
+      : completeChat(
+          settings,
+          body,
+          options?.onDelta,
+          options?.onReasoningDelta,
+          options?.control,
+        );
+  return withRequestGate(settings, action);
 }
 
 function summarizeFromToolMessages(
@@ -673,7 +696,13 @@ export async function chatStream(
     control?: StreamControl;
   },
 ): Promise<ChatResponse> {
-  if (!settings.apiKey.trim()) {
+  if (isWebTransport(settings)) {
+    if (!settings.webSessionToken.trim()) {
+      throw new ApiError(
+        "请先在设置中粘贴 chat.deepseek.com 的网页会话 Token",
+      );
+    }
+  } else if (!settings.apiKey.trim()) {
     const provider = getProvider(settings.apiProvider);
     throw new ApiError(`请先在设置中填写 API Key（${provider.apiKeyHint}）`);
   }
@@ -689,8 +718,12 @@ export async function chatStream(
   let lastStreamedContent = "";
   let searchCitationNext = 1;
 
+  // Web session has no OpenAI tool-calling; single completion only.
+  const maxRounds = isWebTransport(settings)
+    ? 1
+    : effectiveMaxToolRounds(settings);
+
   try {
-    const maxRounds = effectiveMaxToolRounds(settings);
     for (let round = 0; round < maxRounds; round++) {
       if (options?.control?.cancelled) {
         return {
@@ -843,6 +876,9 @@ export async function chatStream(
 export async function fetchDeepseekBalance(
   settings: AppSettings,
 ): Promise<DeepSeekBalance> {
+  if (isWebTransport(settings)) {
+    throw new ApiError("网页会话模式无余额接口，请改用官方 API 查看余额。");
+  }
   if (!settings.apiKey.trim()) {
     throw new ApiError("请先在设置中填写 API Key");
   }

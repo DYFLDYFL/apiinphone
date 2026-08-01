@@ -1,14 +1,30 @@
+export type DeepseekTransport = "official" | "web";
+
 export interface AppSettings {
   apiProvider: "deepseek";
   apiKey: string;
   baseUrl: string;
+  /** official = api.deepseek.com；web = chat.deepseek.com 会话 Token。 */
+  deepseekTransport: DeepseekTransport;
+  /** chat.deepseek.com LocalStorage userToken.value（或整段 JSON）。 */
+  webSessionToken: string;
+  /** 浏览器 Cookie 字符串，建议含 aws-waf-token。 */
+  webSessionCookies: string;
+  /** 网页通道相邻请求最小间隔（毫秒）。 */
+  webMinIntervalMs: number;
   model: string;
+  /** 游戏模式独立模型（与对话 model 分离）。 */
+  gameModel: string;
   temperature: number;
   maxTokens: number | null;
   stream: boolean;
   showThinking: boolean;
   thinkingMode: "enabled" | "disabled";
   reasoningEffort: "low" | "high" | "max";
+  /** 游戏模式独立思考开关。 */
+  gameThinkingMode: "enabled" | "disabled";
+  /** 游戏模式独立推理档位。 */
+  gameReasoningEffort: "low" | "high" | "max";
   toolsEnabled: boolean;
   toolsWebSearch: boolean;
   toolsPythonSandbox: boolean;

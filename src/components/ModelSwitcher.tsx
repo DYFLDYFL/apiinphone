@@ -9,31 +9,64 @@ import {
   reasoningEffortsForModel,
   type ReasoningEffort,
 } from "../lib/apiProviders";
-import { effectiveModel } from "../lib/settings";
+import { effectiveGameModel, effectiveModel } from "../lib/settings";
 
 type TierValue = "off" | ReasoningEffort;
+export type ModelSwitcherScope = "chat" | "game";
 
 interface ModelSwitcherProps {
   settings: AppSettings;
   onChange: (next: AppSettings) => void;
   disabled?: boolean;
+  /** chat writes model/reasoningEffort; game writes gameModel/game* */
+  scope?: ModelSwitcherScope;
 }
 
-function tierFromSettings(settings: AppSettings): TierValue {
-  if (settings.thinkingMode === "disabled") return "off";
-  return normalizeReasoningEffort(settings.reasoningEffort, settings.model);
+function activeModel(settings: AppSettings, scope: ModelSwitcherScope): string {
+  return scope === "game" ? effectiveGameModel(settings) : effectiveModel(settings);
 }
 
-function displayTier(settings: AppSettings): string {
-  if (!modelSupportsThinking(effectiveModel(settings))) return "";
-  if (settings.thinkingMode === "disabled") return "off";
-  return normalizeReasoningEffort(settings.reasoningEffort, settings.model);
+function activeThinking(
+  settings: AppSettings,
+  scope: ModelSwitcherScope,
+): "enabled" | "disabled" {
+  return scope === "game"
+    ? settings.gameThinkingMode ?? settings.thinkingMode
+    : settings.thinkingMode;
+}
+
+function activeEffort(
+  settings: AppSettings,
+  scope: ModelSwitcherScope,
+): ReasoningEffort {
+  const model = activeModel(settings, scope);
+  const effort =
+    scope === "game"
+      ? settings.gameReasoningEffort ?? settings.reasoningEffort
+      : settings.reasoningEffort;
+  return normalizeReasoningEffort(effort, model);
+}
+
+function tierFromSettings(
+  settings: AppSettings,
+  scope: ModelSwitcherScope,
+): TierValue {
+  if (activeThinking(settings, scope) === "disabled") return "off";
+  return activeEffort(settings, scope);
+}
+
+function displayTier(settings: AppSettings, scope: ModelSwitcherScope): string {
+  const model = activeModel(settings, scope);
+  if (!modelSupportsThinking(model)) return "";
+  if (activeThinking(settings, scope) === "disabled") return "off";
+  return activeEffort(settings, scope);
 }
 
 export function ModelSwitcher({
   settings,
   onChange,
   disabled,
+  scope = "chat",
 }: ModelSwitcherProps) {
   const [open, setOpen] = useState(false);
   const [modelOptions, setModelOptions] = useState<string[]>([]);
@@ -41,13 +74,25 @@ export function ModelSwitcher({
   const [error, setError] = useState("");
   const fetchGen = useRef(0);
 
-  const model = effectiveModel(settings);
-  const tier = displayTier(settings);
+  const model = activeModel(settings, scope);
+  const tier = displayTier(settings, scope);
 
   const loadModels = async (source: AppSettings) => {
-    if (!source.apiKey.trim()) {
+    if (source.deepseekTransport === "web") {
+      if (!source.webSessionToken.trim()) {
+        setModelOptions([]);
+        setError("网页会话请先填写 Token");
+        return;
+      }
+    } else if (!source.apiKey.trim()) {
       setModelOptions([]);
       setError("请先在设置中填写 API Key");
+      return;
+    }
+    if (source.deepseekTransport === "web") {
+      const provider = getProvider();
+      setModelOptions([provider.defaultModel, ...provider.models]);
+      setError("");
       return;
     }
     const gen = ++fetchGen.current;
@@ -70,7 +115,7 @@ export function ModelSwitcher({
     if (!open) return;
     void loadModels(settings);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open]);
+  }, [open, scope]);
 
   const provider = getProvider();
   const choices = [
@@ -82,18 +127,35 @@ export function ModelSwitcher({
   ].filter(Boolean);
   const effortLevels = reasoningEffortsForModel(model);
   const showTiers = modelSupportsThinking(model);
-  const tierValue = tierFromSettings(settings);
+  const tierValue = tierFromSettings(settings, scope);
 
   const apply = (patch: Partial<AppSettings>) => {
     onChange({ ...settings, ...patch });
   };
 
   const setModel = (nextModel: string) => {
-    const effort = normalizeReasoningEffort(settings.reasoningEffort, nextModel);
-    apply({ model: nextModel, reasoningEffort: effort });
+    const effort = normalizeReasoningEffort(
+      scope === "game"
+        ? settings.gameReasoningEffort ?? settings.reasoningEffort
+        : settings.reasoningEffort,
+      nextModel,
+    );
+    if (scope === "game") {
+      apply({ gameModel: nextModel, gameReasoningEffort: effort });
+    } else {
+      apply({ model: nextModel, reasoningEffort: effort });
+    }
   };
 
   const setTier = (value: TierValue) => {
+    if (scope === "game") {
+      if (value === "off") {
+        apply({ gameThinkingMode: "disabled" });
+        return;
+      }
+      apply({ gameThinkingMode: "enabled", gameReasoningEffort: value });
+      return;
+    }
     if (value === "off") {
       apply({ thinkingMode: "disabled" });
       return;
@@ -121,7 +183,7 @@ export function ModelSwitcher({
             onClick={(e) => e.stopPropagation()}
           >
             <div className="modal-header">
-              <h2>选择</h2>
+              <h2>{scope === "game" ? "游戏模型" : "选择"}</h2>
               <button
                 type="button"
                 className="icon-btn"
@@ -160,7 +222,7 @@ export function ModelSwitcher({
                   <p className="settings-hint">{error}</p>
                 ) : modelOptions.length > 0 ? (
                   <p className="settings-hint">
-                    共 {modelOptions.length} 个可用（来自 API）
+                    共 {modelOptions.length} 个可用
                   </p>
                 ) : null}
               </div>
