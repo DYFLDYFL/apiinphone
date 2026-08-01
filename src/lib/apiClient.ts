@@ -9,7 +9,7 @@ import type {
 import { getProvider, modelSupportsThinking, normalizeReasoningEffort, providerSupportsVision, resolveModel } from "./apiProviders";
 import { normalizeMessagesForApi } from "./attachments";
 import { renumberSearchOutput } from "./searchSources";
-import { effectiveMaxToolRounds, effectiveModel, thinkingActive } from "./settings";
+import { effectiveMaxToolRounds, effectiveModel } from "./settings";
 import {
   buildTools,
   executeTool,
@@ -181,10 +181,7 @@ function buildChatBody(
     messages: serializeMessagesForApi(messages),
     stream: settings.stream,
   };
-  if (!thinkingActive(settings)) {
-    body.temperature = settings.temperature;
-  }
-  if (settings.maxTokens) {
+  if (settings.maxTokens != null && settings.maxTokens > 0) {
     body.max_tokens = settings.maxTokens;
   }
   if (settings.stream) {

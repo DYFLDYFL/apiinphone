@@ -35,29 +35,12 @@ const MIME: Record<ExportFormat, string> = {
 
 const UTF8_BOM = new Uint8Array([0xef, 0xbb, 0xbf]);
 
-export function resolveExportRoot(settings: AppSettings): {
+export function resolveExportRoot(_settings?: AppSettings): {
   directory: Directory;
   folder: string;
   label: string;
   pathHint: string;
 } {
-  const loc = (settings.exportLocation || "documents") as ExportLocation;
-  if (loc === "data") {
-    return {
-      directory: Directory.Data,
-      folder: EXPORT_FOLDER,
-      label: "应用数据",
-      pathHint: `Data/${EXPORT_FOLDER}/`,
-    };
-  }
-  if (loc === "cache") {
-    return {
-      directory: Directory.Cache,
-      folder: EXPORT_FOLDER,
-      label: "缓存（可能被清理）",
-      pathHint: `Cache/${EXPORT_FOLDER}/`,
-    };
-  }
   return {
     directory: Directory.Documents,
     folder: EXPORT_FOLDER,

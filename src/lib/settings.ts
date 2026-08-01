@@ -1,6 +1,7 @@
 import { Preferences } from "@capacitor/preferences";
 import type { AppSettings } from "../types";
 import {
+  DEEPSEEK_PROVIDER,
   defaultRecentModels,
   normalizeReasoningEffort,
   resolveModel,
@@ -13,10 +14,13 @@ const LEGACY_MODEL_PRESETS: Record<string, string> = {
 
 const SETTINGS_KEY = "settings";
 
-/** Default max agent tool loops per user message. */
+/** Default max agent tool loops per user message (not user-configurable). */
 export const DEFAULT_MAX_TOOL_ROUNDS = 12;
 
-/** Always-on features — no longer exposed as settings toggles. */
+const DEFAULT_WEB_SEARCH_TOP_K = 8;
+const DEFAULT_WEB_SEARCH_MAX_TOP_K = 20;
+
+/** Always-on / fixed features — not exposed as settings. */
 const FORCED_ON = {
   stream: true,
   showThinking: true,
@@ -24,26 +28,27 @@ const FORCED_ON = {
   toolsWebSearch: true,
   toolsPythonSandbox: true,
   toolsCustomJson: "",
+  baseUrl: DEEPSEEK_PROVIDER.baseUrl,
+  exportLocation: "documents" as const,
+  maxToolRounds: DEFAULT_MAX_TOOL_ROUNDS,
+  webSearchDefaultTopK: DEFAULT_WEB_SEARCH_TOP_K,
+  webSearchMaxTopK: DEFAULT_WEB_SEARCH_MAX_TOP_K,
+  temperature: 0.7,
 } as const;
 
 export const DEFAULT_SETTINGS: AppSettings = {
   apiProvider: "deepseek",
   apiKey: "",
-  baseUrl: "https://api.deepseek.com",
   model: "deepseek-v4-flash",
-  temperature: 0.7,
-  maxTokens: 4096,
+  maxTokens: null,
   ...FORCED_ON,
   thinkingMode: "enabled",
   reasoningEffort: "high",
   pythonSandboxTimeout: 15,
-  maxToolRounds: DEFAULT_MAX_TOOL_ROUNDS,
   webSearchEngine: "bing_cn",
   webSearchEndpoint: "",
   webSearchMetasoKey: "",
   webSearchBaiduKey: "",
-  webSearchDefaultTopK: 8,
-  webSearchMaxTopK: 20,
   httpConnectTimeout: 15,
   httpReadTimeout: 120,
   retryCount: 2,
@@ -53,7 +58,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
   appTitle: "AI API Client",
   theme: "light",
   recentModels: defaultRecentModels(),
-  exportLocation: "documents",
 };
 
 function applyForcedOn(settings: AppSettings): AppSettings {
@@ -82,15 +86,15 @@ export function effectiveMaxToolRounds(settings: AppSettings): number {
 }
 
 export function effectiveWebSearchMaxTopK(settings: AppSettings): number {
-  const n = Number(settings.webSearchMaxTopK ?? 20);
-  if (Number.isNaN(n)) return 20;
+  const n = Number(settings.webSearchMaxTopK ?? DEFAULT_WEB_SEARCH_MAX_TOP_K);
+  if (Number.isNaN(n)) return DEFAULT_WEB_SEARCH_MAX_TOP_K;
   return Math.min(30, Math.max(1, Math.round(n)));
 }
 
 export function effectiveWebSearchDefaultTopK(settings: AppSettings): number {
   const max = effectiveWebSearchMaxTopK(settings);
-  const n = Number(settings.webSearchDefaultTopK ?? 8);
-  if (Number.isNaN(n)) return Math.min(8, max);
+  const n = Number(settings.webSearchDefaultTopK ?? DEFAULT_WEB_SEARCH_TOP_K);
+  if (Number.isNaN(n)) return Math.min(DEFAULT_WEB_SEARCH_TOP_K, max);
   return Math.min(max, Math.max(1, Math.round(n)));
 }
 
@@ -107,6 +111,14 @@ export function resolveWebSearchTopK(
   return Math.min(max, Math.max(1, Math.round(n)));
 }
 
+/** User prompt + fixed tool-round hint for the model. */
+export function composeSystemPrompt(settings: AppSettings): string {
+  const rounds = effectiveMaxToolRounds(settings);
+  const tip = `工具调用在单次回复内最多 ${rounds} 轮；达到上限后直接作答，不要继续调用工具。`;
+  const user = settings.systemPrompt.trim();
+  return user ? `${user}\n${tip}` : tip;
+}
+
 export async function loadSettings(): Promise<AppSettings> {
   const { value } = await Preferences.get({ key: SETTINGS_KEY });
   if (!value) return { ...DEFAULT_SETTINGS };
@@ -119,19 +131,17 @@ export async function loadSettings(): Promise<AppSettings> {
       merged.model =
         LEGACY_MODEL_PRESETS[raw.modelPreset] ?? merged.model;
     }
-    // Drop legacy Poe (and any other) provider; always DeepSeek.
     merged.apiProvider = "deepseek";
-    if (
-      !merged.baseUrl?.trim() ||
-      merged.baseUrl.toLowerCase().includes("poe.com")
-    ) {
-      merged.baseUrl = DEFAULT_SETTINGS.baseUrl;
-    }
     if (!merged.recentModels?.length) {
       merged.recentModels = defaultRecentModels();
     }
-    merged.webSearchMaxTopK = effectiveWebSearchMaxTopK(merged);
-    merged.webSearchDefaultTopK = effectiveWebSearchDefaultTopK(merged);
+    if (merged.maxTokens != null) {
+      const n = Number(merged.maxTokens);
+      merged.maxTokens =
+        Number.isNaN(n) || n <= 0
+          ? null
+          : Math.min(384000, Math.max(256, Math.round(n)));
+    }
     merged.reasoningEffort = normalizeReasoningEffort(
       merged.reasoningEffort,
       merged.model,

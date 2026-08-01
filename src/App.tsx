@@ -22,6 +22,7 @@ import {
 } from "./lib/attachments";
 import { formatBalanceDisplay } from "./lib/usageInfo";
 import {
+  composeSystemPrompt,
   effectiveModel,
   loadSettings,
   rememberModel,
@@ -496,11 +497,11 @@ export default function App() {
     const userDisplay: DisplayMessage = { role: "user", content };
     const userMessage: ChatMessage = { role: "user", content: apiContent };
 
-    const history: ChatMessage[] = [];
-    if (settings.systemPrompt.trim()) {
-      history.push({ role: "system", content: settings.systemPrompt.trim() });
-    }
-    history.push(...session.history, userMessage);
+    const history: ChatMessage[] = [
+      { role: "system", content: composeSystemPrompt(settings) },
+      ...session.history,
+      userMessage,
+    ];
 
     const nextSession: ChatSession = {
       ...session,
@@ -539,11 +540,10 @@ export default function App() {
     setSession(baseSession);
     renderSession(baseSession, thinkingChainVisible(settings));
 
-    const history: ChatMessage[] = [];
-    if (settings.systemPrompt.trim()) {
-      history.push({ role: "system", content: settings.systemPrompt.trim() });
-    }
-    history.push(...trimmedHistory);
+    const history: ChatMessage[] = [
+      { role: "system", content: composeSystemPrompt(settings) },
+      ...trimmedHistory,
+    ];
     await runChat(history, trimmedDisplay, baseSession, true);
   };
 
@@ -668,7 +668,13 @@ export default function App() {
         <div className="topbar-title">
           <div className="title">{session.title}</div>
           <div className="subtitle">
-            {balanceLines[0] ?? statusText ?? effectiveModel(settings)}
+            <span className="model-label">{effectiveModel(settings)}</span>
+            {(statusText || balanceLines[0]) && (
+              <span className="status-hint">
+                {" · "}
+                {statusText || balanceLines[0]}
+              </span>
+            )}
           </div>
         </div>
         <div className="topbar-actions">

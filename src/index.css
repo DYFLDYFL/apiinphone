@@ -90,6 +90,18 @@ body {
 .subtitle {
   font-size: 12px;
   color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.model-label {
+  color: var(--fg);
+  font-weight: 500;
+}
+
+.status-hint {
+  color: var(--muted);
 }
 
 .main {

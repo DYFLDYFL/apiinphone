@@ -10,7 +10,6 @@ import {
   reasoningEffortsForModel,
   type ReasoningEffort,
 } from "../lib/apiProviders";
-import { thinkingActive } from "../lib/settings";
 
 interface SettingsPanelProps {
   open: boolean;
@@ -36,6 +35,9 @@ export function SettingsPanel({
   const [modelOptions, setModelOptions] = useState<string[]>([]);
   const [modelsLoading, setModelsLoading] = useState(false);
   const [modelsError, setModelsError] = useState("");
+  const [limitTokens, setLimitTokens] = useState(
+    () => settings.maxTokens != null && settings.maxTokens > 0,
+  );
   const fetchGen = useRef(0);
   const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const draftRef = useRef(draft);
@@ -71,6 +73,7 @@ export function SettingsPanel({
       return;
     }
     setDraft(settings);
+    setLimitTokens(settings.maxTokens != null && settings.maxTokens > 0);
     void loadModelOptions(settings).catch(() => {});
     // Only re-sync when panel opens (avoid refetch on every keystroke save).
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -85,7 +88,7 @@ export function SettingsPanel({
     return () => {
       if (debounceTimer.current) clearTimeout(debounceTimer.current);
     };
-  }, [open, draft.apiKey, draft.baseUrl]);
+  }, [open, draft.apiKey]);
 
   if (!open) return null;
 
@@ -100,7 +103,6 @@ export function SettingsPanel({
     ...new Set([...provider.models, ...modelOptions, draft.model]),
   ].filter(Boolean);
   const thinkingVisible = modelSupportsThinking(draft.model);
-  const thinkingOn = thinkingActive({ ...draft, model: draft.model });
   const effortLevels = reasoningEffortsForModel(draft.model);
   const tierValue = tierFromSettings(draft);
 
@@ -159,14 +161,6 @@ export function SettingsPanel({
               value={draft.apiKey}
               placeholder={provider.apiKeyHint}
               onChange={(e) => update({ apiKey: e.target.value })}
-            />
-          </label>
-
-          <label>
-            API 地址
-            <input
-              value={draft.baseUrl}
-              onChange={(e) => update({ baseUrl: e.target.value })}
             />
           </label>
 
@@ -233,53 +227,40 @@ export function SettingsPanel({
             </label>
           )}
 
-          <label>
-            文件导出目录
-            <select
-              value={draft.exportLocation ?? "documents"}
-              onChange={(e) =>
-                update({
-                  exportLocation: e.target
-                    .value as AppSettings["exportLocation"],
-                })
-              }
-            >
-              <option value="documents">文档（推荐）</option>
-              <option value="data">应用数据</option>
-              <option value="cache">缓存（可能被清理）</option>
-            </select>
-            <p className="settings-hint">
-              {draft.exportLocation === "data"
-                ? "当前路径：Data/AIExports/"
-                : draft.exportLocation === "cache"
-                  ? "当前路径：Cache/AIExports/"
-                  : "当前路径：Documents/AIExports/"}
-              保存后可在聊天界面点「打开」或「发送」，无需自己翻文件夹。
-            </p>
+          <label className="checkbox">
+            <input
+              type="checkbox"
+              checked={limitTokens}
+              onChange={(e) => {
+                const on = e.target.checked;
+                setLimitTokens(on);
+                update({ maxTokens: on ? 4096 : null });
+              }}
+            />
+            限制输出长度（max tokens）
           </label>
-
-          <details className="advanced-block">
-            <summary>采样</summary>
+          {limitTokens && (
             <label>
-              Temperature
+              Max tokens
               <input
                 type="number"
-                min={0}
-                max={2}
-                step={0.1}
-                value={draft.temperature}
-                disabled={thinkingOn}
-                onChange={(e) =>
-                  update({ temperature: Number(e.target.value) })
-                }
+                min={256}
+                max={384000}
+                step={256}
+                value={draft.maxTokens ?? 4096}
+                onChange={(e) => {
+                  const n = Number(e.target.value);
+                  update({
+                    maxTokens:
+                      Number.isNaN(n) || n <= 0
+                        ? 4096
+                        : Math.min(384000, Math.max(256, Math.round(n))),
+                  });
+                }}
               />
+              <p className="settings-hint">默认不限制；开启后写入请求的 max_tokens。</p>
             </label>
-            {thinkingOn && (
-              <p className="settings-hint">
-                思考模式开启时，Temperature 由 API 忽略。
-              </p>
-            )}
-          </details>
+          )}
 
           <details className="advanced-block">
             <summary>搜索设置</summary>
@@ -341,78 +322,6 @@ export function SettingsPanel({
                 />
               </label>
             )}
-            <label>
-              每次搜索默认条数
-              <input
-                type="number"
-                min={1}
-                max={30}
-                value={draft.webSearchDefaultTopK}
-                onChange={(e) =>
-                  update({ webSearchDefaultTopK: Number(e.target.value) })
-                }
-              />
-            </label>
-            <label>
-              每次搜索条数上限
-              <input
-                type="number"
-                min={1}
-                max={30}
-                value={draft.webSearchMaxTopK}
-                onChange={(e) =>
-                  update({ webSearchMaxTopK: Number(e.target.value) })
-                }
-              />
-            </label>
-          </details>
-
-          <details className="advanced-block">
-            <summary>超时与上限</summary>
-            <label>
-              Max tokens
-              <input
-                type="number"
-                min={256}
-                max={384000}
-                step={256}
-                value={draft.maxTokens ?? 4096}
-                onChange={(e) =>
-                  update({ maxTokens: Number(e.target.value) || null })
-                }
-              />
-            </label>
-            <label>
-              工具调用轮次上限
-              <input
-                type="number"
-                min={1}
-                max={64}
-                value={draft.maxToolRounds}
-                onChange={(e) =>
-                  update({ maxToolRounds: Number(e.target.value) })
-                }
-              />
-              <p className="settings-hint">
-                单条消息内模型可连续调用工具的最大轮数。用满后会自动汇总回答。
-              </p>
-            </label>
-            <label>
-              沙盒超时（秒）
-              <input
-                type="number"
-                min={3}
-                max={120}
-                value={draft.pythonSandboxTimeout}
-                onChange={(e) =>
-                  update({ pythonSandboxTimeout: Number(e.target.value) })
-                }
-              />
-              <p className="settings-hint">
-                Android App 使用 Chaquopy 真 Python；浏览器使用 Pyodide（首次约
-                15MB）。
-              </p>
-            </label>
           </details>
 
           <label>
@@ -422,6 +331,9 @@ export function SettingsPanel({
               value={draft.systemPrompt}
               onChange={(e) => update({ systemPrompt: e.target.value })}
             />
+            <p className="settings-hint">
+              发送时会自动附带工具调用轮次上限说明（不可在此改上限）。
+            </p>
           </label>
 
           <label>
