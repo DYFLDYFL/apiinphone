@@ -8,7 +8,7 @@ export interface AppSettings {
   stream: boolean;
   showThinking: boolean;
   thinkingMode: "enabled" | "disabled";
-  reasoningEffort: "high" | "max";
+  reasoningEffort: "low" | "high" | "max";
   toolsEnabled: boolean;
   toolsWebSearch: boolean;
   toolsPythonSandbox: boolean;

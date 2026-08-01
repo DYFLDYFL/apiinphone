@@ -1,0 +1,12 @@
+---
+description: After every git push, always tell the user the app version number
+alwaysApply: true
+---
+
+# 推送后报告版本号
+
+每次向 GitHub / remote **push 成功后**，在回复里**明确写出当前版本号**（至少包含 `package.json` 的 `version`，若有则同时写 Android `versionName` / `versionCode`）。
+
+示例：`已推送：版本 1.4.2（versionCode 5）`
+
+不要只给 commit hash 或仓库链接而不写版本号。

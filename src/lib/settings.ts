@@ -2,6 +2,7 @@ import { Preferences } from "@capacitor/preferences";
 import type { AppSettings } from "../types";
 import {
   defaultRecentModels,
+  normalizeReasoningEffort,
   resolveModel,
 } from "./apiProviders";
 
@@ -22,6 +23,7 @@ const FORCED_ON = {
   toolsEnabled: true,
   toolsWebSearch: true,
   toolsPythonSandbox: true,
+  toolsCustomJson: "",
 } as const;
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -42,17 +44,12 @@ export const DEFAULT_SETTINGS: AppSettings = {
   webSearchBaiduKey: "",
   webSearchDefaultTopK: 8,
   webSearchMaxTopK: 20,
-  toolsCustomJson: "",
   httpConnectTimeout: 15,
   httpReadTimeout: 120,
   retryCount: 2,
   retryBackoffMs: 1000,
   systemPrompt:
-    "你是一个有帮助的助手，用 Markdown、LaTeX（$...$ / $$...$$）作答。\n" +
-    "涉及新闻、政策、价格、赛事、产品版本等时效信息时：先 get_current_time 获取当前时间，再 web_search 检索网页并对照时间作答，勿仅凭训练数据断言「最新」。\n" +
-    "使用 web_search 后，正文引用必须只用方括号编号 [1][2]…（与搜索结果编号一致），不要用 [网站名](链接) 或纯文字来源名；勿在文末重复列出来源列表（界面会自动显示参考来源）。\n" +
-    "用户要求导出、保存、生成文件（txt / Word / PDF / Excalidraw 表格）时，调用 save_document；Excalidraw 用 format=excalidraw 并传 rows 二维数组；保存后提示用户在界面点击「打开」或「发送」。\n" +
-    "用户消息中的附件正文已提供，可直接阅读。",
+    "时效问题先 get_current_time 再 web_search；引用搜索结果只用 [1][2]…。",
   appTitle: "AI API Client",
   theme: "light",
   recentModels: defaultRecentModels(),
@@ -135,6 +132,10 @@ export async function loadSettings(): Promise<AppSettings> {
     }
     merged.webSearchMaxTopK = effectiveWebSearchMaxTopK(merged);
     merged.webSearchDefaultTopK = effectiveWebSearchDefaultTopK(merged);
+    merged.reasoningEffort = normalizeReasoningEffort(
+      merged.reasoningEffort,
+      merged.model,
+    );
     return applyForcedOn(merged);
   } catch {
     return { ...DEFAULT_SETTINGS };

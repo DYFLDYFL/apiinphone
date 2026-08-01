@@ -1,6 +1,6 @@
 # apiinphone
 
-**Version 1.4.2**
+**Version 1.4.3**
 
 Android 版 AI API 客户端，功能对齐桌面项目 [aiusingapi](../aiusingapi)。
 
@@ -13,53 +13,13 @@ Android 版 AI API 客户端，功能对齐桌面项目 [aiusingapi](../aiusinga
 - 多会话管理（新建 / 重命名 / 删除 / 清空）
 - 附件（图片、文本、小体积二进制 Base64；粘贴图片）
 - 图片附件会降级为文本提示（DeepSeek 不支持 vision）
-- Tool Calls：`get_current_time`、联网搜索、`web_fetch`、**`run_python`（Android: Chaquopy；浏览器: Pyodide）**
-- 自定义工具：JSON 定义 + `x-apiinphone` 扩展（HTTP / 内置 JS handler）
+- 内置工具：`get_current_time`、联网搜索、`web_fetch`、`run_python`、`save_document`（无自定义工具配置）
 - 用量面板：上下文占用、对话累计、上次请求、DeepSeek 余额
 - 重试上一条回复、复制回复、停止生成
-- 完整设置项（搜索引擎、SearXNG/Metaso/百度 Key、网络重试等）
+- 设置：搜索引擎、导出目录、推理档位（随模型）、主题等
 - 浅色 / 深色主题
 
 > **`run_python`**：Android App 使用 [Chaquopy](https://chaquo.com/chaquopy/)（真 CPython，stdlib 白名单 + 超时）；浏览器使用 [Sandpy](https://github.com/Raynan00/sandpy)（Pyodide Web Worker，首次约 15MB）。策略与桌面版类似。
-
-### 自定义工具示例
-
-在设置 → 自定义工具 JSON 中：
-
-```json
-[
-  {
-    "type": "function",
-    "function": {
-      "name": "echo_tool",
-      "description": "回显参数",
-      "parameters": {
-        "type": "object",
-        "properties": { "text": { "type": "string" } }
-      }
-    },
-    "x-apiinphone": { "type": "js", "handler": "echo" }
-  },
-  {
-    "type": "function",
-    "function": {
-      "name": "remote_api",
-      "description": "调用远程 HTTP 接口",
-      "parameters": {
-        "type": "object",
-        "properties": { "q": { "type": "string" } }
-      }
-    },
-    "x-apiinphone": {
-      "type": "http",
-      "url": "https://example.com/api",
-      "method": "POST"
-    }
-  }
-]
-```
-
-内置 JS handler：`echo`、`json_stringify`、`format_args`。
 
 ## 开发运行（浏览器）
 

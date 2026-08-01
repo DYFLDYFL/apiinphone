@@ -6,7 +6,7 @@ import type {
   TokenUsage,
   ToolCall,
 } from "../types";
-import { getProvider, modelSupportsThinking, providerSupportsVision, resolveModel } from "./apiProviders";
+import { getProvider, modelSupportsThinking, normalizeReasoningEffort, providerSupportsVision, resolveModel } from "./apiProviders";
 import { normalizeMessagesForApi } from "./attachments";
 import { renumberSearchOutput } from "./searchSources";
 import { effectiveMaxToolRounds, effectiveModel, thinkingActive } from "./settings";
@@ -164,7 +164,10 @@ function applyThinking(settings: AppSettings, body: Record<string, unknown>) {
     extra.thinking = { type: "disabled" };
   } else {
     extra.thinking = { type: "enabled" };
-    body.reasoning_effort = settings.reasoningEffort;
+    body.reasoning_effort = normalizeReasoningEffort(
+      settings.reasoningEffort,
+      resolveModel(settings),
+    );
   }
   body.extra_body = extra;
 }

@@ -3,8 +3,12 @@ import type { AppSettings } from "../types";
 import { listModels } from "../lib/apiClient";
 import {
   DEEPSEEK_PROVIDER,
+  defaultReasoningEffortForModel,
   getProvider,
   modelSupportsThinking,
+  normalizeReasoningEffort,
+  reasoningEffortsForModel,
+  type ReasoningEffort,
 } from "../lib/apiProviders";
 import { thinkingActive } from "../lib/settings";
 
@@ -13,6 +17,13 @@ interface SettingsPanelProps {
   settings: AppSettings;
   onClose: () => void;
   onSave: (settings: AppSettings) => void;
+}
+
+type ReasoningTierValue = "off" | ReasoningEffort;
+
+function tierFromSettings(settings: AppSettings): ReasoningTierValue {
+  if (settings.thinkingMode === "disabled") return "off";
+  return normalizeReasoningEffort(settings.reasoningEffort, settings.model);
 }
 
 export function SettingsPanel({
@@ -90,12 +101,30 @@ export function SettingsPanel({
   ].filter(Boolean);
   const thinkingVisible = modelSupportsThinking(draft.model);
   const thinkingOn = thinkingActive({ ...draft, model: draft.model });
+  const effortLevels = reasoningEffortsForModel(draft.model);
+  const tierValue = tierFromSettings(draft);
+
+  const setModel = (model: string) => {
+    const effort = normalizeReasoningEffort(draft.reasoningEffort, model);
+    update({ model, reasoningEffort: effort });
+  };
+
+  const setTier = (value: ReasoningTierValue) => {
+    if (value === "off") {
+      update({ thinkingMode: "disabled" });
+      return;
+    }
+    update({
+      thinkingMode: "enabled",
+      reasoningEffort: value,
+    });
+  };
 
   const refreshModels = async () => {
     try {
       const models = await loadModelOptions(draft);
       if (models.length && !models.includes(draft.model)) {
-        update({ model: models[0] });
+        setModel(models[0]);
       }
     } catch (err) {
       alert(String(err));
@@ -146,7 +175,7 @@ export function SettingsPanel({
             <div className="row">
               <select
                 value={draft.model}
-                onChange={(e) => update({ model: e.target.value })}
+                onChange={(e) => setModel(e.target.value)}
               >
                 {modelChoices.map((m) => (
                   <option key={m} value={m}>
@@ -178,6 +207,32 @@ export function SettingsPanel({
             )}
           </label>
 
+          {thinkingVisible && (
+            <label>
+              推理档位
+              <select
+                value={
+                  tierValue === "off" || effortLevels.includes(tierValue)
+                    ? tierValue
+                    : defaultReasoningEffortForModel(draft.model)
+                }
+                onChange={(e) =>
+                  setTier(e.target.value as ReasoningTierValue)
+                }
+              >
+                <option value="off">关闭</option>
+                {effortLevels.map((level) => (
+                  <option key={level} value={level}>
+                    {level}
+                  </option>
+                ))}
+              </select>
+              <p className="settings-hint">
+                对应 DeepSeek API 的 thinking / reasoning_effort（随模型变化）。
+              </p>
+            </label>
+          )}
+
           <label>
             文件导出目录
             <select
@@ -204,41 +259,7 @@ export function SettingsPanel({
           </label>
 
           <details className="advanced-block">
-            <summary>思考与采样</summary>
-            {thinkingVisible && (
-              <>
-                <label>
-                  思考模式
-                  <select
-                    value={draft.thinkingMode}
-                    onChange={(e) =>
-                      update({
-                        thinkingMode: e.target
-                          .value as AppSettings["thinkingMode"],
-                      })
-                    }
-                  >
-                    <option value="enabled">开启思考</option>
-                    <option value="disabled">关闭思考（更省）</option>
-                  </select>
-                </label>
-                <label>
-                  思考深度
-                  <select
-                    value={draft.reasoningEffort}
-                    onChange={(e) =>
-                      update({
-                        reasoningEffort: e.target
-                          .value as AppSettings["reasoningEffort"],
-                      })
-                    }
-                  >
-                    <option value="high">high（默认）</option>
-                    <option value="max">max（更深）</option>
-                  </select>
-                </label>
-              </>
-            )}
+            <summary>采样</summary>
             <label>
               Temperature
               <input
@@ -373,7 +394,7 @@ export function SettingsPanel({
                 }
               />
               <p className="settings-hint">
-                单条消息内模型可连续调用工具的最大轮数（默认 24）。用满后会自动汇总回答，不会报错。
+                单条消息内模型可连续调用工具的最大轮数。用满后会自动汇总回答。
               </p>
             </label>
             <label>
@@ -389,79 +410,15 @@ export function SettingsPanel({
               />
               <p className="settings-hint">
                 Android App 使用 Chaquopy 真 Python；浏览器使用 Pyodide（首次约
-                15MB）。首启可能略慢。
+                15MB）。
               </p>
-            </label>
-          </details>
-
-          <details className="advanced-block">
-            <summary>自定义工具</summary>
-            <label>
-              自定义工具 JSON（数组，可选 x-apiinphone 扩展）
-              <textarea
-                rows={5}
-                value={draft.toolsCustomJson}
-                placeholder={`[\n  {\n    "type": "function",\n    "function": {\n      "name": "echo_tool",\n      "description": "Echo args",\n      "parameters": { "type": "object", "properties": { "text": { "type": "string" } } }\n    },\n    "x-apiinphone": { "type": "js", "handler": "echo" }\n  }\n]`}
-                onChange={(e) => update({ toolsCustomJson: e.target.value })}
-              />
-            </label>
-          </details>
-
-          <details className="advanced-block">
-            <summary>高级网络设置</summary>
-            <label>
-              连接超时（秒）
-              <input
-                type="number"
-                min={5}
-                max={120}
-                value={draft.httpConnectTimeout}
-                onChange={(e) =>
-                  update({ httpConnectTimeout: Number(e.target.value) })
-                }
-              />
-            </label>
-            <label>
-              读取超时（秒）
-              <input
-                type="number"
-                min={30}
-                max={600}
-                value={draft.httpReadTimeout}
-                onChange={(e) =>
-                  update({ httpReadTimeout: Number(e.target.value) })
-                }
-              />
-            </label>
-            <label>
-              重试次数
-              <input
-                type="number"
-                min={0}
-                max={5}
-                value={draft.retryCount}
-                onChange={(e) => update({ retryCount: Number(e.target.value) })}
-              />
-            </label>
-            <label>
-              重试间隔（毫秒）
-              <input
-                type="number"
-                min={200}
-                max={10000}
-                step={100}
-                value={draft.retryBackoffMs}
-                onChange={(e) =>
-                  update({ retryBackoffMs: Number(e.target.value) })
-                }
-              />
             </label>
           </details>
 
           <label>
             系统提示词
             <textarea
-              rows={4}
+              rows={3}
               value={draft.systemPrompt}
               onChange={(e) => update({ systemPrompt: e.target.value })}
             />

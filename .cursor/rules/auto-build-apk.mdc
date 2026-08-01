@@ -1,0 +1,20 @@
+---
+description: After finishing code changes, always build a debug APK
+alwaysApply: true
+---
+
+# 改完自动打 APK
+
+在本仓库完成一轮**会改变 App 行为或资源**的代码改动后（设置、API、Android、工具、UI 等），在收尾前**必须**执行：
+
+```powershell
+.\build.ps1
+```
+
+（默认会升版本号；若只需重打当前版本可用 `.\build.ps1 -SkipVersionBump`。）
+
+完成后在回复里告知：
+- APK 路径：`android\app\build\outputs\apk\debug\app-debug.apk`
+- 当前版本号（`package.json` / `versionName`）与 `versionCode`
+
+纯文档/规则、未改运行时代码时可不打 APK。
