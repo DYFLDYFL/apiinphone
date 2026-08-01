@@ -113,6 +113,8 @@ export interface ChatSession {
   totalTokens: number;
   contextTokens: number;
   cacheHitTokens: number;
+  /** Cumulative CNY spent this session (from balance deltas when available). */
+  spentCny: number;
 }
 
 export interface ChatResponse {

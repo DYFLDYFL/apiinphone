@@ -1,28 +1,12 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import type { AppSettings } from "../types";
-import { listModels } from "../lib/apiClient";
-import {
-  DEEPSEEK_PROVIDER,
-  defaultReasoningEffortForModel,
-  getProvider,
-  modelSupportsThinking,
-  normalizeReasoningEffort,
-  reasoningEffortsForModel,
-  type ReasoningEffort,
-} from "../lib/apiProviders";
+import { DEEPSEEK_PROVIDER, getProvider } from "../lib/apiProviders";
 
 interface SettingsPanelProps {
   open: boolean;
   settings: AppSettings;
   onClose: () => void;
   onSave: (settings: AppSettings) => void;
-}
-
-type ReasoningTierValue = "off" | ReasoningEffort;
-
-function tierFromSettings(settings: AppSettings): ReasoningTierValue {
-  if (settings.thinkingMode === "disabled") return "off";
-  return normalizeReasoningEffort(settings.reasoningEffort, settings.model);
 }
 
 export function SettingsPanel({
@@ -32,63 +16,15 @@ export function SettingsPanel({
   onSave,
 }: SettingsPanelProps) {
   const [draft, setDraft] = useState(settings);
-  const [modelOptions, setModelOptions] = useState<string[]>([]);
-  const [modelsLoading, setModelsLoading] = useState(false);
-  const [modelsError, setModelsError] = useState("");
   const [limitTokens, setLimitTokens] = useState(
     () => settings.maxTokens != null && settings.maxTokens > 0,
   );
-  const fetchGen = useRef(0);
-  const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const draftRef = useRef(draft);
-  draftRef.current = draft;
-
-  const loadModelOptions = async (source: AppSettings) => {
-    if (!source.apiKey.trim()) {
-      setModelOptions([]);
-      setModelsError("请先填写 API Key");
-      return [];
-    }
-    const gen = ++fetchGen.current;
-    setModelsLoading(true);
-    setModelsError("");
-    try {
-      const models = await listModels(source);
-      if (gen !== fetchGen.current) return models;
-      setModelOptions(models);
-      return models;
-    } catch (err) {
-      if (gen !== fetchGen.current) return [];
-      setModelOptions([]);
-      setModelsError(err instanceof Error ? err.message : String(err));
-      throw err;
-    } finally {
-      if (gen === fetchGen.current) setModelsLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    if (!open) {
-      if (debounceTimer.current) clearTimeout(debounceTimer.current);
-      return;
-    }
-    setDraft(settings);
-    setLimitTokens(settings.maxTokens != null && settings.maxTokens > 0);
-    void loadModelOptions(settings).catch(() => {});
-    // Only re-sync when panel opens (avoid refetch on every keystroke save).
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open]);
 
   useEffect(() => {
     if (!open) return;
-    if (debounceTimer.current) clearTimeout(debounceTimer.current);
-    debounceTimer.current = setTimeout(() => {
-      void loadModelOptions(draftRef.current).catch(() => {});
-    }, 600);
-    return () => {
-      if (debounceTimer.current) clearTimeout(debounceTimer.current);
-    };
-  }, [open, draft.apiKey]);
+    setDraft(settings);
+    setLimitTokens(settings.maxTokens != null && settings.maxTokens > 0);
+  }, [open, settings]);
 
   if (!open) return null;
 
@@ -99,47 +35,6 @@ export function SettingsPanel({
   };
 
   const provider = getProvider();
-  // Prefer live /models list; avoid merging stale hardcoded presets into the dropdown.
-  const modelChoices =
-    modelOptions.length > 0
-      ? [...new Set([...modelOptions, draft.model].filter(Boolean))]
-      : [
-          ...new Set(
-            [draft.model, provider.defaultModel, ...provider.models].filter(
-              Boolean,
-            ),
-          ),
-        ];
-  const thinkingVisible = modelSupportsThinking(draft.model);
-  const effortLevels = reasoningEffortsForModel(draft.model);
-  const tierValue = tierFromSettings(draft);
-
-  const setModel = (model: string) => {
-    const effort = normalizeReasoningEffort(draft.reasoningEffort, model);
-    update({ model, reasoningEffort: effort });
-  };
-
-  const setTier = (value: ReasoningTierValue) => {
-    if (value === "off") {
-      update({ thinkingMode: "disabled" });
-      return;
-    }
-    update({
-      thinkingMode: "enabled",
-      reasoningEffort: value,
-    });
-  };
-
-  const refreshModels = async () => {
-    try {
-      const models = await loadModelOptions(draft);
-      if (models.length && !models.includes(draft.model)) {
-        setModel(models[0]);
-      }
-    } catch (err) {
-      alert(String(err));
-    }
-  };
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
@@ -160,6 +55,7 @@ export function SettingsPanel({
             >
               获取 API Key
             </a>
+            。模型与推理档位请在聊天顶栏点击切换。
           </p>
 
           <label>
@@ -171,69 +67,6 @@ export function SettingsPanel({
               onChange={(e) => update({ apiKey: e.target.value })}
             />
           </label>
-
-          <label className="row-label">
-            模型
-            <div className="row">
-              <select
-                value={draft.model}
-                onChange={(e) => setModel(e.target.value)}
-              >
-                {modelChoices.map((m) => (
-                  <option key={m} value={m}>
-                    {m}
-                  </option>
-                ))}
-              </select>
-              <button
-                type="button"
-                className="secondary-btn"
-                disabled={modelsLoading}
-                onClick={() => void refreshModels()}
-              >
-                {modelsLoading ? "刷新中…" : "刷新"}
-              </button>
-            </div>
-            {modelsError ? (
-              <div className="info-muted" style={{ marginTop: 6, fontSize: 12 }}>
-                {modelsError}
-              </div>
-            ) : modelOptions.length > 0 ? (
-              <div className="info-muted" style={{ marginTop: 6, fontSize: 12 }}>
-                共 {modelOptions.length} 个可用模型（来自 API）
-              </div>
-            ) : (
-              <div className="info-muted" style={{ marginTop: 6, fontSize: 12 }}>
-                填写 API Key 后点刷新，获取账号可用模型
-              </div>
-            )}
-          </label>
-
-          {thinkingVisible && (
-            <label>
-              推理档位
-              <select
-                value={
-                  tierValue === "off" || effortLevels.includes(tierValue)
-                    ? tierValue
-                    : defaultReasoningEffortForModel(draft.model)
-                }
-                onChange={(e) =>
-                  setTier(e.target.value as ReasoningTierValue)
-                }
-              >
-                <option value="off">关闭</option>
-                {effortLevels.map((level) => (
-                  <option key={level} value={level}>
-                    {level}
-                  </option>
-                ))}
-              </select>
-              <p className="settings-hint">
-                对应 DeepSeek API 的 thinking / reasoning_effort（随模型变化）。
-              </p>
-            </label>
-          )}
 
           <label className="checkbox">
             <input

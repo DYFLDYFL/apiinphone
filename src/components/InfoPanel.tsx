@@ -16,6 +16,8 @@ interface InfoPanelProps {
   settings: AppSettings;
   session: ChatSession;
   lastUsage: TokenUsage | null;
+  lastSpentCny: number | null;
+  lastSpendKind: "balance" | "estimate" | null;
   balanceLines: string[];
   balanceError: string;
   balanceLoading: boolean;
@@ -30,6 +32,8 @@ export function InfoPanel({
   settings,
   session,
   lastUsage,
+  lastSpentCny,
+  lastSpendKind,
   balanceLines,
   balanceError,
   balanceLoading,
@@ -73,13 +77,23 @@ export function InfoPanel({
               session.completionTokens,
               session.totalTokens,
               session.cacheHitTokens,
+              model,
+              session.spentCny,
+              session.spentCny > 0 ? "balance" : "estimate",
             )}
           </pre>
         </section>
 
         <section className="info-block">
           <div className="info-label">上次请求</div>
-          <pre className="info-pre">{formatLastRequestUsage(lastUsage)}</pre>
+          <pre className="info-pre">
+            {formatLastRequestUsage(
+              lastUsage,
+              model,
+              lastSpentCny,
+              lastSpendKind,
+            )}
+          </pre>
         </section>
 
         <section className="info-block">

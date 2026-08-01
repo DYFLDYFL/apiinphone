@@ -93,6 +93,31 @@ body {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  display: flex;
+  align-items: center;
+  gap: 0;
+  min-width: 0;
+}
+
+.model-switcher-btn {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+}
+
+.model-switcher-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
 }
 
 .model-label {
@@ -100,8 +125,61 @@ body {
   font-weight: 500;
 }
 
+.tier-label {
+  color: var(--muted);
+  font-weight: 500;
+}
+
 .status-hint {
   color: var(--muted);
+  flex-shrink: 0;
+}
+
+.model-picker-modal {
+  max-width: 420px;
+}
+
+.picker-section {
+  margin-bottom: 14px;
+}
+
+.picker-options {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.picker-tiers {
+  flex-direction: row;
+  flex-wrap: wrap;
+}
+
+.picker-option {
+  appearance: none;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--fg);
+  border-radius: 8px;
+  padding: 10px 12px;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+
+.picker-tiers .picker-option {
+  flex: 1 1 auto;
+  min-width: 64px;
+  text-align: center;
+}
+
+.picker-option.active {
+  border-color: var(--accent, #2563eb);
+  background: color-mix(in srgb, var(--accent, #2563eb) 12%, transparent);
+  font-weight: 600;
+}
+
+.picker-actions {
+  margin-top: 8px;
 }
 
 .main {

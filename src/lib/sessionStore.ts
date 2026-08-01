@@ -35,6 +35,7 @@ function createSession(title = "新对话"): ChatSession {
     totalTokens: 0,
     contextTokens: 0,
     cacheHitTokens: 0,
+    spentCny: 0,
   };
 }
 
@@ -103,7 +104,11 @@ export async function loadSession(id: string): Promise<ChatSession | null> {
   const raw = await readText(sessionPath(id));
   if (!raw) return null;
   try {
-    return JSON.parse(raw) as ChatSession;
+    const session = JSON.parse(raw) as ChatSession;
+    if (typeof session.spentCny !== "number" || Number.isNaN(session.spentCny)) {
+      session.spentCny = 0;
+    }
+    return session;
   } catch {
     return null;
   }

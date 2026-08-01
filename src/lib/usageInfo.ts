@@ -1,5 +1,15 @@
-import type { AppSettings, DeepSeekBalance, TokenUsage } from "../types";
+import type {
+  AppSettings,
+  DeepSeekBalance,
+  TokenUsage,
+} from "../types";
 import { contextLimitForModel } from "./apiProviders";
+import {
+  estimateCostCny,
+  estimateUsageCostCny,
+  formatSpendLine,
+  type SpendKind,
+} from "./pricing";
 
 export function formatBalanceDisplay(info: DeepSeekBalance): string[] {
   const lines: string[] = [];
@@ -26,6 +36,9 @@ export function formatSessionUsage(
   completionTokens: number,
   totalTokens: number,
   cacheHitTokens = 0,
+  model = "",
+  spentCny?: number,
+  spendKind?: SpendKind | null,
 ): string {
   if (totalTokens <= 0 && promptTokens <= 0 && completionTokens <= 0) {
     return "本对话：尚无 API 用量记录";
@@ -41,10 +54,31 @@ export function formatSessionUsage(
       `缓存命中 ${cacheHitTokens.toLocaleString()}（占累计输入 ${hitPct.toFixed(1)}%）`,
     );
   }
+  let spendLine: string | null = null;
+  if (spentCny != null && spentCny > 0 && spendKind === "balance") {
+    spendLine = formatSpendLine(spentCny, "balance");
+  } else if (model) {
+    const estimated = estimateCostCny(
+      model,
+      promptTokens,
+      completionTokens,
+      cacheHitTokens,
+    );
+    spendLine = formatSpendLine(
+      spentCny != null && spentCny > 0 ? spentCny : estimated,
+      spentCny != null && spentCny > 0 ? spendKind ?? "balance" : "estimate",
+    );
+  }
+  if (spendLine) lines.push(spendLine);
   return lines.join("\n");
 }
 
-export function formatLastRequestUsage(usage: TokenUsage | null): string {
+export function formatLastRequestUsage(
+  usage: TokenUsage | null,
+  model = "",
+  spentCny?: number | null,
+  spendKind?: SpendKind | null,
+): string {
   if (!usage || usage.totalTokens <= 0) return "上次请求：—";
   const lines = [
     "上次请求",
@@ -60,6 +94,14 @@ export function formatLastRequestUsage(usage: TokenUsage | null): string {
       `缓存命中 ${usage.promptCacheHitTokens.toLocaleString()}（占本次输入 ${hitPct.toFixed(1)}%）`,
     );
   }
+  let amount = spentCny;
+  let kind = spendKind;
+  if (amount == null || kind == null) {
+    amount = model ? estimateUsageCostCny(model, usage) : null;
+    kind = "estimate";
+  }
+  const spendLine = formatSpendLine(amount, kind);
+  if (spendLine) lines.push(spendLine);
   return lines.join("\n");
 }
 

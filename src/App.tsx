@@ -22,6 +22,12 @@ import {
 } from "./lib/attachments";
 import { formatBalanceDisplay } from "./lib/usageInfo";
 import {
+  cnyTotalFromBalance,
+  estimateUsageCostCny,
+  spentCnyFromBalanceDelta,
+  type SpendKind,
+} from "./lib/pricing";
+import {
   composeSystemPrompt,
   effectiveModel,
   loadSettings,
@@ -46,6 +52,7 @@ import { ChatViewer, useChatViewerRef, viewerFromRef } from "./components/ChatVi
 import { ExportFileCard } from "./components/ExportFileCard";
 import { InfoPanel } from "./components/InfoPanel";
 import { RenameDialog } from "./components/RenameDialog";
+import { ModelSwitcher } from "./components/ModelSwitcher";
 import { SettingsPanel } from "./components/SettingsPanel";
 import type { ExportedFile } from "./lib/documentExport";
 import { deleteExportedFile } from "./lib/documentExport";
@@ -104,6 +111,8 @@ export default function App() {
   const [infoOpen, setInfoOpen] = useState(false);
   const [viewerReady, setViewerReady] = useState(false);
   const [lastUsage, setLastUsage] = useState<TokenUsage | null>(null);
+  const [lastSpentCny, setLastSpentCny] = useState<number | null>(null);
+  const [lastSpendKind, setLastSpendKind] = useState<SpendKind | null>(null);
   const [balanceLines, setBalanceLines] = useState<string[]>([]);
   const [balanceError, setBalanceError] = useState("");
   const [balanceLoading, setBalanceLoading] = useState(false);
@@ -281,6 +290,44 @@ export default function App() {
     };
 
     try {
+      let balanceBefore: number | null = null;
+      try {
+        const beforeBal = await fetchDeepseekBalance(settings);
+        balanceBefore = cnyTotalFromBalance(beforeBal);
+        setBalanceLines(formatBalanceDisplay(beforeBal));
+        setBalanceError("");
+      } catch {
+        /* spend falls back to rate table */
+      }
+
+      const resolveSpend = async (
+        usage: TokenUsage | null,
+      ): Promise<{ amount: number; kind: SpendKind }> => {
+        let fromBalance: number | null = null;
+        try {
+          const afterBal = await fetchDeepseekBalance(settings);
+          setBalanceLines(formatBalanceDisplay(afterBal));
+          setBalanceError("");
+          fromBalance = spentCnyFromBalanceDelta(
+            balanceBefore,
+            cnyTotalFromBalance(afterBal),
+          );
+        } catch {
+          /* ignore */
+        }
+        if (fromBalance != null && fromBalance > 0) {
+          return { amount: fromBalance, kind: "balance" };
+        }
+        const estimated = usage
+          ? estimateUsageCostCny(effectiveModel(settings), usage)
+          : 0;
+        if (fromBalance === 0 && estimated <= 0) {
+          return { amount: 0, kind: "balance" };
+        }
+        // Balance often rounds tiny spends to 0 — fall back to rate table.
+        return { amount: estimated, kind: "estimate" };
+      };
+
       const response = await chatStream(settings, history, {
         control: streamControlRef.current,
         onStreamRoundStart: () => {
@@ -374,6 +421,7 @@ export default function App() {
           sources: sources.length ? sources : undefined,
           note: response.note,
         };
+        const spend = await resolveSpend(response.usage);
         const finalSession: ChatSession = {
           ...sessionBase,
           history: [...sessionBase.history, ...response.apiMessages],
@@ -390,9 +438,14 @@ export default function App() {
           cacheHitTokens:
             sessionBase.cacheHitTokens +
             (response.usage?.promptCacheHitTokens ?? 0),
+          spentCny:
+            (sessionBase.spentCny ?? 0) +
+            (spend.kind === "balance" ? spend.amount : 0),
         };
         await persistSession(finalSession);
         setLastUsage(response.usage);
+        setLastSpentCny(spend.amount);
+        setLastSpendKind(spend.kind);
         viewer?.updateLastAssistant(
           cancelContent,
           false,
@@ -413,6 +466,7 @@ export default function App() {
         note: response.note || undefined,
       };
 
+      const spend = await resolveSpend(response.usage);
       const finalSession: ChatSession = {
         ...sessionBase,
         history: [...sessionBase.history, ...response.apiMessages],
@@ -427,13 +481,17 @@ export default function App() {
         cacheHitTokens:
           sessionBase.cacheHitTokens +
           (response.usage?.promptCacheHitTokens ?? 0),
+        spentCny:
+          (sessionBase.spentCny ?? 0) +
+          (spend.kind === "balance" ? spend.amount : 0),
       };
 
       await persistSession(finalSession);
       setLastUsage(response.usage);
+      setLastSpentCny(spend.amount);
+      setLastSpendKind(spend.kind);
       const savedSettings = rememberModel(settings, effectiveModel(settings));
       if (savedSettings !== settings) await persistSettings(savedSettings);
-      void refreshBalance(settings);
 
       viewer?.updateLastAssistantTools(toolTrace, false);
       if (thinkingChainVisible(settings)) {
@@ -610,10 +668,13 @@ export default function App() {
       totalTokens: 0,
       contextTokens: 0,
       cacheHitTokens: 0,
+      spentCny: 0,
     };
     await persistSession(next);
     viewerFromRef(viewerRef)?.clearMessages();
     setLastUsage(null);
+    setLastSpentCny(null);
+    setLastSpendKind(null);
   };
 
   const handleAttach = async (files: FileList | null) => {
@@ -668,7 +729,14 @@ export default function App() {
         <div className="topbar-title">
           <div className="title">{session.title}</div>
           <div className="subtitle">
-            <span className="model-label">{effectiveModel(settings)}</span>
+            <ModelSwitcher
+              settings={settings}
+              disabled={busy}
+              onChange={(next) => {
+                const remembered = rememberModel(next, effectiveModel(next));
+                void persistSettings(remembered);
+              }}
+            />
             {(statusText || balanceLines[0]) && (
               <span className="status-hint">
                 {" · "}
@@ -831,6 +899,8 @@ export default function App() {
         settings={settings}
         session={session}
         lastUsage={lastUsage}
+        lastSpentCny={lastSpentCny}
+        lastSpendKind={lastSpendKind}
         balanceLines={balanceLines}
         balanceError={balanceError}
         balanceLoading={balanceLoading}
