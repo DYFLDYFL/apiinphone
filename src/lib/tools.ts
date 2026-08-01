@@ -268,9 +268,6 @@ export function buildTools(
   ];
   if (settings.toolsWebSearch) {
     tools.push(buildWebSearchTool(settings), WEB_FETCH_TOOL);
-    if (settings.apiProvider === "poe") {
-      tools.push({ type: "web_search_preview" });
-    }
   }
   if (settings.toolsPythonSandbox && isPythonSandboxAvailable()) {
     tools.push(RUN_PYTHON_TOOL);

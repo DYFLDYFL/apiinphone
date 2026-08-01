@@ -1,23 +1,23 @@
 # apiinphone
 
-**Version 1.4.1**
+**Version 1.4.2**
 
 Android 版 AI API 客户端，功能对齐桌面项目 [aiusingapi](../aiusingapi)。
 
 ## 功能
 
-- Poe / DeepSeek OpenAI 兼容 API 对话
+- DeepSeek OpenAI 兼容 API 对话
 - 流式回复、思考过程展示
 - 生成过程中可自由上翻查看上文（不会被拽回底部），右下角「↓」一键回到最新
 - Markdown + LaTeX 渲染（本地 KaTeX）
 - 多会话管理（新建 / 重命名 / 删除 / 清空）
 - 附件（图片、文本、小体积二进制 Base64；粘贴图片）
-- Vision 识图（Poe；DeepSeek 自动降级为文本提示）
+- 图片附件会降级为文本提示（DeepSeek 不支持 vision）
 - Tool Calls：`get_current_time`、联网搜索、`web_fetch`、**`run_python`（Android: Chaquopy；浏览器: Pyodide）**
 - 自定义工具：JSON 定义 + `x-apiinphone` 扩展（HTTP / 内置 JS handler）
 - 用量面板：上下文占用、对话累计、上次请求、DeepSeek 余额
 - 重试上一条回复、复制回复、停止生成
-- 完整设置项（搜索引擎、SearXNG/Metaso/百度 Key、网络重试、Poe 头等）
+- 完整设置项（搜索引擎、SearXNG/Metaso/百度 Key、网络重试等）
 - 浅色 / 深色主题
 
 > **`run_python`**：Android App 使用 [Chaquopy](https://chaquo.com/chaquopy/)（真 CPython，stdlib 白名单 + 超时）；浏览器使用 [Sandpy](https://github.com/Raynan00/sandpy)（Pyodide Web Worker，首次约 15MB）。策略与桌面版类似。

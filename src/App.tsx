@@ -171,7 +171,7 @@ export default function App() {
   }, [session?.id, viewerReady, showThinkingChain, renderSession]);
 
   const refreshBalance = useCallback(async (current: AppSettings) => {
-    if (current.apiProvider !== "deepseek" || !current.apiKey.trim()) {
+    if (!current.apiKey.trim()) {
       setBalanceLines([]);
       setBalanceError("");
       return;
@@ -191,7 +191,7 @@ export default function App() {
 
   useEffect(() => {
     if (settings) void refreshBalance(settings);
-  }, [settings?.apiKey, settings?.apiProvider, refreshBalance]);
+  }, [settings?.apiKey, refreshBalance]);
 
   const persistSettings = async (next: AppSettings) => {
     setSettings(next);

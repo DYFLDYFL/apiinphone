@@ -1,5 +1,5 @@
 export interface AppSettings {
-  apiProvider: "poe" | "deepseek";
+  apiProvider: "deepseek";
   apiKey: string;
   baseUrl: string;
   model: string;
@@ -28,7 +28,6 @@ export interface AppSettings {
   retryCount: number;
   retryBackoffMs: number;
   systemPrompt: string;
-  httpReferer: string;
   appTitle: string;
   theme: "dark" | "light";
   recentModels: string[];

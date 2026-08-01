@@ -75,7 +75,6 @@ export function formatContextUsage(contextTokens: number, model: string): string
   ].join("\n");
 }
 
-export function balanceUnavailableText(settings: AppSettings): string {
-  if (settings.apiProvider === "deepseek") return "余额：未查询";
-  return "当前提供商不支持余额查询";
+export function balanceUnavailableText(_settings?: AppSettings): string {
+  return "余额：未查询";
 }

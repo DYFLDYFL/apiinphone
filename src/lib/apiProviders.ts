@@ -1,68 +1,48 @@
 import type { AppSettings } from "../types";
 
 export interface ApiProvider {
-  id: "poe" | "deepseek";
+  id: "deepseek";
   label: string;
   baseUrl: string;
   defaultModel: string;
   models: string[];
   apiKeyHint: string;
   apiKeyUrl: string;
-  usePoeHeaders: boolean;
 }
 
-export const PROVIDERS: Record<string, ApiProvider> = {
-  poe: {
-    id: "poe",
-    label: "Poe API",
-    baseUrl: "https://api.poe.com/v1",
-    defaultModel: "Claude-Sonnet-4.5",
-    models: [
-      "Claude-Sonnet-4.5",
-      "GPT-4o",
-      "Gemini-3.0-Pro",
-      "Claude-Opus-4.8",
-      "GPT-Image-2",
-    ],
-    apiKeyHint: "在 https://poe.com/api_key 创建",
-    apiKeyUrl: "https://poe.com/api_key",
-    usePoeHeaders: true,
-  },
-  deepseek: {
-    id: "deepseek",
-    label: "DeepSeek API",
-    baseUrl: "https://api.deepseek.com",
-    defaultModel: "deepseek-v4-flash",
-    models: [
-      "deepseek-v4-flash",
-      "deepseek-v4-pro",
-      "deepseek-chat",
-      "deepseek-reasoner",
-    ],
-    apiKeyHint: "在 https://platform.deepseek.com/api_keys 创建",
-    apiKeyUrl: "https://platform.deepseek.com/api_keys",
-    usePoeHeaders: false,
-  },
+export const DEEPSEEK_PROVIDER: ApiProvider = {
+  id: "deepseek",
+  label: "DeepSeek API",
+  baseUrl: "https://api.deepseek.com",
+  defaultModel: "deepseek-v4-flash",
+  models: [
+    "deepseek-v4-flash",
+    "deepseek-v4-pro",
+    "deepseek-chat",
+    "deepseek-reasoner",
+  ],
+  apiKeyHint: "在 https://platform.deepseek.com/api_keys 创建",
+  apiKeyUrl: "https://platform.deepseek.com/api_keys",
 };
 
-export const PROVIDER_ORDER: Array<"poe" | "deepseek"> = ["deepseek", "poe"];
+/** @deprecated Use DEEPSEEK_PROVIDER; kept for call sites that keyed by id. */
+export const PROVIDERS: Record<"deepseek", ApiProvider> = {
+  deepseek: DEEPSEEK_PROVIDER,
+};
 
 export function defaultRecentModels(): string[] {
-  return PROVIDER_ORDER.map((id) => PROVIDERS[id].defaultModel);
+  return [DEEPSEEK_PROVIDER.defaultModel];
 }
 
-export function getProvider(providerId: string): ApiProvider {
-  return PROVIDERS[providerId] ?? PROVIDERS.deepseek;
+export function getProvider(_providerId?: string): ApiProvider {
+  return DEEPSEEK_PROVIDER;
 }
 
+/** Normalize legacy saved provider ids (e.g. poe) to deepseek. */
 export function inferProviderId(
-  baseUrl: string,
-  saved = "",
-): "poe" | "deepseek" {
-  if (saved in PROVIDERS) return saved as "poe" | "deepseek";
-  const url = baseUrl.toLowerCase();
-  if (url.includes("deepseek")) return "deepseek";
-  if (url.includes("poe")) return "poe";
+  _baseUrl?: string,
+  _saved?: string,
+): "deepseek" {
   return "deepseek";
 }
 
@@ -82,22 +62,19 @@ export function modelSupportsThinking(model: string): boolean {
 export function resolveModel(settings: AppSettings): string {
   const model = settings.model?.trim();
   if (model) return model;
-  return getProvider(settings.apiProvider).defaultModel;
+  return DEEPSEEK_PROVIDER.defaultModel;
 }
 
-export function providerSupportsVision(settings: AppSettings): boolean {
-  return settings.apiProvider === "poe";
+/** DeepSeek chat API does not accept image inputs. */
+export function providerSupportsVision(_settings?: AppSettings): boolean {
+  return false;
 }
 
-export function applyProviderPreset(
-  settings: AppSettings,
-  providerId: "poe" | "deepseek",
-): AppSettings {
-  const provider = getProvider(providerId);
+export function applyDeepSeekPreset(settings: AppSettings): AppSettings {
   return {
     ...settings,
-    apiProvider: providerId,
-    baseUrl: provider.baseUrl,
-    model: provider.defaultModel,
+    apiProvider: "deepseek",
+    baseUrl: DEEPSEEK_PROVIDER.baseUrl,
+    model: settings.model?.trim() || DEEPSEEK_PROVIDER.defaultModel,
   };
 }

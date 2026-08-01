@@ -2,7 +2,6 @@ import { Preferences } from "@capacitor/preferences";
 import type { AppSettings } from "../types";
 import {
   defaultRecentModels,
-  inferProviderId,
   resolveModel,
 } from "./apiProviders";
 
@@ -54,7 +53,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
     "使用 web_search 后，正文引用必须只用方括号编号 [1][2]…（与搜索结果编号一致），不要用 [网站名](链接) 或纯文字来源名；勿在文末重复列出来源列表（界面会自动显示参考来源）。\n" +
     "用户要求导出、保存、生成文件（txt / Word / PDF / Excalidraw 表格）时，调用 save_document；Excalidraw 用 format=excalidraw 并传 rows 二维数组；保存后提示用户在界面点击「打开」或「发送」。\n" +
     "用户消息中的附件正文已提供，可直接阅读。",
-  httpReferer: "https://apiinphone.local",
   appTitle: "AI API Client",
   theme: "light",
   recentModels: defaultRecentModels(),
@@ -71,7 +69,6 @@ export function effectiveModel(settings: AppSettings): string {
 
 export function thinkingActive(settings: AppSettings): boolean {
   if (settings.thinkingMode !== "enabled") return false;
-  if (settings.apiProvider !== "deepseek") return false;
   const model = effectiveModel(settings).toLowerCase();
   return model.includes("reasoner") || model.includes("v4");
 }
@@ -125,7 +122,14 @@ export async function loadSettings(): Promise<AppSettings> {
       merged.model =
         LEGACY_MODEL_PRESETS[raw.modelPreset] ?? merged.model;
     }
-    merged.apiProvider = inferProviderId(merged.baseUrl, merged.apiProvider);
+    // Drop legacy Poe (and any other) provider; always DeepSeek.
+    merged.apiProvider = "deepseek";
+    if (
+      !merged.baseUrl?.trim() ||
+      merged.baseUrl.toLowerCase().includes("poe.com")
+    ) {
+      merged.baseUrl = DEFAULT_SETTINGS.baseUrl;
+    }
     if (!merged.recentModels?.length) {
       merged.recentModels = defaultRecentModels();
     }

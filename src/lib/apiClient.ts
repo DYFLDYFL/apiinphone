@@ -118,16 +118,10 @@ function friendlyApiError(err: unknown): ApiError {
 }
 
 function buildHeaders(settings: AppSettings): Record<string, string> {
-  const headers: Record<string, string> = {
+  return {
     Authorization: `Bearer ${settings.apiKey.trim()}`,
     "Content-Type": "application/json",
   };
-  const provider = getProvider(settings.apiProvider);
-  if (provider.usePoeHeaders) {
-    headers["HTTP-Referer"] = settings.httpReferer;
-    headers["X-Title"] = settings.appTitle;
-  }
-  return headers;
 }
 
 /** GET/POST JSON under one deadline that also covers reading the response body. */
@@ -164,7 +158,6 @@ function chatUrl(settings: AppSettings): string {
 }
 
 function applyThinking(settings: AppSettings, body: Record<string, unknown>) {
-  if (settings.apiProvider !== "deepseek") return;
   if (!modelSupportsThinking(resolveModel(settings))) return;
   const extra = { ...(body.extra_body as Record<string, unknown> | undefined) };
   if (settings.thinkingMode === "disabled") {

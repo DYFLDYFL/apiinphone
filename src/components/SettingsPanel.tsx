@@ -2,10 +2,9 @@ import { useEffect, useRef, useState } from "react";
 import type { AppSettings } from "../types";
 import { listModels } from "../lib/apiClient";
 import {
-  applyProviderPreset,
+  DEEPSEEK_PROVIDER,
   getProvider,
   modelSupportsThinking,
-  PROVIDER_ORDER,
 } from "../lib/apiProviders";
 import { thinkingActive } from "../lib/settings";
 
@@ -75,7 +74,7 @@ export function SettingsPanel({
     return () => {
       if (debounceTimer.current) clearTimeout(debounceTimer.current);
     };
-  }, [open, draft.apiKey, draft.baseUrl, draft.apiProvider]);
+  }, [open, draft.apiKey, draft.baseUrl]);
 
   if (!open) return null;
 
@@ -85,12 +84,11 @@ export function SettingsPanel({
     onSave(next);
   };
 
-  const provider = getProvider(draft.apiProvider);
-  const modelChoices = [...new Set([...modelOptions, draft.model])].filter(
-    Boolean,
-  );
-  const thinkingVisible =
-    draft.apiProvider === "deepseek" && modelSupportsThinking(draft.model);
+  const provider = getProvider();
+  const modelChoices = [
+    ...new Set([...provider.models, ...modelOptions, draft.model]),
+  ].filter(Boolean);
+  const thinkingVisible = modelSupportsThinking(draft.model);
   const thinkingOn = thinkingActive({ ...draft, model: draft.model });
 
   const refreshModels = async () => {
@@ -115,32 +113,15 @@ export function SettingsPanel({
         </div>
         <div className="modal-body">
           <p className="settings-hint">
-            {provider.label} ·{" "}
-            <a href={provider.apiKeyUrl} target="_blank" rel="noreferrer">
+            {DEEPSEEK_PROVIDER.label} ·{" "}
+            <a
+              href={DEEPSEEK_PROVIDER.apiKeyUrl}
+              target="_blank"
+              rel="noreferrer"
+            >
               获取 API Key
             </a>
           </p>
-
-          <label>
-            API 提供商
-            <select
-              value={draft.apiProvider}
-              onChange={(e) =>
-                update(
-                  applyProviderPreset(
-                    draft,
-                    e.target.value as "poe" | "deepseek",
-                  ),
-                )
-              }
-            >
-              {PROVIDER_ORDER.map((id) => (
-                <option key={id} value={id}>
-                  {getProvider(id).label}
-                </option>
-              ))}
-            </select>
-          </label>
 
           <label>
             API Key
@@ -475,24 +456,6 @@ export function SettingsPanel({
                 }
               />
             </label>
-            {draft.apiProvider === "poe" && (
-              <>
-                <label>
-                  HTTP-Referer
-                  <input
-                    value={draft.httpReferer}
-                    onChange={(e) => update({ httpReferer: e.target.value })}
-                  />
-                </label>
-                <label>
-                  X-Title
-                  <input
-                    value={draft.appTitle}
-                    onChange={(e) => update({ appTitle: e.target.value })}
-                  />
-                </label>
-              </>
-            )}
           </details>
 
           <label>

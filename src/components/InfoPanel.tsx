@@ -39,7 +39,7 @@ export function InfoPanel({
 }: InfoPanelProps) {
   if (!open) return null;
 
-  const provider = getProvider(settings.apiProvider);
+  const provider = getProvider();
   const model = effectiveModel(settings);
 
   return (
@@ -103,20 +103,16 @@ export function InfoPanel({
         <section className="info-block">
           <div className="info-row">
             <div className="info-label">账户余额</div>
-            {settings.apiProvider === "deepseek" && (
-              <button
-                type="button"
-                className="link-btn"
-                disabled={balanceLoading}
-                onClick={onRefreshBalance}
-              >
-                {balanceLoading ? "查询中…" : "刷新"}
-              </button>
-            )}
+            <button
+              type="button"
+              className="link-btn"
+              disabled={balanceLoading}
+              onClick={onRefreshBalance}
+            >
+              {balanceLoading ? "查询中…" : "刷新"}
+            </button>
           </div>
-          {settings.apiProvider !== "deepseek" ? (
-            <div className="info-muted">{balanceUnavailableText(settings)}</div>
-          ) : balanceError ? (
+          {balanceError ? (
             <div className="info-error">{balanceError}</div>
           ) : balanceLines.length ? (
             balanceLines.map((line) => (
@@ -125,7 +121,7 @@ export function InfoPanel({
               </div>
             ))
           ) : (
-            <div className="info-muted">{balanceUnavailableText(settings)}</div>
+            <div className="info-muted">{balanceUnavailableText()}</div>
           )}
         </section>
       </aside>
