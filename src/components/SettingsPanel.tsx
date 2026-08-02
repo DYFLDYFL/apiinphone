@@ -117,6 +117,9 @@ export function SettingsPanel({
                 非官方通道：易失效、有封号风险。本 App
                 将强制串行请求并加间隔；网页模式关闭工具调用。请仅使用你自己的登录会话。
               </p>
+              <p className="settings-hint">
+                顶栏可切换「快速 / 深度 / 专家」与联网搜索，仅网页会话有效；联网与深度/专家更慢、更易限流。
+              </p>
               <label>
                 网页会话 Token
                 <textarea

@@ -1,5 +1,8 @@
 export type DeepseekTransport = "official" | "web";
 
+/** 网页会话档位：快速 / 深度思考 / 专家。仅 deepseekTransport=web 生效。 */
+export type WebChatMode = "fast" | "deep" | "expert";
+
 export interface AppSettings {
   apiProvider: "deepseek";
   apiKey: string;
@@ -12,6 +15,14 @@ export interface AppSettings {
   webSessionCookies: string;
   /** 网页通道相邻请求最小间隔（毫秒）。 */
   webMinIntervalMs: number;
+  /** 对话网页档位（快速 / 深度 / 专家）。 */
+  webChatMode: WebChatMode;
+  /** 对话网页联网搜索。 */
+  webSearchEnabled: boolean;
+  /** 游戏网页档位。 */
+  gameWebChatMode: WebChatMode;
+  /** 游戏网页联网搜索。 */
+  gameWebSearchEnabled: boolean;
   model: string;
   /** 游戏模式独立模型（与对话 model 分离）。 */
   gameModel: string;

@@ -1,11 +1,16 @@
 import { Preferences } from "@capacitor/preferences";
-import type { AppSettings } from "../types";
+import type { AppSettings, WebChatMode } from "../types";
 import {
   DEEPSEEK_PROVIDER,
   defaultRecentModels,
   normalizeReasoningEffort,
   resolveModel,
 } from "./apiProviders";
+
+export function normalizeWebChatMode(value: unknown): WebChatMode {
+  if (value === "fast" || value === "deep" || value === "expert") return value;
+  return "fast";
+}
 
 const LEGACY_MODEL_PRESETS: Record<string, string> = {
   flash: "deepseek-v4-flash",
@@ -43,6 +48,10 @@ export const DEFAULT_SETTINGS: AppSettings = {
   webSessionToken: "",
   webSessionCookies: "",
   webMinIntervalMs: 3000,
+  webChatMode: "fast",
+  webSearchEnabled: false,
+  gameWebChatMode: "fast",
+  gameWebSearchEnabled: false,
   model: "deepseek-v4-flash",
   gameModel: "deepseek-v4-flash",
   maxTokens: null,
@@ -103,6 +112,12 @@ export function settingsForGame(settings: AppSettings): AppSettings {
       settings.gameReasoningEffort ?? settings.reasoningEffort,
       gameModel,
     ),
+    webChatMode: normalizeWebChatMode(
+      settings.gameWebChatMode ?? settings.webChatMode,
+    ),
+    webSearchEnabled: Boolean(
+      settings.gameWebSearchEnabled ?? settings.webSearchEnabled,
+    ),
   };
 }
 
@@ -110,7 +125,19 @@ export function effectiveGameModel(settings: AppSettings): string {
   return resolveModel(settingsForGame(settings));
 }
 
+export function effectiveWebChatMode(settings: AppSettings): WebChatMode {
+  return normalizeWebChatMode(settings.webChatMode);
+}
+
+export function effectiveWebSearchEnabled(settings: AppSettings): boolean {
+  return Boolean(settings.webSearchEnabled);
+}
+
 export function thinkingActive(settings: AppSettings): boolean {
+  if (isWebTransport(settings)) {
+    const mode = effectiveWebChatMode(settings);
+    return mode === "deep" || mode === "expert";
+  }
   if (settings.thinkingMode !== "enabled") return false;
   const model = effectiveModel(settings).toLowerCase();
   return model.includes("reasoner") || model.includes("v4");
@@ -229,6 +256,14 @@ export async function loadSettings(): Promise<AppSettings> {
     merged.gameReasoningEffort = normalizeReasoningEffort(
       merged.gameReasoningEffort ?? merged.reasoningEffort,
       merged.gameModel,
+    );
+    merged.webChatMode = normalizeWebChatMode(merged.webChatMode);
+    merged.webSearchEnabled = Boolean(merged.webSearchEnabled);
+    merged.gameWebChatMode = normalizeWebChatMode(
+      merged.gameWebChatMode ?? merged.webChatMode,
+    );
+    merged.gameWebSearchEnabled = Boolean(
+      merged.gameWebSearchEnabled ?? merged.webSearchEnabled,
     );
     return applyForcedOn(merged);
   } catch {

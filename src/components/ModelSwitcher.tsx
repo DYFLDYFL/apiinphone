@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { AppSettings } from "../types";
+import type { AppSettings, WebChatMode } from "../types";
 import { listModels } from "../lib/apiClient";
 import {
   defaultReasoningEffortForModel,
@@ -9,7 +9,11 @@ import {
   reasoningEffortsForModel,
   type ReasoningEffort,
 } from "../lib/apiProviders";
-import { effectiveGameModel, effectiveModel } from "../lib/settings";
+import {
+  effectiveGameModel,
+  effectiveModel,
+  normalizeWebChatMode,
+} from "../lib/settings";
 
 type TierValue = "off" | ReasoningEffort;
 export type ModelSwitcherScope = "chat" | "game";
@@ -21,6 +25,12 @@ interface ModelSwitcherProps {
   /** chat writes model/reasoningEffort; game writes gameModel/game* */
   scope?: ModelSwitcherScope;
 }
+
+const WEB_MODE_LABELS: Record<WebChatMode, string> = {
+  fast: "快速",
+  deep: "深度",
+  expert: "专家",
+};
 
 function activeModel(settings: AppSettings, scope: ModelSwitcherScope): string {
   return scope === "game" ? effectiveGameModel(settings) : effectiveModel(settings);
@@ -55,11 +65,29 @@ function tierFromSettings(
   return activeEffort(settings, scope);
 }
 
-function displayTier(settings: AppSettings, scope: ModelSwitcherScope): string {
+function displayTiers(settings: AppSettings, scope: ModelSwitcherScope): string {
   const model = activeModel(settings, scope);
   if (!modelSupportsThinking(model)) return "";
   if (activeThinking(settings, scope) === "disabled") return "off";
   return activeEffort(settings, scope);
+}
+
+function activeWebMode(
+  settings: AppSettings,
+  scope: ModelSwitcherScope,
+): WebChatMode {
+  return normalizeWebChatMode(
+    scope === "game" ? settings.gameWebChatMode : settings.webChatMode,
+  );
+}
+
+function activeWebSearch(
+  settings: AppSettings,
+  scope: ModelSwitcherScope,
+): boolean {
+  return Boolean(
+    scope === "game" ? settings.gameWebSearchEnabled : settings.webSearchEnabled,
+  );
 }
 
 export function ModelSwitcher({
@@ -74,8 +102,11 @@ export function ModelSwitcher({
   const [error, setError] = useState("");
   const fetchGen = useRef(0);
 
+  const isWeb = settings.deepseekTransport === "web";
   const model = activeModel(settings, scope);
-  const tier = displayTier(settings, scope);
+  const tier = displayTiers(settings, scope);
+  const webMode = activeWebMode(settings, scope);
+  const webSearch = activeWebSearch(settings, scope);
 
   const loadModels = async (source: AppSettings) => {
     if (source.deepseekTransport === "web") {
@@ -112,10 +143,10 @@ export function ModelSwitcher({
   };
 
   useEffect(() => {
-    if (!open) return;
+    if (!open || isWeb) return;
     void loadModels(settings);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, scope]);
+  }, [open, scope, isWeb]);
 
   const provider = getProvider();
   const choices = [
@@ -163,6 +194,26 @@ export function ModelSwitcher({
     apply({ thinkingMode: "enabled", reasoningEffort: value });
   };
 
+  const setWebMode = (mode: WebChatMode) => {
+    if (scope === "game") {
+      apply({ gameWebChatMode: mode });
+      return;
+    }
+    apply({ webChatMode: mode });
+  };
+
+  const setWebSearch = (enabled: boolean) => {
+    if (scope === "game") {
+      apply({ gameWebSearchEnabled: enabled });
+      return;
+    }
+    apply({ webSearchEnabled: enabled });
+  };
+
+  const buttonLabel = isWeb
+    ? `${WEB_MODE_LABELS[webMode]}${webSearch ? " · 搜索" : ""}`
+    : model;
+
   return (
     <>
       <button
@@ -170,10 +221,10 @@ export function ModelSwitcher({
         className="model-switcher-btn"
         disabled={disabled}
         onClick={() => setOpen(true)}
-        title="切换模型 / 推理档位"
+        title={isWeb ? "网页档位 / 联网搜索" : "切换模型 / 推理档位"}
       >
-        <span className="model-label">{model}</span>
-        {tier ? <span className="tier-label"> · {tier}</span> : null}
+        <span className="model-label">{buttonLabel}</span>
+        {!isWeb && tier ? <span className="tier-label"> · {tier}</span> : null}
       </button>
 
       {open ? (
@@ -183,7 +234,15 @@ export function ModelSwitcher({
             onClick={(e) => e.stopPropagation()}
           >
             <div className="modal-header">
-              <h2>{scope === "game" ? "游戏模型" : "选择"}</h2>
+              <h2>
+                {isWeb
+                  ? scope === "game"
+                    ? "游戏网页档位"
+                    : "网页档位"
+                  : scope === "game"
+                    ? "游戏模型"
+                    : "选择"}
+              </h2>
               <button
                 type="button"
                 className="icon-btn"
@@ -193,80 +252,127 @@ export function ModelSwitcher({
               </button>
             </div>
             <div className="modal-body">
-              <div className="picker-section">
-                <div className="picker-options">
-                  {choices.map((m) => (
-                    <button
-                      key={m}
-                      type="button"
-                      className={
-                        m === model ? "picker-option active" : "picker-option"
-                      }
-                      onClick={() => setModel(m)}
-                    >
-                      {m}
-                    </button>
-                  ))}
-                </div>
-                <div className="picker-actions">
-                  <button
-                    type="button"
-                    className="secondary-btn"
-                    disabled={loading}
-                    onClick={() => void loadModels(settings)}
-                  >
-                    {loading ? "刷新中…" : "刷新列表"}
-                  </button>
-                </div>
-                {error ? (
-                  <p className="settings-hint">{error}</p>
-                ) : modelOptions.length > 0 ? (
-                  <p className="settings-hint">
-                    共 {modelOptions.length} 个可用
-                  </p>
-                ) : null}
-              </div>
-
-              {showTiers ? (
-                <div className="picker-section">
-                  <div className="picker-options picker-tiers">
-                    <button
-                      type="button"
-                      className={
-                        tierValue === "off"
-                          ? "picker-option active"
-                          : "picker-option"
-                      }
-                      onClick={() => setTier("off")}
-                    >
-                      off
-                    </button>
-                    {effortLevels.map((level) => (
-                      <button
-                        key={level}
-                        type="button"
-                        className={
-                          tierValue === level
-                            ? "picker-option active"
-                            : "picker-option"
-                        }
-                        onClick={() => setTier(level)}
-                      >
-                        {level}
-                      </button>
-                    ))}
+              {isWeb ? (
+                <>
+                  <div className="picker-section">
+                    <div className="picker-options picker-tiers">
+                      {(
+                        Object.keys(WEB_MODE_LABELS) as WebChatMode[]
+                      ).map((mode) => (
+                        <button
+                          key={mode}
+                          type="button"
+                          className={
+                            webMode === mode
+                              ? "picker-option active"
+                              : "picker-option"
+                          }
+                          onClick={() => setWebMode(mode)}
+                        >
+                          {WEB_MODE_LABELS[mode]}
+                        </button>
+                      ))}
+                    </div>
+                    <p className="settings-hint">
+                      快速无思考链；深度开启思考；专家为更强档（更慢、更易限流）。
+                    </p>
                   </div>
-                  <p className="settings-hint">
-                    {tierValue === "off"
-                      ? "thinking 关闭"
-                      : `reasoning_effort=${
-                          effortLevels.includes(tierValue as ReasoningEffort)
-                            ? tierValue
-                            : defaultReasoningEffortForModel(model)
-                        }`}
-                  </p>
-                </div>
-              ) : null}
+                  <div className="picker-section">
+                    <label className="checkbox">
+                      <input
+                        type="checkbox"
+                        checked={webSearch}
+                        onChange={(e) => setWebSearch(e.target.checked)}
+                      />
+                      联网搜索
+                    </label>
+                    <p className="settings-hint">
+                      开启后请求更慢，游戏侧建议默认关闭。
+                    </p>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="picker-section">
+                    <div className="picker-options">
+                      {choices.map((m) => (
+                        <button
+                          key={m}
+                          type="button"
+                          className={
+                            m === model
+                              ? "picker-option active"
+                              : "picker-option"
+                          }
+                          onClick={() => setModel(m)}
+                        >
+                          {m}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="picker-actions">
+                      <button
+                        type="button"
+                        className="secondary-btn"
+                        disabled={loading}
+                        onClick={() => void loadModels(settings)}
+                      >
+                        {loading ? "刷新中…" : "刷新列表"}
+                      </button>
+                    </div>
+                    {error ? (
+                      <p className="settings-hint">{error}</p>
+                    ) : modelOptions.length > 0 ? (
+                      <p className="settings-hint">
+                        共 {modelOptions.length} 个可用
+                      </p>
+                    ) : null}
+                  </div>
+
+                  {showTiers ? (
+                    <div className="picker-section">
+                      <div className="picker-options picker-tiers">
+                        <button
+                          type="button"
+                          className={
+                            tierValue === "off"
+                              ? "picker-option active"
+                              : "picker-option"
+                          }
+                          onClick={() => setTier("off")}
+                        >
+                          off
+                        </button>
+                        {effortLevels.map((level) => (
+                          <button
+                            key={level}
+                            type="button"
+                            className={
+                              tierValue === level
+                                ? "picker-option active"
+                                : "picker-option"
+                            }
+                            onClick={() => setTier(level)}
+                          >
+                            {level}
+                          </button>
+                        ))}
+                      </div>
+                      <p className="settings-hint">
+                        {tierValue === "off"
+                          ? "thinking 关闭"
+                          : `reasoning_effort=${
+                              effortLevels.includes(
+                                tierValue as ReasoningEffort,
+                              )
+                                ? tierValue
+                                : defaultReasoningEffortForModel(model)
+                            }`}
+                      </p>
+                    </div>
+                  ) : null}
+                </>
+              )}
             </div>
             <div className="modal-footer">
               <button

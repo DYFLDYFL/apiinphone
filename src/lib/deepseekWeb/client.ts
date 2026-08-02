@@ -1,6 +1,9 @@
 import type { AppSettings, ChatMessage } from "../../types";
 import { httpText } from "../nativeHttp";
-import { thinkingActive } from "../settings";
+import {
+  effectiveWebChatMode,
+  effectiveWebSearchEnabled,
+} from "../settings";
 import { solvePowChallenge } from "./pow";
 import {
   DEEPSEEK_WEB_API,
@@ -349,14 +352,18 @@ export async function completeViaDeepseekWeb(
   const prompt = messagesToWebPrompt(messages);
   if (!prompt) throw new DeepseekWebError("消息为空，无法发送");
 
-  const thinking = thinkingActive(settings);
-  const body = {
+  const mode = effectiveWebChatMode(settings);
+  const thinking = mode === "deep" || mode === "expert";
+  const search = effectiveWebSearchEnabled(settings);
+  const body: Record<string, unknown> = {
     chat_session_id: sessionId,
     parent_message_id: null,
     prompt,
     ref_file_ids: [] as string[],
     thinking_enabled: thinking,
-    search_enabled: false,
+    search_enabled: search,
+    // Instant=default；专家=expert（社区逆向与 DeadBranches 一致）
+    model_type: mode === "expert" ? "expert" : "default",
     client_stream_id: clientStreamId(),
   };
 
