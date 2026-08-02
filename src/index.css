@@ -108,6 +108,8 @@ body {
   font: inherit;
   color: inherit;
   cursor: pointer;
+  flex: 1 1 auto;
+  min-width: 4rem;
   max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -132,7 +134,11 @@ body {
 
 .status-hint {
   color: var(--muted);
-  flex-shrink: 0;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .model-picker-modal {
@@ -233,6 +239,14 @@ body {
 .primary-btn {
   background: var(--accent);
   color: white;
+}
+
+.primary-btn:disabled,
+.secondary-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  pointer-events: none;
+  filter: grayscale(0.35);
 }
 
 .secondary-btn {
@@ -704,6 +718,74 @@ body {
   margin-top: 8px;
 }
 
+.game-ai-block {
+  margin: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.game-ai-block legend {
+  padding: 0 4px;
+  font-weight: 600;
+}
+
+.game-model-override {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.game-order-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.game-order-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.game-pipeline-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.game-pipeline-node {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 8px;
+}
+
+.game-pipeline-edges {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 6px 0;
+}
+
+.game-pipeline-edge-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.game-pipeline-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
 .game-attr-row {
   display: grid;
   grid-template-columns: 4em 1fr;
@@ -756,6 +838,12 @@ body {
   gap: 8px;
   max-height: 40vh;
   overflow: auto;
+}
+
+.game-events li {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .game-evt-meta {
@@ -849,12 +937,41 @@ body {
 .game-story-body {
   max-height: 40vh;
   overflow: auto;
+  max-width: 100%;
 }
 
 .game-story-text {
   margin: 0;
+  max-width: 100%;
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
   font: inherit;
-  line-height: 1.5;
+  line-height: 1.55;
   font-size: 14px;
+}
+
+.game-side-compact {
+  padding: 8px 10px;
+}
+
+.game-side-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.game-side-panel {
+  margin-top: 8px;
+  max-height: 28vh;
+  overflow: auto;
+}
+
+.game-side-panel textarea {
+  width: 100%;
+  font: inherit;
+}
+
+.game-auto-ai {
+  font-size: 13px;
 }

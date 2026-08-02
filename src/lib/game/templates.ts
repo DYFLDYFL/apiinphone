@@ -1,9 +1,20 @@
 import {
   characterSystemPrompt,
+  DEFAULT_REFEREE_PERSONA,
+  pickPromptOverride,
   refereeSystemPrompt,
   worldSystemPrompt,
 } from "./prompts";
-import type { GameAgent, GameSheet, GameState } from "./types";
+import type {
+  AgentModelOverride,
+  GameAgent,
+  GamePipeline,
+  GameSheet,
+  GameState,
+  ProposeMode,
+  ProposeOrderMode,
+} from "./types";
+import { defaultPipeline, normalizePipeline } from "./pipeline";
 
 function id(prefix: string): string {
   return `${prefix}_${Math.random().toString(36).slice(2, 10)}`;
@@ -30,6 +41,9 @@ export type CharTemplateDraft = {
   persona: string;
   attrs: Record<string, string | number | boolean>;
   inventory: string;
+  /** 非空则覆盖默认角色 system prompt。 */
+  systemPrompt?: string;
+  model?: AgentModelOverride;
 };
 
 export const CHAR_TEMPLATES: CharTemplateDraft[] = [
@@ -143,23 +157,69 @@ export const CHAR_TEMPLATES: CharTemplateDraft[] = [
 export type GameTemplateDraft = {
   title: string;
   worldview: string;
+  /** 初始世界时刻（叙事字符串）。 */
+  initialTime: string;
   characters: CharTemplateDraft[];
   playMode?: import("./types").GamePlayMode;
   /** 扮演时选中的角色在 characters 数组中的下标。 */
   playerCharacterIndex?: number;
+  /** 非空则覆盖世界 system prompt。 */
+  worldSystemPrompt?: string;
+  worldModel?: AgentModelOverride;
+  refereePersona?: string;
+  refereeSystemPrompt?: string;
+  refereeModel?: AgentModelOverride;
+  chroniclerGodPrompt?: string;
+  chroniclerPlayerPrompt?: string;
+  chroniclerModel?: AgentModelOverride;
+  proposeOrder?: ProposeOrderMode;
+  /** 自定义提案顺序：characters 下标。 */
+  customProposeOrder?: number[];
+  proposeMode?: ProposeMode;
+  pipeline?: GamePipeline;
 };
+
+export const DEFAULT_INITIAL_TIME = "三月初二 05:30";
+
+export function defaultGameRunSettings(characterCount = 3): {
+  maxInteractionRounds: number;
+  characterCount: number;
+  proposeOrder: ProposeOrderMode;
+  customProposeOrder: string[];
+  proposeMode: ProposeMode;
+  pipeline: GamePipeline;
+} {
+  return {
+    maxInteractionRounds: 6,
+    characterCount,
+    proposeOrder: "template",
+    customProposeOrder: [],
+    proposeMode: "serial",
+    pipeline: defaultPipeline(),
+  };
+}
 
 export function defaultTemplateDraft(characterCount = 3): GameTemplateDraft {
   const n = Math.min(6, Math.max(2, Math.round(characterCount)));
   return {
     title: "青石镇",
     worldview: DEFAULT_WORLDVIEW,
+    initialTime: DEFAULT_INITIAL_TIME,
     characters: CHAR_TEMPLATES.slice(0, n).map((c) => ({
       ...c,
       attrs: { ...c.attrs },
     })),
     playMode: "spectate",
     playerCharacterIndex: 0,
+    worldSystemPrompt: "",
+    refereePersona: DEFAULT_REFEREE_PERSONA,
+    refereeSystemPrompt: "",
+    chroniclerGodPrompt: "",
+    chroniclerPlayerPrompt: "",
+    proposeOrder: "template",
+    customProposeOrder: Array.from({ length: n }, (_, i) => i),
+    proposeMode: "serial",
+    pipeline: defaultPipeline(),
   };
 }
 
@@ -183,9 +243,11 @@ export function createTemplateGame(
       .split(/[,，、]/)
       .map((x) => x.trim())
       .filter(Boolean);
+    const name = t.name.trim() || "未命名";
+    const override = t.systemPrompt?.trim() || "";
     sheets.push({
       id: sheetId,
-      name: t.name.trim() || "未命名",
+      name,
       attrs: { ...t.attrs },
       inventory,
       flags: [],
@@ -194,32 +256,78 @@ export function createTemplateGame(
     characters.push({
       id: agentId,
       kind: "character",
-      name: t.name.trim() || "未命名",
+      name,
       sheetId,
       persona: t.persona,
-      systemPrompt: characterSystemPrompt(t.name, t.persona),
+      systemPrompt: pickPromptOverride(
+        override,
+        characterSystemPrompt(name, t.persona),
+      ),
+      systemPromptOverride: override || undefined,
+      modelOverride: t.model,
       history: [],
     });
   }
 
   const worldview = tpl.worldview.trim() || DEFAULT_WORLDVIEW;
+  const timeText =
+    (tpl.initialTime || DEFAULT_INITIAL_TIME).trim() || DEFAULT_INITIAL_TIME;
+  const worldOverride = tpl.worldSystemPrompt?.trim() || "";
   const world: GameAgent = {
     id: id("world"),
     kind: "world",
     name: "世界",
     persona: worldview,
-    systemPrompt: worldSystemPrompt(worldview),
+    systemPrompt: pickPromptOverride(
+      worldOverride,
+      worldSystemPrompt(worldview),
+    ),
+    systemPromptOverride: worldOverride || undefined,
+    modelOverride: tpl.worldModel,
     history: [],
   };
 
+  const refPersona = tpl.refereePersona?.trim() || DEFAULT_REFEREE_PERSONA;
+  const refOverride = tpl.refereeSystemPrompt?.trim() || "";
   const referee: GameAgent = {
     id: id("ref"),
     kind: "referee",
     name: "裁判",
-    persona: "公正、简练、只认面板与事件。",
-    systemPrompt: refereeSystemPrompt(),
+    persona: refPersona,
+    systemPrompt: pickPromptOverride(
+      refOverride,
+      refereeSystemPrompt(refPersona),
+    ),
+    systemPromptOverride: refOverride || undefined,
+    modelOverride: tpl.refereeModel,
     history: [],
   };
+
+  const proposeOrder: ProposeOrderMode =
+    tpl.proposeOrder === "random" || tpl.proposeOrder === "custom"
+      ? tpl.proposeOrder
+      : "template";
+  const proposeMode: ProposeMode =
+    tpl.proposeMode === "parallel" ? "parallel" : "serial";
+
+  let customProposeOrder: string[] = [];
+  if (proposeOrder === "custom") {
+    const idxs =
+      Array.isArray(tpl.customProposeOrder) && tpl.customProposeOrder.length
+        ? tpl.customProposeOrder
+        : characters.map((_, i) => i);
+    const seen = new Set<string>();
+    for (const i of idxs) {
+      const ch = characters[i];
+      if (ch && !seen.has(ch.id)) {
+        customProposeOrder.push(ch.id);
+        seen.add(ch.id);
+      }
+    }
+    for (const ch of characters) {
+      if (!seen.has(ch.id)) customProposeOrder.push(ch.id);
+    }
+  }
 
   const result: GameState = {
     id: id("game"),
@@ -229,8 +337,10 @@ export function createTemplateGame(
     worldview,
     worldClock: {
       tick: 0,
-      label: "第 0 时",
+      label: timeText,
+      timeText,
       sceneSummary: "晨雾未散，青石镇刚醒。",
+      history: { "0": timeText },
     },
     agents: [world, ...characters, referee],
     sheets,
@@ -248,16 +358,26 @@ export function createTemplateGame(
         visibleTo: [],
       },
     ],
-    tickBuffer: null,
+    tickBuffer: {
+      tick: 0,
+      interactionRound: 0,
+      status: "need_open",
+    },
     settings: {
-      maxInteractionRounds: 6,
-      characterCount: characters.length,
+      ...defaultGameRunSettings(characters.length),
+      proposeOrder,
+      customProposeOrder,
+      proposeMode,
+      pipeline: normalizePipeline(tpl.pipeline ?? defaultPipeline()),
+      chroniclerGodPrompt: tpl.chroniclerGodPrompt?.trim() || undefined,
+      chroniclerPlayerPrompt: tpl.chroniclerPlayerPrompt?.trim() || undefined,
+      chroniclerModel: tpl.chroniclerModel,
     },
     playMode: tpl.playMode === "play" ? "play" : "spectate",
     playerCharacterId: null,
     godStory: "",
     playerStory: "",
-    storyTick: 0,
+    storyTick: -1,
     godViewUnlocked: tpl.playMode !== "play",
   };
 

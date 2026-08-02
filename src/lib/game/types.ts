@@ -16,6 +16,50 @@ export interface GameSheet {
   notes: string;
 }
 
+/** Per-agent model override; omitted fields inherit global game model settings. */
+export interface AgentModelOverride {
+  model?: string;
+  thinkingMode?: "enabled" | "disabled";
+  reasoningEffort?: "low" | "high" | "max";
+}
+
+export type ProposeOrderMode = "template" | "random" | "custom";
+export type ProposeMode = "serial" | "parallel";
+
+export type PipelineNodeKind =
+  | "world_open"
+  | "propose"
+  | "respond"
+  | "judge"
+  | "chronicle"
+  | "advance_clock";
+
+export type PipelineEdgeWhen =
+  | "always"
+  | "has_intents"
+  | "no_intents"
+  | "judge_accept"
+  | "judge_redo"
+  | "judge_reject";
+
+export interface PipelineNode {
+  id: string;
+  kind: PipelineNodeKind;
+  label?: string;
+}
+
+export interface PipelineEdge {
+  from: string;
+  to: string;
+  when: PipelineEdgeWhen;
+}
+
+export interface GamePipeline {
+  entry: string;
+  nodes: PipelineNode[];
+  edges: PipelineEdge[];
+}
+
 export interface GameAgent {
   id: string;
   kind: GameAgentKind;
@@ -24,6 +68,11 @@ export interface GameAgent {
   sheetId?: string;
   persona: string;
   systemPrompt: string;
+  /**
+   * If non-empty, used as systemPrompt and not regenerated from persona on load.
+   */
+  systemPromptOverride?: string;
+  modelOverride?: AgentModelOverride;
   history: ChatMessage[];
 }
 
@@ -93,7 +142,8 @@ export interface JudgeResult {
 export interface TickBuffer {
   tick: number;
   interactionRound: number;
-  status: "running" | "completed" | "interrupted";
+  /** need_open=本时段尚未世界开场；running=交互中；completed=本时段已收束待/已拨钟 */
+  status: "need_open" | "running" | "completed" | "interrupted";
   worldBrief?: string;
   intents?: InteractionIntent[];
   responses?: InteractionResponse[];
@@ -103,6 +153,18 @@ export interface TickBuffer {
 export interface GameSettings {
   maxInteractionRounds: number;
   characterCount: number;
+  /** 角色提案顺序：模板序 / 每轮随机 / 自定义 agentId 序。 */
+  proposeOrder: ProposeOrderMode;
+  /** proposeOrder=custom 时的角色 agent id 列表。 */
+  customProposeOrder: string[];
+  /** 非玩家角色提案：串行或并行。 */
+  proposeMode: ProposeMode;
+  /** 推进一轮流水线图；缺省用默认图。 */
+  pipeline: GamePipeline;
+  /** 书记提示词覆盖（空 = 默认）。 */
+  chroniclerGodPrompt?: string;
+  chroniclerPlayerPrompt?: string;
+  chroniclerModel?: AgentModelOverride;
 }
 
 export interface GameState {
@@ -113,9 +175,15 @@ export interface GameState {
   /** 世界观说明（可编辑）。 */
   worldview: string;
   worldClock: {
+    /** 时段序号（事件/归档内部用）。 */
     tick: number;
+    /** 展示用，与 timeText 同步。 */
     label: string;
+    /** 具体世界时刻（叙事字符串，如「三月初二 05:30」）。 */
+    timeText: string;
     sceneSummary: string;
+    /** tick → 该时段的 timeText（时间线展示用）。 */
+    history?: Record<string, string>;
   };
   agents: GameAgent[];
   sheets: GameSheet[];
@@ -130,7 +198,7 @@ export interface GameState {
   godStory: string;
   /** 玩家视角剧情/个人经历（累积）。 */
   playerStory: string;
-  /** 已写入剧情的时刻（避免重复追加）。 */
+  /** 已写入「时段剧情」的 tick（开场种子可为 -1）。 */
   storyTick: number;
   /**
    * 是否已解锁时间线/上帝剧情。

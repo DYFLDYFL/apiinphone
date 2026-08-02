@@ -790,10 +790,9 @@ export default function App() {
                 void persistSettings(remembered);
               }}
             />
-            <span className="status-hint">
-              {" · "}
-              {isWebTransport(settings) ? "网页" : "官方"}
-            </span>
+            {isWebTransport(settings) ? (
+              <span className="status-hint">{" · "}网页</span>
+            ) : null}
             {(statusText || balanceLines[0]) && (
               <span className="status-hint">
                 {" · "}

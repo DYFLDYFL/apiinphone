@@ -1,19 +1,30 @@
 import { Directory, Encoding, Filesystem } from "@capacitor/filesystem";
-import type { GameIndex, GameState } from "./types";
+import type { GameIndex, GameSettings, GameState } from "./types";
 import {
   characterSystemPrompt,
   refereeSystemPrompt,
   worldSystemPrompt,
 } from "./prompts";
-import { createTemplateGame } from "./templates";
+import { createTemplateGame, defaultGameRunSettings } from "./templates";
+import { normalizePipeline } from "./pipeline";
+
+function sanitizeStoryText(text: string): string {
+  return text
+    .replace(/\s*FINISHED(?:_WITH_ERROR)?\s*/gi, "")
+    .replace(/\s*\[DONE\]\s*/g, "")
+    .replace(/[ \t]+\n/g, "\n")
+    .trimEnd();
+}
+
+export { sanitizeStoryText };
 
 const GAMES_DIR = "games";
 const INDEX_FILE = `${GAMES_DIR}/index.json`;
 
-async function ensureDir(): Promise<void> {
+async function ensureDir(path = GAMES_DIR): Promise<void> {
   try {
     await Filesystem.mkdir({
-      path: GAMES_DIR,
+      path,
       directory: Directory.Data,
       recursive: true,
     });
@@ -42,7 +53,27 @@ async function writeText(path: string, text: string): Promise<void> {
     directory: Directory.Data,
     data: text,
     encoding: Encoding.UTF8,
+    recursive: true,
   });
+}
+
+async function removePath(path: string, dir = false): Promise<void> {
+  try {
+    if (dir) {
+      await Filesystem.rmdir({
+        path,
+        directory: Directory.Data,
+        recursive: true,
+      });
+    } else {
+      await Filesystem.deleteFile({
+        path,
+        directory: Directory.Data,
+      });
+    }
+  } catch {
+    /* ignore */
+  }
 }
 
 function emptyIndex(): GameIndex {
@@ -68,24 +99,131 @@ async function saveIndex(index: GameIndex): Promise<void> {
   await writeText(INDEX_FILE, JSON.stringify(index, null, 2));
 }
 
-function gamePath(id: string): string {
+/** 每局一个文件夹：games/{id}/ */
+function gameDir(id: string): string {
+  return `${GAMES_DIR}/${id}`;
+}
+
+function gameJsonPath(id: string): string {
+  return `${gameDir(id)}/game.json`;
+}
+
+/** 旧版单文件路径（迁移用） */
+function legacyGamePath(id: string): string {
   return `${GAMES_DIR}/${id}.json`;
+}
+
+function tickPad(tick: number): string {
+  return String(Math.max(0, Math.round(tick))).padStart(3, "0");
+}
+
+function tickStoryPath(
+  id: string,
+  tick: number,
+  kind: "god" | "player",
+): string {
+  return `${gameDir(id)}/ticks/${tickPad(tick)}-${kind}.txt`;
+}
+
+function normalizeGameSettings(raw: Partial<GameSettings> | undefined): GameSettings {
+  const base = defaultGameRunSettings(
+    typeof raw?.characterCount === "number" ? raw.characterCount : 3,
+  );
+  const proposeOrder =
+    raw?.proposeOrder === "random" || raw?.proposeOrder === "custom"
+      ? raw.proposeOrder
+      : "template";
+  const proposeMode = raw?.proposeMode === "parallel" ? "parallel" : "serial";
+  return {
+    maxInteractionRounds:
+      typeof raw?.maxInteractionRounds === "number"
+        ? raw.maxInteractionRounds
+        : base.maxInteractionRounds,
+    characterCount:
+      typeof raw?.characterCount === "number"
+        ? raw.characterCount
+        : base.characterCount,
+    proposeOrder,
+    customProposeOrder: Array.isArray(raw?.customProposeOrder)
+      ? raw.customProposeOrder.filter((x) => typeof x === "string")
+      : [],
+    proposeMode,
+    pipeline: normalizePipeline(raw?.pipeline),
+    chroniclerGodPrompt:
+      typeof raw?.chroniclerGodPrompt === "string"
+        ? raw.chroniclerGodPrompt
+        : undefined,
+    chroniclerPlayerPrompt:
+      typeof raw?.chroniclerPlayerPrompt === "string"
+        ? raw.chroniclerPlayerPrompt
+        : undefined,
+    chroniclerModel:
+      raw?.chroniclerModel && typeof raw.chroniclerModel === "object"
+        ? raw.chroniclerModel
+        : undefined,
+  };
 }
 
 function normalizeGame(game: GameState): GameState {
   if (!Array.isArray(game.events)) game.events = [];
   if (!Array.isArray(game.agents)) game.agents = [];
   if (!Array.isArray(game.sheets)) game.sheets = [];
-  if (!game.settings) {
-    game.settings = { maxInteractionRounds: 6, characterCount: 3 };
-  }
+  game.settings = normalizeGameSettings(game.settings);
   if (typeof game.worldview !== "string") {
     game.worldview = "";
   }
   if (!game.worldClock) {
-    game.worldClock = { tick: 0, label: "第 0 时", sceneSummary: "" };
+    game.worldClock = {
+      tick: 0,
+      label: "未标注时刻",
+      timeText: "未标注时刻",
+      sceneSummary: "",
+    };
+  } else {
+    const tick = Number(game.worldClock.tick);
+    game.worldClock.tick = Number.isNaN(tick) || tick < 0 ? 0 : Math.round(tick);
+    if (typeof game.worldClock.sceneSummary !== "string") {
+      game.worldClock.sceneSummary = "";
+    }
+    const rawLabel =
+      typeof game.worldClock.label === "string" ? game.worldClock.label.trim() : "";
+    let timeText =
+      typeof (game.worldClock as { timeText?: string }).timeText === "string"
+        ? String((game.worldClock as { timeText?: string }).timeText).trim()
+        : "";
+    if (!timeText) {
+      if (/^第\s*\d+\s*时$/.test(rawLabel)) {
+        const n = rawLabel.match(/\d+/)?.[0] ?? String(game.worldClock.tick);
+        timeText = `未标注时刻 · 时段 ${n}`;
+      } else {
+        timeText = rawLabel || `未标注时刻 · 时段 ${game.worldClock.tick}`;
+      }
+    }
+    game.worldClock.timeText = timeText;
+    game.worldClock.label = timeText;
+    if (
+      !game.worldClock.history ||
+      typeof game.worldClock.history !== "object"
+    ) {
+      game.worldClock.history = {};
+    }
+    const key = String(game.worldClock.tick);
+    if (!game.worldClock.history[key]) {
+      game.worldClock.history[key] = timeText;
+    }
   }
   if (game.tickBuffer === undefined) game.tickBuffer = null;
+  if (game.tickBuffer) {
+    const st = game.tickBuffer.status as string;
+    if (
+      st !== "need_open" &&
+      st !== "running" &&
+      st !== "completed" &&
+      st !== "interrupted"
+    ) {
+      game.tickBuffer.status = "running";
+    }
+  }
   if (game.playMode !== "play") game.playMode = "spectate";
   if (typeof game.playerCharacterId !== "string") {
     game.playerCharacterId = null;
@@ -102,9 +240,12 @@ function normalizeGame(game: GameState): GameState {
   }
   if (typeof game.godStory !== "string") game.godStory = "";
   if (typeof game.playerStory !== "string") game.playerStory = "";
+  game.godStory = sanitizeStoryText(game.godStory);
+  game.playerStory = sanitizeStoryText(game.playerStory);
   {
     const n = Number(game.storyTick);
-    game.storyTick = Number.isNaN(n) || n < 0 ? 0 : Math.round(n);
+    // -1 = 仅有开场种子、尚未归档任何时段剧情
+    game.storyTick = Number.isNaN(n) ? -1 : Math.max(-1, Math.round(n));
   }
   if (typeof game.godViewUnlocked !== "boolean") {
     game.godViewUnlocked = game.playMode !== "play";
@@ -117,8 +258,13 @@ function normalizeGame(game: GameState): GameState {
     if (!Array.isArray(e.visibleTo)) e.visibleTo = [];
   }
   for (const a of game.agents) {
+    const override = a.systemPromptOverride?.trim();
+    if (override) {
+      a.systemPrompt = override;
+      continue;
+    }
     if (a.kind === "referee") {
-      a.systemPrompt = refereeSystemPrompt();
+      a.systemPrompt = refereeSystemPrompt(a.persona);
     } else if (a.kind === "character") {
       a.systemPrompt = characterSystemPrompt(a.name, a.persona);
     } else if (a.kind === "world") {
@@ -126,6 +272,138 @@ function normalizeGame(game: GameState): GameState {
     }
   }
   return game;
+}
+
+/** 从 ticks/*.txt 重建剧情（按 tick 归档，推进时只增不删）。 */
+async function loadStoriesFromTicks(
+  id: string,
+): Promise<{ godStory: string; playerStory: string } | null> {
+  let names: string[] = [];
+  try {
+    const listing = await Filesystem.readdir({
+      path: `${gameDir(id)}/ticks`,
+      directory: Directory.Data,
+    });
+    names = (listing.files ?? [])
+      .map((f) => (typeof f === "string" ? f : f.name))
+      .filter(Boolean);
+  } catch {
+    return null;
+  }
+  if (!names.length) return null;
+
+  const readParts = async (files: string[]) => {
+    const parts: string[] = [];
+    for (const name of files) {
+      const text = await readText(`${gameDir(id)}/ticks/${name}`);
+      if (text?.trim()) parts.push(text.trim());
+    }
+    return parts.join("\n\n");
+  };
+
+  const openingGod = names.includes("opening-god.txt")
+    ? ["opening-god.txt"]
+    : [];
+  const openingPlayer = names.includes("opening-player.txt")
+    ? ["opening-player.txt"]
+    : [];
+  const gods = [
+    ...openingGod,
+    ...names.filter((n) => /^\d+-god\.txt$/.test(n)).sort(),
+  ];
+  const players = [
+    ...openingPlayer,
+    ...names.filter((n) => /^\d+-player\.txt$/.test(n)).sort(),
+  ];
+
+  if (!gods.length && !players.length) return null;
+  return {
+    godStory: sanitizeStoryText(await readParts(gods)),
+    playerStory: sanitizeStoryText(await readParts(players)),
+  };
+}
+
+/**
+ * 归档某一时的剧情片段（只写/覆盖该 tick 文件，不碰其它时）。
+ */
+export async function archiveStoryTick(options: {
+  gameId: string;
+  tick: number;
+  label: string;
+  kind: "god" | "player";
+  body: string;
+}): Promise<void> {
+  const body = sanitizeStoryText(options.body).trim();
+  if (!body) return;
+  const label = options.label.trim() || `时刻 ${options.tick}`;
+  const hasHeader = /——\s*.+\s*——/.test(body);
+  const text = hasHeader ? `${body}\n` : `—— ${label} ——\n${body}\n`;
+  await writeText(tickStoryPath(options.gameId, options.tick, options.kind), text);
+}
+
+export async function archiveOpeningStory(options: {
+  gameId: string;
+  label: string;
+  kind: "god" | "player";
+  body: string;
+}): Promise<void> {
+  const body = sanitizeStoryText(options.body).trim();
+  if (!body) return;
+  const label = options.label.trim() || "开场";
+  const hasHeader = /——\s*.+\s*——/.test(body);
+  const text = hasHeader ? `${body}\n` : `—— ${label} ——\n${body}\n`;
+  await writeText(
+    `${gameDir(options.gameId)}/ticks/opening-${options.kind}.txt`,
+    text,
+  );
+}
+
+/** 若尚无 ticks，把已有长文按「—— … ——」拆成归档，避免之后只有新 tick。 */
+export async function ensureStoryTicksBootstrapped(game: GameState): Promise<void> {
+  const existing = await loadStoriesFromTicks(game.id);
+  if (existing && (existing.godStory.trim() || existing.playerStory.trim())) {
+    return;
+  }
+  const splitSync = async (full: string, kind: "god" | "player") => {
+    const text = full.trim();
+    if (!text) return;
+    const parts = text
+      .split(/(?=——\s*.+?\s*——)/)
+      .map((p) => p.trim())
+      .filter(Boolean);
+    if (!parts.length) {
+      await archiveOpeningStory({
+        gameId: game.id,
+        label: game.worldClock.timeText || "开场",
+        kind,
+        body: text,
+      });
+      return;
+    }
+    await archiveOpeningStory({
+      gameId: game.id,
+      label: "开场",
+      kind,
+      body: parts[0],
+    });
+    for (let i = 1; i < parts.length; i++) {
+      await archiveStoryTick({
+        gameId: game.id,
+        tick: i - 1,
+        label: `时刻 ${i - 1}`,
+        kind,
+        body: parts[i],
+      });
+    }
+  };
+  await splitSync(game.godStory, "god");
+  await splitSync(game.playerStory, "player");
+}
+
+async function writeStoryMirrors(game: GameState): Promise<void> {
+  const dir = gameDir(game.id);
+  await writeText(`${dir}/god-story.txt`, game.godStory || "");
+  await writeText(`${dir}/player-story.txt`, game.playerStory || "");
 }
 
 export async function listGames(): Promise<
@@ -152,10 +430,48 @@ export async function listGames(): Promise<
 }
 
 export async function loadGame(id: string): Promise<GameState | null> {
-  const raw = await readText(gamePath(id));
+  let raw = await readText(gameJsonPath(id));
+  let fromLegacy = false;
+  if (!raw) {
+    raw = await readText(legacyGamePath(id));
+    fromLegacy = Boolean(raw);
+  }
   if (!raw) return null;
   try {
-    return normalizeGame(JSON.parse(raw) as GameState);
+    const game = normalizeGame(JSON.parse(raw) as GameState);
+    const fromTicks = await loadStoriesFromTicks(id);
+    if (fromTicks) {
+      // 仅当归档不短于内存/json 时才采用，避免半截 ticks 冲掉旧剧情
+      if (
+        fromTicks.godStory.trim().length >= game.godStory.trim().length
+      ) {
+        game.godStory = fromTicks.godStory;
+      }
+      if (
+        fromTicks.playerStory.trim().length >= game.playerStory.trim().length
+      ) {
+        game.playerStory = fromTicks.playerStory;
+      }
+    } else {
+      // 镜像文件兜底
+      const godMirror = await readText(`${gameDir(id)}/god-story.txt`);
+      const playerMirror = await readText(`${gameDir(id)}/player-story.txt`);
+      if (godMirror && godMirror.trim().length >= game.godStory.trim().length) {
+        game.godStory = sanitizeStoryText(godMirror);
+      }
+      if (
+        playerMirror &&
+        playerMirror.trim().length >= game.playerStory.trim().length
+      ) {
+        game.playerStory = sanitizeStoryText(playerMirror);
+      }
+    }
+    if (fromLegacy) {
+      // 读到旧单文件后迁入文件夹
+      await saveGame(game);
+      await removePath(legacyGamePath(id));
+    }
+    return game;
   } catch {
     return null;
   }
@@ -163,7 +479,10 @@ export async function loadGame(id: string): Promise<GameState | null> {
 
 export async function saveGame(game: GameState): Promise<void> {
   game.updatedAt = new Date().toISOString();
-  await writeText(gamePath(game.id), JSON.stringify(game, null, 2));
+  await ensureDir(gameDir(game.id));
+  await ensureDir(`${gameDir(game.id)}/ticks`);
+  await writeText(gameJsonPath(game.id), JSON.stringify(game, null, 2));
+  await writeStoryMirrors(game);
   const index = await loadIndex();
   if (!index.order.includes(game.id)) index.order.unshift(game.id);
   index.activeId = game.id;
@@ -185,14 +504,8 @@ export async function createGame(
 }
 
 export async function deleteGame(id: string): Promise<void> {
-  try {
-    await Filesystem.deleteFile({
-      path: gamePath(id),
-      directory: Directory.Data,
-    });
-  } catch {
-    /* ignore */
-  }
+  await removePath(gameDir(id), true);
+  await removePath(legacyGamePath(id));
   const index = await loadIndex();
   index.order = index.order.filter((gid) => gid !== id);
   delete index.meta[id];

@@ -4,8 +4,12 @@ import {
   createStreamControl,
   type StreamControl,
 } from "../apiClient";
+import {
+  normalizeReasoningEffort,
+  type ReasoningEffort,
+} from "../apiProviders";
 import { settingsForGame } from "../settings";
-import type { GameAgent, GameState } from "./types";
+import type { AgentModelOverride, GameAgent, GameState } from "./types";
 
 const MAX_HISTORY = 8;
 
@@ -40,6 +44,26 @@ function trimHistory(agent: GameAgent): void {
   }
 }
 
+function applyModelOverride(
+  base: AppSettings,
+  override?: AgentModelOverride,
+): AppSettings {
+  if (!override) return base;
+  const model = override.model?.trim() || base.model;
+  const thinkingMode = override.thinkingMode ?? base.thinkingMode;
+  const effortRaw = override.reasoningEffort ?? base.reasoningEffort;
+  const reasoningEffort = normalizeReasoningEffort(
+    effortRaw as ReasoningEffort | string | undefined,
+    model,
+  );
+  return {
+    ...base,
+    model,
+    thinkingMode,
+    reasoningEffort,
+  };
+}
+
 /** Run one agent turn: system + short history + user prompt → assistant text (+ JSON). */
 export async function runGameAgent(
   settings: AppSettings,
@@ -47,9 +71,10 @@ export async function runGameAgent(
   agent: GameAgent,
   userPrompt: string,
   control?: StreamControl,
+  onStatus?: (text: string) => void,
 ): Promise<{ text: string; json: Record<string, unknown> | null }> {
   const gameSettings: AppSettings = {
-    ...settingsForGame(settings),
+    ...applyModelOverride(settingsForGame(settings), agent.modelOverride),
     toolsEnabled: false,
     toolsWebSearch: false,
     toolsPythonSandbox: false,
@@ -63,7 +88,14 @@ export async function runGameAgent(
   ];
 
   const ctrl = control ?? createStreamControl();
-  const result = await chatStream(gameSettings, messages, { control: ctrl });
+  const result = await chatStream(gameSettings, messages, {
+    control: ctrl,
+    onRetryWait: (info) => {
+      onStatus?.(
+        `${info.reason}（${info.attempt}/${info.maxAttempts}，${Math.ceil(info.delayMs / 1000)}s）`,
+      );
+    },
+  });
   const text = (result.content || result.note || "").trim();
   agent.history.push({ role: "user", content: userPrompt });
   agent.history.push({ role: "assistant", content: text || "(无内容)" });

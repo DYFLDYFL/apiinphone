@@ -14,17 +14,9 @@ import {
 export function formatBalanceDisplay(info: DeepSeekBalance): string[] {
   const lines: string[] = [];
   for (const entry of info.balanceInfos) {
-    const currency = entry.currency || "?";
-    let line = `${currency} ${entry.totalBalance}`;
-    const extras: string[] = [];
-    if (!["0", "0.00", "0.0", ""].includes(entry.grantedBalance)) {
-      extras.push(`赠送 ${entry.grantedBalance}`);
-    }
-    if (!["0", "0.00", "0.0", ""].includes(entry.toppedUpBalance)) {
-      extras.push(`充值 ${entry.toppedUpBalance}`);
-    }
-    if (extras.length) line += `（${extras.join(" · ")}）`;
-    lines.push(line);
+    const currency = (entry.currency || "?").toUpperCase();
+    const total = entry.totalBalance;
+    lines.push(currency === "CNY" ? `¥${total}` : `${currency} ${total}`);
   }
   if (!lines.length) lines.push("暂无余额数据");
   lines.push(info.isAvailable ? "余额充足" : "余额不足");
