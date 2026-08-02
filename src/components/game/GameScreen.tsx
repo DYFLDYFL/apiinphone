@@ -474,28 +474,37 @@ export function GameScreen({
           {topActions}
         </header>
         <div className="game-body game-lobby">
-          <section className="game-card">
-            <h3>新建</h3>
-            <label>
-              标题
-              <input
-                value={draft.title}
-                onChange={(e) =>
-                  setDraft({ ...draft, title: e.target.value })
-                }
-              />
-            </label>
-            <label>
-              初始时刻
-              <input
-                value={draft.initialTime}
-                placeholder="例如：三月初二 05:30"
-                onChange={(e) =>
-                  setDraft({ ...draft, initialTime: e.target.value })
-                }
-              />
-            </label>
-            <fieldset className="settings-fieldset">
+          <section className="game-card game-create-card">
+            <div className="game-card-heading">
+              <div>
+                <h3>新建游戏</h3>
+                <p>先定下世界与角色，再开始第一轮故事。</p>
+              </div>
+              <span className="game-card-badge">建局</span>
+            </div>
+            <div className="game-form-grid">
+              <label className="game-field">
+                标题
+                <input
+                  value={draft.title}
+                  placeholder="例如：青石镇的晨雾"
+                  onChange={(e) =>
+                    setDraft({ ...draft, title: e.target.value })
+                  }
+                />
+              </label>
+              <label className="game-field">
+                初始时刻
+                <input
+                  value={draft.initialTime}
+                  placeholder="例如：三月初二 05:30"
+                  onChange={(e) =>
+                    setDraft({ ...draft, initialTime: e.target.value })
+                  }
+                />
+              </label>
+            </div>
+            <fieldset className="settings-fieldset game-view-fieldset">
               <legend>开局视角（创建后不可改）</legend>
               <label className="radio-row">
                 <input
@@ -547,36 +556,40 @@ export function GameScreen({
                 扮演开局默认只看「玩家剧情」；点「时间线/剧情」会提示是否解锁（作弊）。
               </p>
             </fieldset>
-            <label>
-              角色数（2–6）
-              <input
-                type="number"
-                min={2}
-                max={6}
-                value={charCountInput}
-                onChange={(e) => {
-                  const raw = e.target.value;
-                  setCharCountInput(raw);
-                  if (raw.trim() === "") return;
-                  const num = Number(raw);
-                  if (!Number.isFinite(num)) return;
-                  if (num < 2 || num > 6) return;
-                  applyCharacterCount(num);
-                }}
-                onBlur={() => {
-                  applyCharacterCount(
-                    Number(charCountInput) || draft.characters.length || 3,
-                  );
-                }}
-              />
-            </label>
-            <button
-              type="button"
-              className="secondary-btn"
-              onClick={() => setShowTemplate((v) => !v)}
-            >
-              {showTemplate ? "收起模板" : "编辑模板"}
-            </button>
+            <div className="game-create-controls">
+              <label className="game-field game-count-field">
+                角色数量
+                <span className="game-field-hint">2–6 名角色</span>
+                <input
+                  type="number"
+                  min={2}
+                  max={6}
+                  value={charCountInput}
+                  onChange={(e) => {
+                    const raw = e.target.value;
+                    setCharCountInput(raw);
+                    if (raw.trim() === "") return;
+                    const num = Number(raw);
+                    if (!Number.isFinite(num)) return;
+                    if (num < 2 || num > 6) return;
+                    applyCharacterCount(num);
+                  }}
+                  onBlur={() => {
+                    applyCharacterCount(
+                      Number(charCountInput) || draft.characters.length || 3,
+                    );
+                  }}
+                />
+              </label>
+              <button
+                type="button"
+                className="secondary-btn game-template-toggle"
+                onClick={() => setShowTemplate((v) => !v)}
+              >
+                <span>{showTemplate ? "收起模板" : "编辑模板"}</span>
+                <span aria-hidden="true">{showTemplate ? "⌃" : "⌄"}</span>
+              </button>
+            </div>
             {showTemplate ? (
               <div className="game-template-editor">
                 <fieldset className="game-ai-block">
@@ -816,15 +829,18 @@ export function GameScreen({
                 </button>
               </div>
             ) : null}
-            <button
-              type="button"
-              className="primary-btn"
-              onClick={() => void handleCreate()}
-            >
-              创建
-            </button>
+            <div className="game-create-actions">
+              <p>创建后可以随时暂停推进，但开局视角不可更改。</p>
+              <button
+                type="button"
+                className="primary-btn game-create-button"
+                onClick={() => void handleCreate()}
+              >
+                创建游戏
+              </button>
+            </div>
           </section>
-          <section className="game-card">
+          <section className="game-card game-saves-card">
             <h3>存档</h3>
             {!games.length ? (
               <p className="settings-hint">尚无存档</p>
