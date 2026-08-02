@@ -1,5 +1,10 @@
 import { Directory, Encoding, Filesystem } from "@capacitor/filesystem";
 import type { GameIndex, GameState } from "./types";
+import {
+  characterSystemPrompt,
+  refereeSystemPrompt,
+  worldSystemPrompt,
+} from "./prompts";
 import { createTemplateGame } from "./templates";
 
 const GAMES_DIR = "games";
@@ -81,6 +86,33 @@ function normalizeGame(game: GameState): GameState {
     game.worldClock = { tick: 0, label: "第 0 时", sceneSummary: "" };
   }
   if (game.tickBuffer === undefined) game.tickBuffer = null;
+  if (game.playMode !== "play") game.playMode = "spectate";
+  if (typeof game.playerCharacterId !== "string") {
+    game.playerCharacterId = null;
+  } else {
+    const ok = game.agents.some(
+      (a) => a.kind === "character" && a.id === game.playerCharacterId,
+    );
+    if (!ok) game.playerCharacterId = null;
+  }
+  if (game.playMode === "play" && !game.playerCharacterId) {
+    const first = game.agents.find((a) => a.kind === "character");
+    game.playerCharacterId = first?.id ?? null;
+    if (!game.playerCharacterId) game.playMode = "spectate";
+  }
+  for (const e of game.events) {
+    if (e.audience !== "private") e.audience = "public";
+    if (!Array.isArray(e.visibleTo)) e.visibleTo = [];
+  }
+  for (const a of game.agents) {
+    if (a.kind === "referee") {
+      a.systemPrompt = refereeSystemPrompt();
+    } else if (a.kind === "character") {
+      a.systemPrompt = characterSystemPrompt(a.name, a.persona);
+    } else if (a.kind === "world") {
+      a.systemPrompt = worldSystemPrompt(game.worldview || a.persona);
+    }
+  }
   return game;
 }
 

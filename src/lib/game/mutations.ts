@@ -63,6 +63,8 @@ export function pushEvent(
     summary: partial.summary,
     detail: partial.detail,
     sheetDiffs: partial.sheetDiffs,
+    audience: partial.audience ?? "public",
+    visibleTo: partial.visibleTo ?? [],
   };
   game.events.push(event);
   if (game.events.length > 200) {
@@ -100,6 +102,38 @@ export function recentEventsText(game: GameState, limit = 12): string {
         `[第${e.tick}时·第${e.interactionRound}轮] ${e.actorName}: ${e.summary}`,
     )
     .join("\n");
+}
+
+/** 某 agent 可见的事件（公开 + 私讯名单含自己）。 */
+export function eventsVisibleTo(
+  game: GameState,
+  agentId: string,
+  limit = 12,
+): GameEvent[] {
+  const filtered = game.events.filter((e) => {
+    const audience = e.audience ?? "public";
+    if (audience !== "private") return true;
+    return (e.visibleTo ?? []).includes(agentId);
+  });
+  return filtered.slice(-limit);
+}
+
+export function recentEventsTextFor(
+  game: GameState,
+  agentId: string,
+  limit = 12,
+): string {
+  return eventsVisibleTo(game, agentId, limit)
+    .map(
+      (e) =>
+        `[第${e.tick}时·第${e.interactionRound}轮] ${e.actorName}: ${e.summary}`,
+    )
+    .join("\n");
+}
+
+/** 中文摘要：裁判私讯。 */
+export function notifySummary(toName: string, message: string): string {
+  return `裁判告知·${toName}：${message}`;
 }
 
 export function agentDirectory(game: GameState): string {

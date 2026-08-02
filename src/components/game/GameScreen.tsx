@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { AppSettings } from "../../types";
 import {
   createGame,
@@ -13,8 +13,10 @@ import {
   isGameRunning,
   startGameAdvance,
   stopGameAdvance,
+  submitPlayerIntent,
   subscribeGameRunner,
 } from "../../lib/game/gameRunner";
+import type { PlayerIntentRequest } from "../../lib/game/orchestrator";
 import {
   characterSystemPrompt,
   worldSystemPrompt,
@@ -26,10 +28,11 @@ import {
   type GameTemplateDraft,
 } from "../../lib/game/templates";
 import {
+  eventsVisibleTo,
   formatAttrLines,
   formatEventSummary,
 } from "../../lib/game/mutations";
-import type { GameAgent, GameState } from "../../lib/game/types";
+import type { GameAgent, GamePlayMode, GameState } from "../../lib/game/types";
 import {
   isWebTransport,
   rememberGameModel,
@@ -77,7 +80,12 @@ export function GameScreen({
   const [draft, setDraft] = useState<GameTemplateDraft>(() =>
     defaultTemplateDraft(3),
   );
-  const timelineRef = useRef<HTMLUListElement | null>(null);
+  const [showGodTimeline, setShowGodTimeline] = useState(false);
+  const [pendingIntent, setPendingIntent] =
+    useState<PlayerIntentRequest | null>(null);
+  const [intentTo, setIntentTo] = useState("世界");
+  const [intentAction, setIntentAction] = useState("");
+  const [intentWhy, setIntentWhy] = useState("");
 
   const refreshList = useCallback(async () => {
     setGames(await listGames());
@@ -91,6 +99,10 @@ export function GameScreen({
     return subscribeGameRunner((snap) => {
       setBusy(snap.running);
       setStatus(snap.statusText);
+      setPendingIntent(snap.pendingPlayerIntent);
+      if (snap.pendingPlayerIntent?.redoHint) {
+        setIntentAction("");
+      }
       if (snap.game && (!game || game.id === snap.game.id)) {
         setGame(snap.game);
         if (snap.running) setView("play");
@@ -99,12 +111,6 @@ export function GameScreen({
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refreshList]);
-
-  useEffect(() => {
-    const el = timelineRef.current;
-    if (!el) return;
-    el.scrollTop = el.scrollHeight;
-  }, [game?.events.length, status, busy]);
 
   const openGame = async (id: string) => {
     const snap = getGameRunnerSnapshot();
@@ -230,6 +236,51 @@ export function GameScreen({
     await saveGame(next);
     setGame(next);
     bindGameRunnerGame(next);
+  };
+
+  const savePlayMode = async (
+    playMode: GamePlayMode,
+    playerCharacterId: string | null,
+  ) => {
+    if (!game || busy) return;
+    let nextId = playerCharacterId;
+    if (playMode === "play") {
+      const chars = game.agents.filter((a) => a.kind === "character");
+      if (!nextId || !chars.some((c) => c.id === nextId)) {
+        nextId = chars[0]?.id ?? null;
+      }
+      if (!nextId) {
+        alert("没有可扮演的角色");
+        return;
+      }
+    } else {
+      nextId = null;
+    }
+    const next = {
+      ...game,
+      playMode,
+      playerCharacterId: nextId,
+    };
+    await saveGame(next);
+    setGame(next);
+    bindGameRunnerGame(next);
+    if (playMode === "spectate") setShowGodTimeline(false);
+  };
+
+  const handleSubmitIntent = () => {
+    if (!intentAction.trim()) {
+      alert("请填写行动");
+      return;
+    }
+    const ok = submitPlayerIntent({
+      toId: intentTo.trim() || "世界",
+      action: intentAction.trim(),
+      rationale: intentWhy.trim() || undefined,
+    });
+    if (ok) {
+      setIntentAction("");
+      setIntentWhy("");
+    }
   };
 
   const transportLabel = isWebTransport(settings) ? "网页" : "官方";
@@ -391,7 +442,16 @@ export function GameScreen({
   }
 
   const chars = game.agents.filter((a) => a.kind === "character");
-  const events = game.events.slice(-80);
+  const playMode = game.playMode === "play" ? "play" : "spectate";
+  const playerId = game.playerCharacterId;
+  const filteredEvents =
+    playMode === "play" && playerId && !showGodTimeline
+      ? eventsVisibleTo(game, playerId, 80)
+      : game.events.slice(-80);
+  const intentTargets = [
+    "世界",
+    ...chars.filter((c) => c.id !== playerId).map((c) => c.name),
+  ];
   const maxR = isWebTransport(settings)
     ? Math.min(game.settings.maxInteractionRounds, 3)
     : game.settings.maxInteractionRounds;
@@ -418,6 +478,8 @@ export function GameScreen({
             {game.worldClock.label}
             {" · "}
             {transportLabel}
+            {" · "}
+            {playMode === "play" ? "扮演" : "旁观"}
             {busy && status ? ` · ${status}` : ""}
           </div>
           <ModelSwitcher
@@ -440,14 +502,74 @@ export function GameScreen({
       </header>
 
       <div className="game-body game-play">
+        <section className="game-card">
+          <h3>视角</h3>
+          <div className="game-play-mode">
+            <label className="radio-row">
+              <input
+                type="radio"
+                name="playMode"
+                checked={playMode === "spectate"}
+                disabled={busy}
+                onChange={() => void savePlayMode("spectate", null)}
+              />
+              旁观（斗蛐蛐）
+            </label>
+            <label className="radio-row">
+              <input
+                type="radio"
+                name="playMode"
+                checked={playMode === "play"}
+                disabled={busy}
+                onChange={() =>
+                  void savePlayMode("play", playerId ?? chars[0]?.id ?? null)
+                }
+              />
+              扮演角色
+            </label>
+            {playMode === "play" ? (
+              <label>
+                扮演
+                <select
+                  disabled={busy}
+                  value={playerId ?? ""}
+                  onChange={(e) =>
+                    void savePlayMode("play", e.target.value || null)
+                  }
+                >
+                  {chars.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
+            {playMode === "play" ? (
+              <label className="checkbox">
+                <input
+                  type="checkbox"
+                  checked={showGodTimeline}
+                  onChange={(e) => setShowGodTimeline(e.target.checked)}
+                />
+                显示全部（上帝视角）
+              </label>
+            ) : null}
+          </div>
+          <p className="settings-hint">
+            扮演时只填意图；对白与后果仍由 AI + 裁判落地。推进中不可改视角。
+          </p>
+        </section>
+
         <section className="game-card game-timeline">
           <h3>时间线</h3>
           <p className="settings-hint">{game.worldClock.sceneSummary}</p>
-          <ul className="game-events" ref={timelineRef}>
-            {events.map((e) => (
+          <ul className="game-events">
+            {filteredEvents.map((e) => (
               <li key={e.id}>
                 <span className="game-evt-meta">
                   第{e.tick}时 · 第{e.interactionRound}轮 · {e.actorName}
+                  {e.audience === "private" ? " · 私" : ""}
                 </span>
                 <div>{formatEventSummary(e.summary)}</div>
               </li>
@@ -471,10 +593,21 @@ export function GameScreen({
             {chars.map((ch) => {
               const sheet = game.sheets.find((s) => s.id === ch.sheetId);
               if (!sheet) return null;
+              const isSelf = playMode === "play" && ch.id === playerId;
+              const openSelf = isSelf;
               return (
-                <details key={ch.id} className="game-sheet">
+                <details
+                  key={ch.id}
+                  className={
+                    isSelf ? "game-sheet game-sheet-self" : "game-sheet"
+                  }
+                  open={openSelf || undefined}
+                >
                   <summary>
-                    <strong>{sheet.name}</strong>
+                    <strong>
+                      {sheet.name}
+                      {isSelf ? "（你）" : ""}
+                    </strong>
                     <span className="info-muted">
                       {" "}
                       {String(sheet.attrs.location ?? "")} ·{" "}
@@ -483,52 +616,66 @@ export function GameScreen({
                   </summary>
                   <div className="game-sheet-body">
                     <p className="settings-hint">{formatAttrLines(sheet)}</p>
-                    {EDIT_ATTR_KEYS.map((key) => (
-                      <label key={key} className="game-attr-row">
-                        {ATTR_LABELS[key] ?? key}
-                        <input
-                          disabled={busy}
-                          defaultValue={String(sheet.attrs[key] ?? "")}
-                          onBlur={(e) => {
-                            const raw = e.target.value.trim();
-                            const num = Number(raw);
-                            const value =
-                              raw !== "" && !Number.isNaN(num) && key !== "location" && key !== "mood"
-                                ? num
-                                : raw;
-                            void saveCharacter(ch, {
-                              attrs: { [key]: value },
-                            });
-                          }}
-                        />
-                      </label>
-                    ))}
-                    <label>
-                      人设
-                      <textarea
-                        rows={3}
-                        disabled={busy}
-                        defaultValue={ch.persona}
-                        onBlur={(e) =>
-                          void saveCharacter(ch, { persona: e.target.value })
-                        }
-                      />
-                    </label>
-                    <label>
-                      物品（顿号分隔）
-                      <input
-                        disabled={busy}
-                        defaultValue={sheet.inventory.join("、")}
-                        onBlur={(e) =>
-                          void saveCharacter(ch, {
-                            inventory: e.target.value
-                              .split(/[,，、]/)
-                              .map((x) => x.trim())
-                              .filter(Boolean),
-                          })
-                        }
-                      />
-                    </label>
+                    {isSelf || playMode === "spectate" ? (
+                      <>
+                        {EDIT_ATTR_KEYS.map((key) => (
+                          <label key={key} className="game-attr-row">
+                            {ATTR_LABELS[key] ?? key}
+                            <input
+                              disabled={busy}
+                              defaultValue={String(sheet.attrs[key] ?? "")}
+                              onBlur={(e) => {
+                                const raw = e.target.value.trim();
+                                const num = Number(raw);
+                                const value =
+                                  raw !== "" &&
+                                  !Number.isNaN(num) &&
+                                  key !== "location" &&
+                                  key !== "mood"
+                                    ? num
+                                    : raw;
+                                void saveCharacter(ch, {
+                                  attrs: { [key]: value },
+                                });
+                              }}
+                            />
+                          </label>
+                        ))}
+                        <label>
+                          人设
+                          <textarea
+                            rows={3}
+                            disabled={busy}
+                            defaultValue={ch.persona}
+                            onBlur={(e) =>
+                              void saveCharacter(ch, {
+                                persona: e.target.value,
+                              })
+                            }
+                          />
+                        </label>
+                        <label>
+                          物品（顿号分隔）
+                          <input
+                            disabled={busy}
+                            defaultValue={sheet.inventory.join("、")}
+                            onBlur={(e) =>
+                              void saveCharacter(ch, {
+                                inventory: e.target.value
+                                  .split(/[,，、]/)
+                                  .map((x) => x.trim())
+                                  .filter(Boolean),
+                              })
+                            }
+                          />
+                        </label>
+                      </>
+                    ) : (
+                      <p className="settings-hint">
+                        他角摘要 · 物品：
+                        {sheet.inventory.join("、") || "未知"}
+                      </p>
+                    )}
                   </div>
                 </details>
               );
@@ -539,15 +686,62 @@ export function GameScreen({
 
       <footer className="game-footer">
         {status ? <div className="game-status">{status}</div> : null}
-        <label className="game-inject">
-          注入事件（可选）
-          <input
-            value={inject}
-            disabled={busy}
-            placeholder="例如：广场突然下起雨来"
-            onChange={(e) => setInject(e.target.value)}
-          />
-        </label>
+        {pendingIntent ? (
+          <div className="game-player-intent">
+            <strong>你的行动 · {pendingIntent.characterName}</strong>
+            {pendingIntent.redoHint ? (
+              <p className="settings-hint warn-hint">
+                裁判驳回：{pendingIntent.redoHint}
+              </p>
+            ) : null}
+            <label>
+              目标
+              <select
+                value={intentTo}
+                onChange={(e) => setIntentTo(e.target.value)}
+              >
+                {intentTargets.map((t) => (
+                  <option key={t} value={t}>
+                    {t}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              行动
+              <input
+                value={intentAction}
+                placeholder="你想做什么"
+                onChange={(e) => setIntentAction(e.target.value)}
+              />
+            </label>
+            <label>
+              理由（可选）
+              <input
+                value={intentWhy}
+                placeholder="简短理由"
+                onChange={(e) => setIntentWhy(e.target.value)}
+              />
+            </label>
+            <button
+              type="button"
+              className="primary-btn"
+              onClick={handleSubmitIntent}
+            >
+              提交意图
+            </button>
+          </div>
+        ) : (
+          <label className="game-inject">
+            注入事件（可选）
+            <input
+              value={inject}
+              disabled={busy}
+              placeholder="例如：广场突然下起雨来"
+              onChange={(e) => setInject(e.target.value)}
+            />
+          </label>
+        )}
         <div className="game-footer-actions">
           {busy ? (
             <button

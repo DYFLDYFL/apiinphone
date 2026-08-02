@@ -239,6 +239,8 @@ export function createTemplateGame(
         actorId: "system",
         actorName: "系统",
         summary: "游戏开始。",
+        audience: "public",
+        visibleTo: [],
       },
     ],
     tickBuffer: null,
@@ -246,5 +248,7 @@ export function createTemplateGame(
       maxInteractionRounds: 6,
       characterCount: characters.length,
     },
+    playMode: "spectate",
+    playerCharacterId: null,
   };
 }

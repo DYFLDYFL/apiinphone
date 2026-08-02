@@ -2,6 +2,10 @@ import type { ChatMessage } from "../../types";
 
 export type GameAgentKind = "world" | "character" | "referee";
 
+export type GamePlayMode = "spectate" | "play";
+
+export type GameEventAudience = "public" | "private";
+
 export interface GameSheet {
   id: string;
   name: string;
@@ -34,6 +38,10 @@ export interface GameEvent {
   summary: string;
   detail?: string;
   sheetDiffs?: Array<{ sheetId: string; patch: Record<string, unknown> }>;
+  /** public = 全员可见；private = 仅 visibleTo 内 agent。缺省按 public。 */
+  audience?: GameEventAudience;
+  /** agent id 列表；audience=private 时生效。 */
+  visibleTo?: string[];
 }
 
 export interface InteractionIntent {
@@ -52,6 +60,12 @@ export interface InteractionResponse {
 
 export type JudgeVerdict = "accept" | "reject" | "revise";
 
+export interface JudgeNotify {
+  /** 角色中文名、世界、或 agent id。 */
+  toId: string;
+  message: string;
+}
+
 export interface JudgeResult {
   verdict: JudgeVerdict;
   reason: string;
@@ -67,6 +81,13 @@ export interface JudgeResult {
   }>;
   periodComplete: boolean;
   publicSummary: string;
+  /**
+   * true = 本轮作废并重做（不改面板）。
+   * reject 时若未显式 false，也视为需要重做。
+   */
+  redo?: boolean;
+  /** 突发事件私讯，写入 private 事件。 */
+  notify?: JudgeNotify[];
 }
 
 export interface TickBuffer {
@@ -101,6 +122,10 @@ export interface GameState {
   events: GameEvent[];
   tickBuffer: TickBuffer | null;
   settings: GameSettings;
+  /** 旁观斗蛐蛐 / 扮演角色。 */
+  playMode: GamePlayMode;
+  /** play 时扮演的角色 agent id。 */
+  playerCharacterId: string | null;
 }
 
 export interface GameIndexMeta {

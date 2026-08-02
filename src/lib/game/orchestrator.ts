@@ -7,9 +7,11 @@ import {
   agentDirectory,
   agentDisplayName,
   applySheetPatches,
+  notifySummary,
   plainTextFromModel,
   pushEvent,
   recentEventsText,
+  recentEventsTextFor,
   sheetPublicView,
 } from "./mutations";
 import type {
@@ -17,6 +19,7 @@ import type {
   GameState,
   InteractionIntent,
   InteractionResponse,
+  JudgeNotify,
   JudgeResult,
 } from "./types";
 
@@ -24,6 +27,21 @@ export type TickProgress = {
   phase: string;
   interactionRound: number;
   maxRounds: number;
+};
+
+export type PlayerIntentRequest = {
+  characterId: string;
+  characterName: string;
+  round: number;
+  maxRounds: number;
+  sceneSummary: string;
+  redoHint?: string;
+};
+
+export type PlayerIntentDraft = {
+  toId: string;
+  action: string;
+  rationale?: string;
 };
 
 function characters(game: GameState): GameAgent[] {
@@ -99,6 +117,20 @@ function verdictZh(v: string): string {
   return "驳回";
 }
 
+function parseNotify(raw: unknown): JudgeNotify[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const list: JudgeNotify[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object") continue;
+    const row = item as Record<string, unknown>;
+    const toId = String(row.toId ?? "").trim();
+    const message = String(row.message ?? "").trim();
+    if (!toId || !message) continue;
+    list.push({ toId, message });
+  }
+  return list.length ? list : undefined;
+}
+
 function parseJudge(json: Record<string, unknown> | null, text: string): JudgeResult {
   if (!json) {
     return {
@@ -106,6 +138,7 @@ function parseJudge(json: Record<string, unknown> | null, text: string): JudgeRe
       reason: "裁判未返回 JSON",
       periodComplete: false,
       publicSummary: plainTextFromModel(null, text).slice(0, 120) || "裁定失败",
+      redo: true,
     };
   }
   const verdictRaw = String(json.verdict ?? "reject");
@@ -113,6 +146,9 @@ function parseJudge(json: Record<string, unknown> | null, text: string): JudgeRe
     verdictRaw === "accept" || verdictRaw === "revise" || verdictRaw === "reject"
       ? verdictRaw
       : "reject";
+  let redo: boolean | undefined;
+  if (json.redo === true) redo = true;
+  else if (json.redo === false) redo = false;
   return {
     verdict,
     reason: String(json.reason ?? ""),
@@ -123,7 +159,16 @@ function parseJudge(json: Record<string, unknown> | null, text: string): JudgeRe
       : [],
     periodComplete: Boolean(json.periodComplete),
     publicSummary: String(json.publicSummary ?? json.reason ?? "裁定"),
+    redo,
+    notify: parseNotify(json.notify),
   };
+}
+
+/** reject 默认重做；显式 redo=true 也重做。 */
+function shouldRedoRound(judge: JudgeResult): boolean {
+  if (judge.redo === true) return true;
+  if (judge.verdict === "reject" && judge.redo !== false) return true;
+  return false;
 }
 
 async function persist(
@@ -132,6 +177,26 @@ async function persist(
 ): Promise<void> {
   await saveGame(game);
   await onPersist?.(game);
+}
+
+function pushProposeEvent(
+  game: GameState,
+  ch: GameAgent,
+  intent: InteractionIntent,
+  round: number,
+): void {
+  const targetName = agentDisplayName(game, intent.toId);
+  pushEvent(game, {
+    tick: game.worldClock.tick,
+    interactionRound: round,
+    kind: "propose",
+    actorId: ch.id,
+    actorName: ch.name,
+    summary: `对「${targetName}」：${intent.action}`,
+    detail: intent.rationale,
+    audience: "private",
+    visibleTo: [ch.id, intent.toId],
+  });
 }
 
 /**
@@ -147,6 +212,10 @@ export async function advanceGameTick(
     inject?: string;
     /** Called after each persist (event written). */
     onPersist?: (g: GameState) => void | Promise<void>;
+    /** 扮演模式下轮到玩家角色提案时等待 UI。返回 null 表示中断。 */
+    awaitPlayerIntent?: (
+      req: PlayerIntentRequest,
+    ) => Promise<PlayerIntentDraft | null>;
   },
 ): Promise<GameState> {
   const control = options?.control;
@@ -177,7 +246,7 @@ export async function advanceGameTick(
     `当前时刻：${game.worldClock.label}`,
     `上一场景：${game.worldClock.sceneSummary}`,
     `世界观：${game.worldview || world.persona}`,
-    `近期事件：\n${recentEventsText(game)}`,
+    `近期事件（你可见）：\n${recentEventsTextFor(game, world.id)}`,
     options?.inject ? `玩家神谕：${options.inject}` : "",
     "请输出开周期 JSON。",
   ]
@@ -207,12 +276,14 @@ export async function advanceGameTick(
     actorName: world.name,
     summary: publicEvent || String(open.json?.publicEvent ?? "世界开场"),
     detail: sceneSummary,
+    audience: "public",
   });
   game.tickBuffer.worldBrief = publicEvent;
   await persist(game, options?.onPersist);
 
   let periodComplete = false;
   let round = 0;
+  let redoHint = "";
 
   while (!periodComplete && round < maxRounds) {
     if (stopped()) {
@@ -231,33 +302,68 @@ export async function advanceGameTick(
     const allIntents: InteractionIntent[] = [];
     for (const ch of chars) {
       if (stopped()) break;
+
+      const isPlayer =
+        game.playMode === "play" &&
+        game.playerCharacterId === ch.id &&
+        Boolean(options?.awaitPlayerIntent);
+
+      if (isPlayer && options?.awaitPlayerIntent) {
+        options.onProgress?.({
+          phase: "等待玩家行动",
+          interactionRound: round,
+          maxRounds,
+        });
+        const draft = await options.awaitPlayerIntent({
+          characterId: ch.id,
+          characterName: ch.name,
+          round,
+          maxRounds,
+          sceneSummary: game.worldClock.sceneSummary,
+          redoHint: redoHint || undefined,
+        });
+        if (!draft || stopped()) {
+          game.tickBuffer.status = "interrupted";
+          await persist(game, options?.onPersist);
+          return game;
+        }
+        const action = draft.action.trim();
+        if (action) {
+          const intent: InteractionIntent = {
+            fromId: ch.id,
+            toId: resolveTargetId(game, draft.toId || "世界"),
+            action,
+            rationale: draft.rationale?.trim() || undefined,
+          };
+          allIntents.push(intent);
+          pushProposeEvent(game, ch, intent, round);
+        }
+        await persist(game, options?.onPersist);
+        continue;
+      }
+
       const sheet = sheetFor(game, ch);
       const prompt = [
         `时刻 ${game.worldClock.label} · 交互轮 ${round}/${maxRounds}`,
         `场景：${game.worldClock.sceneSummary}`,
         `本时段公开事件：${publicEvent}`,
+        redoHint ? `上轮裁判驳回，请调整：${redoHint}` : "",
         `你的面板：\n${sheet ? sheetPublicView(sheet) : "无"}`,
         `可互动对象：\n${agentDirectory(game)}`,
-        `近期事件：\n${recentEventsText(game, 8)}`,
+        `近期事件（仅你可见）：\n${recentEventsTextFor(game, ch.id, 8)}`,
         "提出 1～2 条意图 JSON。toId 填「世界」或角色中文名。",
-      ].join("\n\n");
+      ]
+        .filter(Boolean)
+        .join("\n\n");
       const res = await runGameAgent(settings, game, ch, prompt, control);
       const intents = parseIntents(game, ch, res.json, res.text);
       allIntents.push(...intents);
       for (const intent of intents) {
-        const targetName = agentDisplayName(game, intent.toId);
-        pushEvent(game, {
-          tick: game.worldClock.tick,
-          interactionRound: round,
-          kind: "propose",
-          actorId: ch.id,
-          actorName: ch.name,
-          summary: `对「${targetName}」：${intent.action}`,
-          detail: intent.rationale,
-        });
+        pushProposeEvent(game, ch, intent, round);
       }
       await persist(game, options?.onPersist);
     }
+    redoHint = "";
     game.tickBuffer.intents = allIntents;
 
     if (!allIntents.length) {
@@ -269,6 +375,7 @@ export async function advanceGameTick(
         actorId: "system",
         actorName: "系统",
         summary: "无人提案，本周期结束。",
+        audience: "public",
       });
       await persist(game, options?.onPersist);
       break;
@@ -306,6 +413,7 @@ export async function advanceGameTick(
         target.kind === "character"
           ? `你的面板：\n${sheetFor(game, target) ? sheetPublicView(sheetFor(game, target)!) : ""}`
           : `当前场景：${game.worldClock.sceneSummary}`,
+        `近期事件（仅你可见）：\n${recentEventsTextFor(game, target.id, 6)}`,
         '请以 JSON {"content":"..."} 回应（世界可加 environmentChange）。',
       ]
         .filter(Boolean)
@@ -325,6 +433,8 @@ export async function advanceGameTick(
         actorName: target.name,
         summary: content.slice(0, 160),
         detail: content,
+        audience: "private",
+        visibleTo: [intent.fromId, target.id],
       });
       if (target.kind === "world" && res.json?.environmentChange) {
         game.worldClock.sceneSummary = String(res.json.environmentChange);
@@ -348,7 +458,7 @@ export async function advanceGameTick(
     const forceComplete = round >= maxRounds;
     const judgePrompt = [
       `时刻 ${game.worldClock.label} · 交互轮 ${round}/${maxRounds}`,
-      forceComplete ? "已达交互上限，请尽量 periodComplete=true 收束。" : "",
+      forceComplete ? "已达交互上限，请尽量 periodComplete=true 收束；仍可 reject，但本轮后不再重做。" : "",
       `场景：${game.worldClock.sceneSummary}`,
       `角色面板：\n${game.sheets.map(sheetPublicView).join("\n---\n")}`,
       `本轮意图：\n${allIntents
@@ -364,7 +474,7 @@ export async function advanceGameTick(
         )
         .join("\n")}`,
       `近期事件：\n${recentEventsText(game, 10)}`,
-      "请输出裁定 JSON。publicSummary 用中文。",
+      "请输出裁定 JSON。publicSummary 用中文。不合理须 reject+redo；突发私讯用 notify。",
     ]
       .filter(Boolean)
       .join("\n\n");
@@ -377,26 +487,60 @@ export async function advanceGameTick(
       control,
     );
     const judge = parseJudge(judgeRes.json, judgeRes.text);
+    const redo = shouldRedoRound(judge) && !forceComplete;
     if (forceComplete) judge.periodComplete = true;
+    if (redo) judge.periodComplete = false;
     game.tickBuffer.lastJudge = judge;
 
     let diffs: ReturnType<typeof applySheetPatches> = [];
-    if (judge.verdict === "accept" || judge.verdict === "revise") {
-      if (judge.sheetPatches?.length) {
-        diffs = applySheetPatches(game, judge.sheetPatches);
-      }
+    if (
+      !redo &&
+      (judge.verdict === "accept" || judge.verdict === "revise") &&
+      judge.sheetPatches?.length
+    ) {
+      diffs = applySheetPatches(game, judge.sheetPatches);
     }
+
+    const tag = redo
+      ? `[${verdictZh(judge.verdict)}·重做]`
+      : `[${verdictZh(judge.verdict)}]`;
     pushEvent(game, {
       tick: game.worldClock.tick,
       interactionRound: round,
       kind: "judge",
       actorId: referee.id,
       actorName: referee.name,
-      summary: `[${verdictZh(judge.verdict)}] ${judge.publicSummary}`,
+      summary: `${tag} ${judge.publicSummary}`,
       detail: judge.reason,
       sheetDiffs: diffs.length ? diffs : undefined,
+      audience: "public",
     });
     await persist(game, options?.onPersist);
+
+    if (judge.notify?.length) {
+      for (const n of judge.notify) {
+        const toId = resolveTargetId(game, n.toId);
+        const toName = agentDisplayName(game, toId);
+        pushEvent(game, {
+          tick: game.worldClock.tick,
+          interactionRound: round,
+          kind: "system",
+          actorId: referee.id,
+          actorName: referee.name,
+          summary: notifySummary(toName, n.message),
+          detail: n.message,
+          audience: "private",
+          visibleTo: [toId],
+        });
+      }
+      await persist(game, options?.onPersist);
+    }
+
+    if (redo) {
+      redoHint = judge.reason || judge.publicSummary || "请调整行动后重试";
+      periodComplete = false;
+      continue;
+    }
 
     periodComplete = judge.periodComplete;
   }
@@ -424,6 +568,7 @@ export async function injectPlayerEvent(
     actorId: "player",
     actorName: "玩家",
     summary: msg,
+    audience: "public",
   });
   await saveGame(game);
   return game;
