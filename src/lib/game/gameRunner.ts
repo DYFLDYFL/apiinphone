@@ -115,6 +115,14 @@ export function stopGameAdvance(): void {
 /** 扮演模式：提交本轮意图。 */
 export function submitPlayerIntent(draft: PlayerIntentDraft): boolean {
   if (!resolvePlayerIntent || !pendingPlayerIntent) return false;
+  if (draft.delegateToAi) {
+    clearPendingPlayerIntent({
+      toId: "世界",
+      action: "",
+      delegateToAi: true,
+    });
+    return true;
+  }
   const action = draft.action.trim();
   if (!action) return false;
   clearPendingPlayerIntent({
@@ -123,6 +131,11 @@ export function submitPlayerIntent(draft: PlayerIntentDraft): boolean {
     rationale: draft.rationale?.trim() || undefined,
   });
   return true;
+}
+
+/** 本轮提案交给 AI（仅一次）。 */
+export function delegatePlayerIntentToAi(): boolean {
+  return submitPlayerIntent({ toId: "世界", action: "", delegateToAi: true });
 }
 
 export async function startGameAdvance(

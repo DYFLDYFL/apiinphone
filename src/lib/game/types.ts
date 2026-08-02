@@ -126,6 +126,17 @@ export interface GameState {
   playMode: GamePlayMode;
   /** play 时扮演的角色 agent id。 */
   playerCharacterId: string | null;
+  /** 上帝视角剧情正文（累积）。 */
+  godStory: string;
+  /** 玩家视角剧情/个人经历（累积）。 */
+  playerStory: string;
+  /** 已写入剧情的时刻（避免重复追加）。 */
+  storyTick: number;
+  /**
+   * 是否已解锁时间线/上帝剧情。
+   * 旁观创建即为 true；扮演默认 false，解锁一次后不可再锁。
+   */
+  godViewUnlocked: boolean;
 }
 
 export interface GameIndexMeta {

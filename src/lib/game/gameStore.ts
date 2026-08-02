@@ -100,6 +100,18 @@ function normalizeGame(game: GameState): GameState {
     game.playerCharacterId = first?.id ?? null;
     if (!game.playerCharacterId) game.playMode = "spectate";
   }
+  if (typeof game.godStory !== "string") game.godStory = "";
+  if (typeof game.playerStory !== "string") game.playerStory = "";
+  {
+    const n = Number(game.storyTick);
+    game.storyTick = Number.isNaN(n) || n < 0 ? 0 : Math.round(n);
+  }
+  if (typeof game.godViewUnlocked !== "boolean") {
+    game.godViewUnlocked = game.playMode !== "play";
+  }
+  if (game.playMode === "spectate") {
+    game.godViewUnlocked = true;
+  }
   for (const e of game.events) {
     if (e.audience !== "private") e.audience = "public";
     if (!Array.isArray(e.visibleTo)) e.visibleTo = [];

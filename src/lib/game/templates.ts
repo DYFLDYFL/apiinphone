@@ -144,6 +144,9 @@ export type GameTemplateDraft = {
   title: string;
   worldview: string;
   characters: CharTemplateDraft[];
+  playMode?: import("./types").GamePlayMode;
+  /** 扮演时选中的角色在 characters 数组中的下标。 */
+  playerCharacterIndex?: number;
 };
 
 export function defaultTemplateDraft(characterCount = 3): GameTemplateDraft {
@@ -155,6 +158,8 @@ export function defaultTemplateDraft(characterCount = 3): GameTemplateDraft {
       ...c,
       attrs: { ...c.attrs },
     })),
+    playMode: "spectate",
+    playerCharacterIndex: 0,
   };
 }
 
@@ -216,7 +221,7 @@ export function createTemplateGame(
     history: [],
   };
 
-  return {
+  const result: GameState = {
     id: id("game"),
     title: tpl.title.trim() || "新游戏",
     createdAt: now,
@@ -248,7 +253,22 @@ export function createTemplateGame(
       maxInteractionRounds: 6,
       characterCount: characters.length,
     },
-    playMode: "spectate",
+    playMode: tpl.playMode === "play" ? "play" : "spectate",
     playerCharacterId: null,
+    godStory: "",
+    playerStory: "",
+    storyTick: 0,
+    godViewUnlocked: tpl.playMode !== "play",
   };
+
+  if (result.playMode === "play" && characters.length) {
+    const idx = Math.min(
+      characters.length - 1,
+      Math.max(0, Math.round(tpl.playerCharacterIndex ?? 0)),
+    );
+    result.playerCharacterId = characters[idx].id;
+    result.godViewUnlocked = false;
+  }
+
+  return result;
 }

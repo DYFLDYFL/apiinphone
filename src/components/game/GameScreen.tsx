@@ -9,6 +9,7 @@ import {
 } from "../../lib/game/gameStore";
 import {
   bindGameRunnerGame,
+  delegatePlayerIntentToAi,
   getGameRunnerSnapshot,
   isGameRunning,
   startGameAdvance,
@@ -32,7 +33,7 @@ import {
   formatAttrLines,
   formatEventSummary,
 } from "../../lib/game/mutations";
-import type { GameAgent, GamePlayMode, GameState } from "../../lib/game/types";
+import type { GameAgent, GameEvent, GameState } from "../../lib/game/types";
 import {
   isWebTransport,
   rememberGameModel,
@@ -48,6 +49,8 @@ interface GameScreenProps {
   onOpenInfo: () => void;
 }
 
+type LogTab = "timeline" | "story" | "playerStory";
+
 const EDIT_ATTR_KEYS = [
   "hp",
   "stamina",
@@ -60,6 +63,25 @@ const EDIT_ATTR_KEYS = [
   "mood",
   "reputation",
 ] as const;
+
+function sanitizeTimelineEvents(
+  events: GameEvent[],
+  playMode: "spectate" | "play",
+  unlocked: boolean,
+): GameEvent[] {
+  if (playMode !== "play" || unlocked) return events;
+  return events.map((e) => {
+    if (e.kind !== "judge" || e.audience === "private") return e;
+    return {
+      ...e,
+      summary: e.summary.startsWith("本轮交互已裁定")
+        ? e.summary
+        : "本轮交互已裁定",
+      detail: undefined,
+      sheetDiffs: undefined,
+    };
+  });
+}
 
 export function GameScreen({
   settings,
@@ -80,7 +102,7 @@ export function GameScreen({
   const [draft, setDraft] = useState<GameTemplateDraft>(() =>
     defaultTemplateDraft(3),
   );
-  const [showGodTimeline, setShowGodTimeline] = useState(false);
+  const [logTab, setLogTab] = useState<LogTab>("timeline");
   const [pendingIntent, setPendingIntent] =
     useState<PlayerIntentRequest | null>(null);
   const [intentTo, setIntentTo] = useState("世界");
@@ -112,6 +134,15 @@ export function GameScreen({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refreshList]);
 
+  useEffect(() => {
+    if (!game) return;
+    const play = game.playMode === "play";
+    const unlocked = Boolean(game.godViewUnlocked) || !play;
+    if (play && !unlocked && logTab !== "playerStory") {
+      setLogTab("playerStory");
+    }
+  }, [game, logTab]);
+
   const openGame = async (id: string) => {
     const snap = getGameRunnerSnapshot();
     if (snap.game && snap.gameId === id) {
@@ -123,6 +154,11 @@ export function GameScreen({
     setGame(g);
     bindGameRunnerGame(g);
     setView("play");
+    if (g?.playMode === "play" && !g.godViewUnlocked) {
+      setLogTab("playerStory");
+    } else {
+      setLogTab("timeline");
+    }
   };
 
   const handleCreate = async () => {
@@ -135,14 +171,18 @@ export function GameScreen({
       alert("请先在设置中填写 API Key");
       return;
     }
+    const playMode = draft.playMode === "play" ? "play" : "spectate";
     const g = await createGame({
       ...draft,
       title: draft.title.trim() || "新游戏",
       characters: draft.characters.slice(0, 6),
+      playMode,
+      playerCharacterIndex: draft.playerCharacterIndex ?? 0,
     });
     setGame(g);
     bindGameRunnerGame(g);
     setView("play");
+    setLogTab(playMode === "play" ? "playerStory" : "timeline");
     await refreshList();
   };
 
@@ -238,33 +278,16 @@ export function GameScreen({
     bindGameRunnerGame(next);
   };
 
-  const savePlayMode = async (
-    playMode: GamePlayMode,
-    playerCharacterId: string | null,
-  ) => {
-    if (!game || busy) return;
-    let nextId = playerCharacterId;
-    if (playMode === "play") {
-      const chars = game.agents.filter((a) => a.kind === "character");
-      if (!nextId || !chars.some((c) => c.id === nextId)) {
-        nextId = chars[0]?.id ?? null;
-      }
-      if (!nextId) {
-        alert("没有可扮演的角色");
-        return;
-      }
-    } else {
-      nextId = null;
-    }
-    const next = {
-      ...game,
-      playMode,
-      playerCharacterId: nextId,
-    };
+  const unlockGodView = async () => {
+    if (!game || game.godViewUnlocked) return;
+    const ok = window.confirm(
+      "解锁时间线与上帝剧情视为作弊，且不可再上锁。确定？",
+    );
+    if (!ok) return;
+    const next = { ...game, godViewUnlocked: true };
     await saveGame(next);
     setGame(next);
     bindGameRunnerGame(next);
-    if (playMode === "spectate") setShowGodTimeline(false);
   };
 
   const handleSubmitIntent = () => {
@@ -307,6 +330,7 @@ export function GameScreen({
   );
 
   if (view === "lobby" || !game) {
+    const draftPlay = draft.playMode === "play" ? "play" : "spectate";
     return (
       <div className="game-screen">
         <header className="game-topbar">
@@ -331,6 +355,58 @@ export function GameScreen({
                 }
               />
             </label>
+            <fieldset className="settings-fieldset">
+              <legend>开局视角（创建后不可改）</legend>
+              <label className="radio-row">
+                <input
+                  type="radio"
+                  name="draftPlayMode"
+                  checked={draftPlay === "spectate"}
+                  onChange={() =>
+                    setDraft({ ...draft, playMode: "spectate" })
+                  }
+                />
+                旁观（斗蛐蛐）
+              </label>
+              <label className="radio-row">
+                <input
+                  type="radio"
+                  name="draftPlayMode"
+                  checked={draftPlay === "play"}
+                  onChange={() =>
+                    setDraft({
+                      ...draft,
+                      playMode: "play",
+                      playerCharacterIndex: draft.playerCharacterIndex ?? 0,
+                    })
+                  }
+                />
+                扮演角色
+              </label>
+              {draftPlay === "play" ? (
+                <label>
+                  扮演谁
+                  <select
+                    value={String(draft.playerCharacterIndex ?? 0)}
+                    onChange={(e) =>
+                      setDraft({
+                        ...draft,
+                        playerCharacterIndex: Number(e.target.value) || 0,
+                      })
+                    }
+                  >
+                    {draft.characters.map((c, i) => (
+                      <option key={i} value={i}>
+                        {c.name || `角色 ${i + 1}`}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ) : null}
+              <p className="settings-hint">
+                扮演开局默认只看「玩家剧情」；解锁时间线/上帝剧情视为作弊。
+              </p>
+            </fieldset>
             <label>
               角色数（2–6）
               <input
@@ -348,8 +424,15 @@ export function GameScreen({
                     ...draft,
                     characters: base.characters.map((c, i) =>
                       draft.characters[i]
-                        ? { ...draft.characters[i], attrs: { ...draft.characters[i].attrs } }
+                        ? {
+                            ...draft.characters[i],
+                            attrs: { ...draft.characters[i].attrs },
+                          }
                         : c,
+                    ),
+                    playerCharacterIndex: Math.min(
+                      n - 1,
+                      draft.playerCharacterIndex ?? 0,
                     ),
                   });
                 }}
@@ -390,7 +473,11 @@ export function GameScreen({
                   type="button"
                   className="link-btn"
                   onClick={() =>
-                    setDraft(defaultTemplateDraft(draft.characters.length))
+                    setDraft({
+                      ...defaultTemplateDraft(draft.characters.length),
+                      playMode: draft.playMode,
+                      playerCharacterIndex: draft.playerCharacterIndex,
+                    })
                   }
                 >
                   恢复默认
@@ -444,10 +531,20 @@ export function GameScreen({
   const chars = game.agents.filter((a) => a.kind === "character");
   const playMode = game.playMode === "play" ? "play" : "spectate";
   const playerId = game.playerCharacterId;
-  const filteredEvents =
-    playMode === "play" && playerId && !showGodTimeline
+  const unlocked = playMode !== "play" || Boolean(game.godViewUnlocked);
+  const playerName =
+    chars.find((c) => c.id === playerId)?.name ?? "角色";
+
+  const rawTimeline =
+    playMode === "play" && playerId && !unlocked
       ? eventsVisibleTo(game, playerId, 80)
       : game.events.slice(-80);
+  const filteredEvents = sanitizeTimelineEvents(
+    rawTimeline,
+    playMode,
+    unlocked,
+  );
+
   const intentTargets = [
     "世界",
     ...chars.filter((c) => c.id !== playerId).map((c) => c.name),
@@ -455,6 +552,12 @@ export function GameScreen({
   const maxR = isWebTransport(settings)
     ? Math.min(game.settings.maxInteractionRounds, 3)
     : game.settings.maxInteractionRounds;
+
+  const selectTab = (tab: LogTab) => {
+    if (!unlocked && (tab === "timeline" || tab === "story")) return;
+    if (playMode === "spectate" && tab === "playerStory") return;
+    setLogTab(tab);
+  };
 
   return (
     <div className="game-screen">
@@ -479,7 +582,8 @@ export function GameScreen({
             {" · "}
             {transportLabel}
             {" · "}
-            {playMode === "play" ? "扮演" : "旁观"}
+            {playMode === "play" ? `扮演·${playerName}` : "旁观"}
+            {playMode === "play" && unlocked ? " · 已解锁·作弊" : ""}
             {busy && status ? ` · ${status}` : ""}
           </div>
           <ModelSwitcher
@@ -503,78 +607,100 @@ export function GameScreen({
 
       <div className="game-body game-play">
         <section className="game-card">
-          <h3>视角</h3>
-          <div className="game-play-mode">
-            <label className="radio-row">
-              <input
-                type="radio"
-                name="playMode"
-                checked={playMode === "spectate"}
-                disabled={busy}
-                onChange={() => void savePlayMode("spectate", null)}
-              />
-              旁观（斗蛐蛐）
-            </label>
-            <label className="radio-row">
-              <input
-                type="radio"
-                name="playMode"
-                checked={playMode === "play"}
-                disabled={busy}
-                onChange={() =>
-                  void savePlayMode("play", playerId ?? chars[0]?.id ?? null)
-                }
-              />
-              扮演角色
-            </label>
-            {playMode === "play" ? (
-              <label>
-                扮演
-                <select
-                  disabled={busy}
-                  value={playerId ?? ""}
-                  onChange={(e) =>
-                    void savePlayMode("play", e.target.value || null)
-                  }
-                >
-                  {chars.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            ) : null}
-            {playMode === "play" ? (
-              <label className="checkbox">
-                <input
-                  type="checkbox"
-                  checked={showGodTimeline}
-                  onChange={(e) => setShowGodTimeline(e.target.checked)}
-                />
-                显示全部（上帝视角）
-              </label>
-            ) : null}
+          <div className="game-log-tabs">
+            <button
+              type="button"
+              className={
+                logTab === "timeline"
+                  ? "picker-option active"
+                  : "picker-option"
+              }
+              disabled={!unlocked}
+              onClick={() => selectTab("timeline")}
+            >
+              时间线
+            </button>
+            <button
+              type="button"
+              className={
+                logTab === "story" ? "picker-option active" : "picker-option"
+              }
+              disabled={!unlocked}
+              onClick={() => selectTab("story")}
+            >
+              剧情
+            </button>
+            <button
+              type="button"
+              className={
+                logTab === "playerStory"
+                  ? "picker-option active"
+                  : "picker-option"
+              }
+              disabled={playMode === "spectate"}
+              onClick={() => selectTab("playerStory")}
+            >
+              玩家剧情
+            </button>
           </div>
-          <p className="settings-hint">
-            扮演时只填意图；对白与后果仍由 AI + 裁判落地。推进中不可改视角。
-          </p>
-        </section>
+          {!unlocked ? (
+            <div className="game-unlock-row">
+              <p className="settings-hint">
+                扮演模式已锁定时间线与上帝剧情，仅可看玩家剧情。
+              </p>
+              <button
+                type="button"
+                className="secondary-btn"
+                disabled={busy}
+                onClick={() => void unlockGodView()}
+              >
+                解锁上帝视角（作弊）
+              </button>
+            </div>
+          ) : playMode === "play" ? (
+            <p className="settings-hint warn-hint">已解锁·作弊（不可再锁）</p>
+          ) : null}
 
-        <section className="game-card game-timeline">
-          <h3>时间线</h3>
-          <p className="settings-hint">{game.worldClock.sceneSummary}</p>
-          <ul className="game-events">
-            {filteredEvents.map((e) => (
-              <li key={e.id}>
-                <span className="game-evt-meta">
-                  第{e.tick}时 · 第{e.interactionRound}轮 · {e.actorName}
-                  {e.audience === "private" ? " · 私" : ""}
-                </span>
-                <div>{formatEventSummary(e.summary)}</div>
-              </li>
-            ))}
-          </ul>
+          {logTab === "timeline" ? (
+            <>
+              <p className="settings-hint">{game.worldClock.sceneSummary}</p>
+              <ul className="game-events">
+                {filteredEvents.map((e) => (
+                  <li key={e.id}>
+                    <span className="game-evt-meta">
+                      第{e.tick}时 · 第{e.interactionRound}轮 · {e.actorName}
+                      {e.audience === "private" ? " · 私" : ""}
+                    </span>
+                    <div>{formatEventSummary(e.summary)}</div>
+                  </li>
+                ))}
+              </ul>
+            </>
+          ) : null}
+
+          {logTab === "story" ? (
+            <div className="game-story-body">
+              {game.godStory.trim() ? (
+                <pre className="game-story-text">{game.godStory}</pre>
+              ) : (
+                <p className="settings-hint">尚无剧情，推进时间后自动生成。</p>
+              )}
+            </div>
+          ) : null}
+
+          {logTab === "playerStory" ? (
+            <div className="game-story-body">
+              {playMode === "spectate" ? (
+                <p className="settings-hint">旁观模式无玩家剧情。</p>
+              ) : game.playerStory.trim() ? (
+                <pre className="game-story-text">{game.playerStory}</pre>
+              ) : (
+                <p className="settings-hint">
+                  尚无个人经历，推进后按你的可见事件生成。
+                </p>
+              )}
+            </div>
+          ) : null}
         </section>
 
         <details className="game-card" open={false}>
@@ -594,14 +720,13 @@ export function GameScreen({
               const sheet = game.sheets.find((s) => s.id === ch.sheetId);
               if (!sheet) return null;
               const isSelf = playMode === "play" && ch.id === playerId;
-              const openSelf = isSelf;
               return (
                 <details
                   key={ch.id}
                   className={
                     isSelf ? "game-sheet game-sheet-self" : "game-sheet"
                   }
-                  open={openSelf || undefined}
+                  open={isSelf || undefined}
                 >
                   <summary>
                     <strong>
@@ -616,7 +741,7 @@ export function GameScreen({
                   </summary>
                   <div className="game-sheet-body">
                     <p className="settings-hint">{formatAttrLines(sheet)}</p>
-                    {isSelf || playMode === "spectate" ? (
+                    {isSelf || playMode === "spectate" || unlocked ? (
                       <>
                         {EDIT_ATTR_KEYS.map((key) => (
                           <label key={key} className="game-attr-row">
@@ -723,13 +848,22 @@ export function GameScreen({
                 onChange={(e) => setIntentWhy(e.target.value)}
               />
             </label>
-            <button
-              type="button"
-              className="primary-btn"
-              onClick={handleSubmitIntent}
-            >
-              提交意图
-            </button>
+            <div className="game-footer-actions">
+              <button
+                type="button"
+                className="primary-btn"
+                onClick={handleSubmitIntent}
+              >
+                提交意图
+              </button>
+              <button
+                type="button"
+                className="secondary-btn"
+                onClick={() => delegatePlayerIntentToAi()}
+              >
+                本次交给 AI
+              </button>
+            </div>
           </div>
         ) : (
           <label className="game-inject">
@@ -782,7 +916,9 @@ function CharDraftEditor({
 }) {
   return (
     <details className="game-char-draft" open={index < 3}>
-      <summary>角色 {index + 1}：{value.name || "未命名"}</summary>
+      <summary>
+        角色 {index + 1}：{value.name || "未命名"}
+      </summary>
       <label>
         姓名
         <input
