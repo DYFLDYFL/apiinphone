@@ -23,6 +23,8 @@ export interface AppSettings {
   gameWebChatMode: WebChatMode;
   /** 游戏网页联网搜索。 */
   gameWebSearchEnabled: boolean;
+  /** 扮演时默认本轮交给 AI，无需每次点按钮。 */
+  gameAutoDelegateAi: boolean;
   model: string;
   /** 游戏模式独立模型（与对话 model 分离）。 */
   gameModel: string;

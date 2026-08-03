@@ -20,6 +20,21 @@ export class DeepseekWebError extends Error {
   }
 }
 
+/** 网页通道软限流（HTTP 200 + SSE/正文提示），需当作 429 重试。 */
+export function isWebRateLimitText(text: string): boolean {
+  const t = text.trim();
+  if (!t) return false;
+  if (/消息发送过于频繁/.test(t)) return true;
+  if (/finish_reason["'\s:=]+["']?rate_lim/i.test(t)) return true;
+  if (
+    /rate[_ ]?lim(?:it)?/i.test(t) &&
+    /频繁|稍后重试|too\s*many|try\s*again/i.test(t)
+  ) {
+    return true;
+  }
+  return false;
+}
+
 function extractUserToken(raw: string): string {
   const trimmed = raw.trim();
   if (!trimmed) return "";
@@ -146,7 +161,7 @@ async function postJson(
   }
   if (status === 429) {
     throw new DeepseekWebError(
-      "网页通道限流，请加大请求间隔或稍后再试。",
+      "消息发送过于频繁，稍后自动重试…",
       status,
     );
   }
@@ -212,13 +227,25 @@ async function fetchPowChallenge(
   return challenge;
 }
 
+function isWebStatusToken(v: string): boolean {
+  const t = v.trim();
+  return (
+    t === "FINISHED" ||
+    t === "FINISHED_WITH_ERROR" ||
+    t === "[DONE]" ||
+    t === "DONE"
+  );
+}
+
 function parseSsePayload(text: string): WebCompletionResult {
   let content = "";
   let reasoning = "";
   let currentPath: "thinking" | "content" | "" = "";
+  /** SSE 当前 APPEND 目标路径（与官网流一致）。 */
+  let activeAppendPath = "";
 
   const append = (raw: string) => {
-    if (!raw) return;
+    if (!raw || isWebStatusToken(raw)) return;
     if (currentPath === "thinking") reasoning += raw;
     else content += raw;
   };
@@ -232,6 +259,9 @@ function parseSsePayload(text: string): WebCompletionResult {
     }
   };
 
+  const pathIsContent = (path: string) =>
+    path.endsWith("/content") || /fragments\/-?\d+\/content$/.test(path);
+
   for (const line of text.split("\n")) {
     const trimmed = line.trim();
     if (!trimmed.startsWith("data:")) continue;
@@ -243,7 +273,7 @@ function parseSsePayload(text: string): WebCompletionResult {
     } catch {
       continue;
     }
-    const p = data.p;
+    const p = typeof data.p === "string" ? data.p : "";
     const v = data.v;
 
     if (v && typeof v === "object" && !Array.isArray(v)) {
@@ -262,6 +292,7 @@ function parseSsePayload(text: string): WebCompletionResult {
           }
         }
       }
+      continue;
     }
 
     if (p === "response/fragments") {
@@ -274,20 +305,44 @@ function parseSsePayload(text: string): WebCompletionResult {
       } else if (v && typeof v === "object") {
         handleFragment(v as Record<string, unknown>);
       }
+      continue;
     }
+
+    if (p) {
+      activeAppendPath = p;
+      if (p.includes("thinking") || p.endsWith("/thinking_content")) {
+        currentPath = "thinking";
+      } else if (pathIsContent(p)) {
+        currentPath = "content";
+      }
+    }
+
+    // status / 其它元数据绝不能进正文
+    if (p === "response/status" || p.endsWith("/status")) continue;
+    if (typeof v === "string" && isWebStatusToken(v)) continue;
 
     if (typeof v === "string") {
-      if (String(p ?? "").endsWith("/content") || !p) append(v);
-      else if (String(p).includes("fragments")) append(v);
-      else append(v);
-    }
-
-    if (p === "response/status" && v === "FINISHED") {
-      /* end marker */
+      if (p && pathIsContent(p)) {
+        append(v);
+      } else if (!p && activeAppendPath && pathIsContent(activeAppendPath)) {
+        // 路径已在上一帧设定，本帧仅 APPEND 字符串
+        append(v);
+      }
     }
   }
 
-  return { content, reasoning };
+  return {
+    content: stripWebTailNoise(content),
+    reasoning: stripWebTailNoise(reasoning),
+  };
+}
+
+/** 去掉误拼进正文的流结束标记。 */
+export function stripWebTailNoise(text: string): string {
+  return text
+    .replace(/(?:\r?\n)?\s*FINISHED(?:_WITH_ERROR)?\s*$/gi, "")
+    .replace(/(?:\r?\n)?\s*\[DONE\]\s*$/g, "")
+    .trimEnd();
 }
 
 async function pumpText(
@@ -388,13 +443,20 @@ export async function completeViaDeepseekWeb(
     );
   }
   if (status === 429) {
-    throw new DeepseekWebError("网页通道限流，请加大请求间隔后重试。", status);
+    throw new DeepseekWebError(
+      "消息发送过于频繁，稍后自动重试…",
+      status,
+    );
   }
   if (status < 200 || status >= 300) {
     throw new DeepseekWebError(
       `网页补全失败 (${status})：${text.slice(0, 200)}`,
       status,
     );
+  }
+
+  if (isWebRateLimitText(text)) {
+    throw new DeepseekWebError("消息发送过于频繁，稍后自动重试…", 429);
   }
 
   // Prefer SSE parse; fall back to JSON content fields.
@@ -405,12 +467,30 @@ export async function completeViaDeepseekWeb(
       assertBizOk(json, "补全");
       const biz = bizData(json);
       result = {
-        content: String(biz?.content ?? biz?.response ?? text),
+        content: String(biz?.content ?? biz?.response ?? ""),
         reasoning: String(biz?.reasoning ?? ""),
       };
     } catch {
+      // 勿把整段 SSE（event:/data:）当正文，否则会污染时间线
+      if (/^\s*event\s*:/m.test(text) || /(^|\n)data\s*:/.test(text)) {
+        throw new DeepseekWebError(
+          "网页通道返回无法解析的流式响应，请稍后重试。",
+          502,
+        );
+      }
       if (text.trim()) result = { content: text.trim(), reasoning: "" };
     }
+  }
+
+  if (
+    isWebRateLimitText(result.content) ||
+    isWebRateLimitText(result.reasoning)
+  ) {
+    throw new DeepseekWebError("消息发送过于频繁，稍后自动重试…", 429);
+  }
+
+  if (!result.content.trim() && !result.reasoning.trim()) {
+    throw new DeepseekWebError("网页通道返回空内容，请稍后重试。", 502);
   }
 
   await pumpText(result.reasoning, options?.onReasoningDelta, signal);

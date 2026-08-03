@@ -12,8 +12,14 @@ import {
   recentEventsText,
   recentEventsTextFor,
   sheetPublicView,
+  syncContextFiles,
 } from "./mutations";
 import { chroniclerSystemPrompt, pickPromptOverride } from "./prompts";
+import {
+  formatGameDateTime,
+  isValidGameDateTime,
+  normalizeGameDateTime,
+} from "./templates";
 import {
   defaultPipeline,
   MAX_PIPELINE_STEPS,
@@ -29,6 +35,9 @@ import type {
   InteractionResponse,
   JudgeNotify,
   JudgeResult,
+  GameDateTime,
+  AgentFeatureKey,
+  PipelineNode,
 } from "./types";
 
 function cleanStoryBody(text: string): string {
@@ -61,6 +70,13 @@ export type PlayerIntentDraft = {
   delegateToAi?: boolean;
 };
 
+function agentFeatureEnabled(
+  agent: GameAgent | undefined,
+  feature: AgentFeatureKey,
+): boolean {
+  return !agent?.disabledFeatures?.includes(feature);
+}
+
 function clockText(game: GameState): string {
   return (
     game.worldClock.timeText?.trim() ||
@@ -74,8 +90,11 @@ function rememberClock(game: GameState): void {
   game.worldClock.history[String(game.worldClock.tick)] = clockText(game);
 }
 
-function setClockText(game: GameState, timeText: string): void {
-  const t = timeText.trim() || clockText(game);
+function setClockText(game: GameState, value: GameDateTime): void {
+  const dateTime = normalizeGameDateTime(value);
+  const t = formatGameDateTime(dateTime);
+  game.worldClock.dateTime = dateTime;
+  game.worldClock.description = dateTime.description;
   game.worldClock.timeText = t;
   game.worldClock.label = t;
   rememberClock(game);
@@ -90,39 +109,8 @@ function characters(game: GameState): GameAgent[] {
   return game.agents.filter((a) => a.kind === "character");
 }
 
-function shuffleInPlace<T>(arr: T[]): T[] {
-  for (let i = arr.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [arr[i], arr[j]] = [arr[j], arr[i]];
-  }
-  return arr;
-}
-
-/** 按局设置决定本轮角色提案顺序。 */
 function orderedCharacters(game: GameState): GameAgent[] {
-  const chars = characters(game);
-  const mode = game.settings?.proposeOrder ?? "template";
-  if (mode === "random") {
-    return shuffleInPlace([...chars]);
-  }
-  if (mode === "custom") {
-    const order = game.settings.customProposeOrder ?? [];
-    const byId = new Map(chars.map((c) => [c.id, c]));
-    const out: GameAgent[] = [];
-    const seen = new Set<string>();
-    for (const id of order) {
-      const ch = byId.get(id);
-      if (ch && !seen.has(ch.id)) {
-        out.push(ch);
-        seen.add(ch.id);
-      }
-    }
-    for (const ch of chars) {
-      if (!seen.has(ch.id)) out.push(ch);
-    }
-    return out;
-  }
-  return chars;
+  return characters(game);
 }
 
 function makeChroniclerAgent(
@@ -144,6 +132,9 @@ function makeChroniclerAgent(
       chroniclerSystemPrompt(mode),
     ),
     modelOverride: game.settings.chroniclerModel,
+    readableFileIds: game.settings.chroniclerReadableFileIds,
+    editableFileIds: game.settings.chroniclerEditableFileIds,
+    disabledFeatures: game.settings.chroniclerDisabledFeatures,
     history: [],
   };
 }
@@ -557,7 +548,7 @@ function rosterBrief(game: GameState): string {
 }
 
 /**
- * 开局生成初始剧情（开场种子），便于扮演/旁观立刻有可读正文。
+ * 开局生成初始剧情（开场种子），便于扮演/上帝视角立刻有可读正文。
  * 若已有剧情则跳过。
  */
 export async function seedInitialChronicles(
@@ -731,6 +722,7 @@ export async function advanceOneRound(
   };
 
   const runWorldOpen = async (): Promise<StageResult> => {
+    if (!agentFeatureEnabled(world, "propose")) return { flags: {} };
     if (!periodNeedsOpen(game)) {
       return { flags: {} };
     }
@@ -801,8 +793,9 @@ export async function advanceOneRound(
     });
 
     allIntents = [];
-    const ordered = orderedCharacters(game);
-    const parallel = game.settings?.proposeMode === "parallel";
+    const ordered = orderedCharacters(game).filter((agent) =>
+      agentFeatureEnabled(agent, "propose"),
+    );
     publicEvent =
       game.tickBuffer!.worldBrief ||
       game.events
@@ -872,70 +865,28 @@ export async function advanceOneRound(
       game.playerCharacterId === ch.id &&
       Boolean(options?.awaitPlayerIntent);
 
-    if (parallel) {
-      for (const ch of ordered) {
-        if (!isAwaitingPlayer(ch)) continue;
-        if (stopped()) break;
+    for (const ch of ordered) {
+      if (stopped()) break;
+      if (isAwaitingPlayer(ch)) {
         const ok = await runPlayerPropose(ch);
         if (!ok) return { halt: true, flags: { hasIntents: false } };
+        continue;
       }
-      const aiChars = ordered.filter((ch) => !isAwaitingPlayer(ch));
-      if (aiChars.length && !stopped()) {
-        options?.onProgress?.({
-          phase: "角色并行提案",
-          interactionRound: round,
-          maxRounds: 0,
-        });
-        const batches = await Promise.all(
-          aiChars.map(async (ch) => {
-            if (stopped()) {
-              return [] as Array<{ ch: GameAgent; intent: InteractionIntent }>;
-            }
-            const intents = await proposeWithAi(
-              settings,
-              game,
-              ch,
-              round,
-              publicEvent,
-              redoHint,
-              control,
-              onAgentStatus,
-            );
-            return intents.map((intent) => ({ ch, intent }));
-          }),
-        );
-        for (const batch of batches) {
-          for (const { ch, intent } of batch) {
-            allIntents.push(intent);
-            pushProposeEvent(game, ch, intent, round);
-          }
-        }
-        await persist(game, options?.onPersist);
+      const intents = await proposeWithAi(
+        settings,
+        game,
+        ch,
+        round,
+        publicEvent,
+        redoHint,
+        control,
+        onAgentStatus,
+      );
+      allIntents.push(...intents);
+      for (const intent of intents) {
+        pushProposeEvent(game, ch, intent, round);
       }
-    } else {
-      for (const ch of ordered) {
-        if (stopped()) break;
-        if (isAwaitingPlayer(ch)) {
-          const ok = await runPlayerPropose(ch);
-          if (!ok) return { halt: true, flags: { hasIntents: false } };
-          continue;
-        }
-        const intents = await proposeWithAi(
-          settings,
-          game,
-          ch,
-          round,
-          publicEvent,
-          redoHint,
-          control,
-          onAgentStatus,
-        );
-        allIntents.push(...intents);
-        for (const intent of intents) {
-          pushProposeEvent(game, ch, intent, round);
-        }
-        await persist(game, options?.onPersist);
-      }
+      await persist(game, options?.onPersist);
     }
 
     redoHint = "";
@@ -981,6 +932,7 @@ export async function advanceOneRound(
         });
         continue;
       }
+      if (!agentFeatureEnabled(target, "respond")) continue;
       const prompt = [
         `当前时刻 ${clockText(game)} · 本轮交互`,
         `${from.name} 对你发起：${intent.action}`,
@@ -1034,6 +986,18 @@ export async function advanceOneRound(
   };
 
   const runJudge = async (): Promise<StageResult> => {
+    if (!agentFeatureEnabled(referee, "judge")) {
+      pushEvent(game, {
+        tick: game.worldClock.tick,
+        interactionRound: round,
+        kind: "system",
+        actorId: referee.id,
+        actorName: referee.name,
+        summary: "裁判 AI 已关闭，本轮跳过裁定。",
+        audience: "public",
+      });
+      return { flags: { judgeOutcome: "accept", hasIntents: true } };
+    }
     options?.onProgress?.({
       phase: "裁判裁定",
       interactionRound: round,
@@ -1147,6 +1111,9 @@ export async function advanceOneRound(
   };
 
   const runChronicle = async (): Promise<StageResult> => {
+    if (game.settings.chroniclerDisabledFeatures?.includes("chronicle")) {
+      return { flags: {} };
+    }
     options?.onProgress?.({
       phase: "整理剧情",
       interactionRound: round,
@@ -1167,7 +1134,75 @@ export async function advanceOneRound(
     return { flags: {} };
   };
 
+  const runFreeAgentNode = async (node: PipelineNode): Promise<StageResult> => {
+    const resolveAgent = (value: string) =>
+      game.agents.find(
+        (agent) =>
+          agent.id === value ||
+          agent.name === value ||
+          (value === "world" && agent.kind === "world") ||
+          (value === "referee" && agent.kind === "referee"),
+      );
+    const selected = (node.agentIds ?? [])
+      .map(resolveAgent)
+      .filter((agent): agent is GameAgent => Boolean(agent));
+    if (!selected.length) {
+      pushEvent(game, {
+        tick: game.worldClock.tick,
+        interactionRound: round,
+        kind: "system",
+        actorId: "system",
+        actorName: "系统",
+        summary: `自由 AI 节点「${node.label || node.id}」没有配置执行 AI，已跳过。`,
+        audience: "public",
+      });
+      return { flags: {} };
+    }
+    const targets = (node.targetIds ?? [])
+      .map(resolveAgent)
+      .filter((agent): agent is GameAgent => Boolean(agent))
+      .map((agent) => agent.name)
+      .join("、") || "当前场景";
+    const prompt = [
+      `你正在执行自由流水线节点「${node.label || node.id}」。`,
+      `目标：${targets}。`,
+      "请依据可见游戏文档和上下文完成该节点职责；输出单个 JSON，可在权限范围内使用 fileEdits 修改文档。",
+    ].join("\n");
+    const runOne = async (agent: GameAgent) => {
+      const output = await runGameAgent(
+        settings,
+        game,
+        agent,
+        prompt,
+        control,
+        onAgentStatus,
+      );
+      pushEvent(game, {
+        tick: game.worldClock.tick,
+        interactionRound: round,
+        kind: "system",
+        actorId: agent.id,
+        actorName: agent.name,
+        summary: `自由节点「${node.label || node.id}」已由 ${agent.name} 处理。`,
+        detail: plainTextFromModel(output.json, output.text).slice(0, 600),
+        audience: "public",
+      });
+    };
+    if (node.dispatchMode === "parallel") await Promise.all(selected.map(runOne));
+    else for (const agent of selected) await runOne(agent);
+    return { flags: {} };
+  };
+
   const runAdvanceClock = async (): Promise<StageResult> => {
+    if (!agentFeatureEnabled(world, "advance_clock")) {
+      game.worldClock.tick += 1;
+      game.tickBuffer = {
+        tick: game.worldClock.tick,
+        interactionRound: 0,
+        status: "need_open",
+      };
+      return { done: true, flags: {} };
+    }
     options?.onProgress?.({
       phase: "推进时刻…",
       interactionRound: round,
@@ -1183,8 +1218,8 @@ export async function advanceOneRound(
       `本轮事件：\n${eventsTextForTick(game, closedTick)}`,
       `世界观：${game.worldview || world.persona}`,
       "请根据本轮事件疏密给出下一精确时刻：事件紧凑则只推进数十分钟～一两小时；平静则可推到半天、入夜或次日。",
-      'nextTime 必须写成「日期 + 时:分」（例：三月初二 14:20），禁止地支时辰与「第 N 时」。',
-      '输出 JSON：{"nextTime":"...","sceneSummary":"...","publicEvent":"..."}。',
+      "nextTime 必须是结构化对象，包含 description、year、month、day、hour、minute；禁止自由描述时间。",
+      '输出 JSON：{"nextTime":{"description":"午后","year":1,"month":3,"day":2,"hour":14,"minute":20},"sceneSummary":"...","publicEvent":"..."}。',
     ].join("\n\n");
 
     try {
@@ -1196,16 +1231,20 @@ export async function advanceOneRound(
         control,
         onAgentStatus,
       );
-      const nextTime = String(
-        adv.json?.nextTime ?? adv.json?.timeText ?? "",
-      ).trim();
+      const rawNextTime = adv.json?.nextTime;
+      const invalidStructuredTime = !isValidGameDateTime(rawNextTime);
+      const nextTime =
+        isValidGameDateTime(rawNextTime)
+          ? normalizeGameDateTime(rawNextTime)
+          : normalizeGameDateTime(game.worldClock.dateTime);
       const nextScene = String(
         adv.json?.sceneSummary ?? game.worldClock.sceneSummary,
       );
       const nextPublic = plainTextFromModel(adv.json, adv.text.slice(0, 200));
       game.worldClock.tick = closedTick + 1;
-      setClockText(game, nextTime || `${closedTime}（之后）`);
+      setClockText(game, nextTime);
       game.worldClock.sceneSummary = nextScene;
+      syncContextFiles(game);
       pushEvent(game, {
         tick: game.worldClock.tick,
         interactionRound: 0,
@@ -1213,14 +1252,21 @@ export async function advanceOneRound(
         actorId: world.id,
         actorName: world.name,
         summary: `时刻推进至「${clockText(game)}」${
-          nextPublic ? `：${nextPublic.slice(0, 120)}` : ""
+          invalidStructuredTime
+            ? "（AI 时间格式无效，沿用当前时刻）"
+            : nextPublic
+              ? `：${nextPublic.slice(0, 120)}`
+              : ""
         }`,
         detail: nextScene,
         audience: "public",
       });
     } catch {
       game.worldClock.tick = closedTick + 1;
-      setClockText(game, `${closedTime}（之后）`);
+      setClockText(
+        game,
+        normalizeGameDateTime(game.worldClock.dateTime),
+      );
       pushEvent(game, {
         tick: game.worldClock.tick,
         interactionRound: 0,
@@ -1230,6 +1276,7 @@ export async function advanceOneRound(
         summary: `时刻推进至「${clockText(game)}」（自动）`,
         audience: "public",
       });
+      syncContextFiles(game);
     }
 
     game.tickBuffer = {
@@ -1277,6 +1324,9 @@ export async function advanceOneRound(
 
     let result: StageResult = { flags: {} };
     switch (node.kind) {
+      case "agent":
+        result = await runFreeAgentNode(node);
+        break;
       case "world_open":
         result = await runWorldOpen();
         break;

@@ -1,11 +1,23 @@
 import { Directory, Encoding, Filesystem } from "@capacitor/filesystem";
-import type { GameIndex, GameSettings, GameState } from "./types";
+import type {
+  GameAttributeDefinition,
+  GameIndex,
+  GameSettings,
+  GameState,
+} from "./types";
 import {
   characterSystemPrompt,
   refereeSystemPrompt,
   worldSystemPrompt,
 } from "./prompts";
-import { createTemplateGame, defaultGameRunSettings } from "./templates";
+import {
+  createTemplateGame,
+  defaultContextFiles,
+  defaultGameRunSettings,
+  formatGameDateTime,
+  normalizeGameDateTime,
+  inferAttributeDefinitions,
+} from "./templates";
 import { normalizePipeline } from "./pipeline";
 
 function sanitizeStoryText(text: string): string {
@@ -129,25 +141,8 @@ function normalizeGameSettings(raw: Partial<GameSettings> | undefined): GameSett
   const base = defaultGameRunSettings(
     typeof raw?.characterCount === "number" ? raw.characterCount : 3,
   );
-  const proposeOrder =
-    raw?.proposeOrder === "random" || raw?.proposeOrder === "custom"
-      ? raw.proposeOrder
-      : "template";
-  const proposeMode = raw?.proposeMode === "parallel" ? "parallel" : "serial";
   return {
-    maxInteractionRounds:
-      typeof raw?.maxInteractionRounds === "number"
-        ? raw.maxInteractionRounds
-        : base.maxInteractionRounds,
-    characterCount:
-      typeof raw?.characterCount === "number"
-        ? raw.characterCount
-        : base.characterCount,
-    proposeOrder,
-    customProposeOrder: Array.isArray(raw?.customProposeOrder)
-      ? raw.customProposeOrder.filter((x) => typeof x === "string")
-      : [],
-    proposeMode,
+    characterCount: base.characterCount,
     pipeline: normalizePipeline(raw?.pipeline),
     chroniclerGodPrompt:
       typeof raw?.chroniclerGodPrompt === "string"
@@ -161,6 +156,15 @@ function normalizeGameSettings(raw: Partial<GameSettings> | undefined): GameSett
       raw?.chroniclerModel && typeof raw.chroniclerModel === "object"
         ? raw.chroniclerModel
         : undefined,
+    chroniclerReadableFileIds: Array.isArray(raw?.chroniclerReadableFileIds)
+      ? raw.chroniclerReadableFileIds.filter((x) => typeof x === "string")
+      : undefined,
+    chroniclerEditableFileIds: Array.isArray(raw?.chroniclerEditableFileIds)
+      ? raw.chroniclerEditableFileIds.filter((x) => typeof x === "string")
+      : undefined,
+    chroniclerDisabledFeatures: Array.isArray(raw?.chroniclerDisabledFeatures)
+      ? raw.chroniclerDisabledFeatures.filter((x) => typeof x === "string") as GameSettings["chroniclerDisabledFeatures"]
+      : undefined,
   };
 }
 
@@ -168,15 +172,83 @@ function normalizeGame(game: GameState): GameState {
   if (!Array.isArray(game.events)) game.events = [];
   if (!Array.isArray(game.agents)) game.agents = [];
   if (!Array.isArray(game.sheets)) game.sheets = [];
+  const inferredAttributes = inferAttributeDefinitions(
+    game.sheets.map((sheet) => sheet.attrs ?? {}),
+  );
+  const savedAttributes = Array.isArray(
+    (game as Partial<GameState>).attributeDefinitions,
+  )
+    ? (game as Partial<GameState>).attributeDefinitions ?? []
+    : [];
+  game.attributeDefinitions = inferredAttributes.map((fallback) => {
+    const saved = savedAttributes.find((item) => item.key === fallback.key);
+    return saved
+      ? {
+          key: fallback.key,
+          label: saved.label?.trim() || fallback.label,
+          valueType: saved.valueType === "text" ? "text" : fallback.valueType,
+          numberOptions:
+            saved.valueType === "text"
+              ? undefined
+              : Array.isArray(saved.numberOptions)
+                ? Array.from(
+                    new Set([
+                      ...(fallback.numberOptions ?? []),
+                      ...saved.numberOptions.filter((value) => Number.isFinite(value)),
+                    ]),
+                  ).sort((a, b) => a - b)
+                : fallback.numberOptions,
+          textOptions:
+            saved.valueType === "text"
+              ? Array.isArray(saved.textOptions)
+                ? Array.from(
+                    new Set([
+                      ...(fallback.textOptions ?? []),
+                      ...saved.textOptions.filter((value) => typeof value === "string"),
+                    ]),
+                  )
+                : fallback.textOptions
+              : undefined,
+        }
+      : fallback;
+  });
+  for (const saved of savedAttributes as GameAttributeDefinition[]) {
+    if (
+      saved &&
+      typeof saved.key === "string" &&
+      saved.key.trim() &&
+      !game.attributeDefinitions.some((item) => item.key === saved.key)
+    ) {
+      game.attributeDefinitions.push({
+        key: saved.key.trim(),
+        label: saved.label?.trim() || saved.key.trim(),
+        valueType: saved.valueType === "text" ? "text" : "number",
+        numberOptions:
+          saved.valueType === "text"
+            ? undefined
+            : Array.isArray(saved.numberOptions)
+              ? saved.numberOptions.filter((value) => Number.isFinite(value))
+              : undefined,
+        textOptions:
+          saved.valueType === "text" && Array.isArray(saved.textOptions)
+            ? saved.textOptions.filter((value) => typeof value === "string")
+            : undefined,
+      });
+    }
+  }
   game.settings = normalizeGameSettings(game.settings);
   if (typeof game.worldview !== "string") {
     game.worldview = "";
   }
   if (!game.worldClock) {
+    const dateTime = normalizeGameDateTime(undefined);
+    const timeText = formatGameDateTime(dateTime);
     game.worldClock = {
       tick: 0,
-      label: "未标注时刻",
-      timeText: "未标注时刻",
+      label: timeText,
+      timeText,
+      description: dateTime.description,
+      dateTime,
       sceneSummary: "",
     };
   } else {
@@ -185,20 +257,8 @@ function normalizeGame(game: GameState): GameState {
     if (typeof game.worldClock.sceneSummary !== "string") {
       game.worldClock.sceneSummary = "";
     }
-    const rawLabel =
-      typeof game.worldClock.label === "string" ? game.worldClock.label.trim() : "";
-    let timeText =
-      typeof (game.worldClock as { timeText?: string }).timeText === "string"
-        ? String((game.worldClock as { timeText?: string }).timeText).trim()
-        : "";
-    if (!timeText) {
-      if (/^第\s*\d+\s*时$/.test(rawLabel)) {
-        const n = rawLabel.match(/\d+/)?.[0] ?? String(game.worldClock.tick);
-        timeText = `未标注时刻 · 时段 ${n}`;
-      } else {
-        timeText = rawLabel || `未标注时刻 · 时段 ${game.worldClock.tick}`;
-      }
-    }
+    game.worldClock.dateTime = normalizeGameDateTime(game.worldClock.dateTime);
+    const timeText = formatGameDateTime(game.worldClock.dateTime);
     game.worldClock.timeText = timeText;
     game.worldClock.label = timeText;
     if (
@@ -211,6 +271,43 @@ function normalizeGame(game: GameState): GameState {
     if (!game.worldClock.history[key]) {
       game.worldClock.history[key] = timeText;
     }
+    game.worldClock.description =
+      game.worldClock.dateTime.description || "当前时刻";
+  }
+  if (!Array.isArray(game.contextFiles)) {
+    game.contextFiles = defaultContextFiles(
+      game.worldview,
+      game.worldClock.timeText || game.worldClock.label,
+    );
+  } else {
+    game.contextFiles = game.contextFiles
+      .filter(
+        (file) =>
+          file &&
+          typeof file.id === "string" &&
+          typeof file.title === "string" &&
+          typeof file.content === "string",
+      )
+      .map((file) => ({ id: file.id, title: file.title, content: file.content }));
+    if (!game.contextFiles.length) {
+      game.contextFiles = defaultContextFiles(
+        game.worldview,
+        game.worldClock.timeText || game.worldClock.label,
+      );
+    }
+  }
+  const allFileIds = game.contextFiles.map((file) => file.id);
+  const publicFileIds = game.contextFiles
+    .filter((file) => file.id !== "clues")
+    .map((file) => file.id);
+  for (const agent of game.agents) {
+    agent.readableFileIds =
+      Array.isArray(agent.readableFileIds)
+        ? agent.readableFileIds.filter((id) => allFileIds.includes(id))
+        : [...publicFileIds];
+    agent.editableFileIds = Array.isArray(agent.editableFileIds)
+      ? agent.editableFileIds.filter((id) => agent.readableFileIds?.includes(id))
+      : [];
   }
   if (game.tickBuffer === undefined) game.tickBuffer = null;
   if (game.tickBuffer) {

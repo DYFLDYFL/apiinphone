@@ -218,10 +218,59 @@ async function sleep(ms: number, control?: StreamControl): Promise<void> {
   }
 }
 
+function errorStatus(err: unknown): number | undefined {
+  if (err instanceof ApiError) return err.status;
+  if (err instanceof DeepseekWebError) return err.status;
+  return (err as { status?: number }).status;
+}
+
+function errorMessage(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  return String(err);
+}
+
+function isRateLimitError(err: unknown): boolean {
+  const status = errorStatus(err);
+  if (status === 429) return true;
+  const msg = errorMessage(err);
+  return /过于频繁|rate.?lim|限流|稍后自动重试/i.test(msg);
+}
+
+function isRetryableError(err: unknown): boolean {
+  const status = errorStatus(err);
+  if (status !== undefined) return RETRYABLE_STATUS.has(status);
+  const msg = errorMessage(err).toLowerCase();
+  if (isRateLimitError(err)) return true;
+  return msg.includes("network") || msg.includes("failed to fetch");
+}
+
+function retryDelayMs(
+  settings: AppSettings,
+  attempt: number,
+  err: unknown,
+): number {
+  const rateLimited = isRateLimitError(err);
+  const webGap = isWebTransport(settings)
+    ? Math.max(0, Number(settings.webMinIntervalMs) || 3000)
+    : 0;
+  const base = rateLimited
+    ? Math.max(settings.retryBackoffMs || 1000, webGap, 4000)
+    : Math.max(settings.retryBackoffMs || 1000, 500);
+  const cap = rateLimited ? 60000 : 30000;
+  return Math.min(cap, base * 2 ** attempt);
+}
+
 interface RetryOptions<T> {
   control?: StreamControl;
   /** Fired before every retry so the UI can drop text streamed by the failed attempt. */
   onAttemptStart?: (attempt: number) => void;
+  /** Optional status for UI（如游戏「限流，稍后重试」）。 */
+  onRetryWait?: (info: {
+    attempt: number;
+    maxAttempts: number;
+    delayMs: number;
+    reason: string;
+  }) => void;
   action: () => Promise<T>;
 }
 
@@ -229,28 +278,32 @@ async function withRetry<T>(
   settings: AppSettings,
   options: RetryOptions<T>,
 ): Promise<T> {
-  const attempts = Math.max(1, settings.retryCount + 1);
+  const baseAttempts = Math.max(1, settings.retryCount + 1);
   let lastErr: unknown;
-  for (let attempt = 0; attempt < attempts; attempt++) {
+  for (let attempt = 0; ; attempt++) {
     if (attempt > 0) options.onAttemptStart?.(attempt);
     try {
       return await options.action();
     } catch (err) {
       lastErr = err;
       if (options.control?.cancelled) throw err;
-      const status =
-        err instanceof ApiError
-          ? err.status
-          : (err as { status?: number }).status;
-      const retryable =
-        status !== undefined
-          ? RETRYABLE_STATUS.has(status)
-          : String(err).toLowerCase().includes("network");
-      if (attempt >= attempts - 1 || !retryable) throw err;
-      await sleep(
-        Math.min(30000, (settings.retryBackoffMs / 1000) * 2 ** attempt * 1000),
-        options.control,
-      );
+      if (!isRetryableError(err)) throw err;
+      const rateLimited = isRateLimitError(err);
+      const maxAttempts = rateLimited
+        ? Math.max(baseAttempts, 5)
+        : baseAttempts;
+      if (attempt >= maxAttempts - 1) throw err;
+      const delayMs = retryDelayMs(settings, attempt, err);
+      options.onRetryWait?.({
+        attempt: attempt + 1,
+        maxAttempts,
+        delayMs,
+        reason: rateLimited
+          ? "消息过于频繁，稍后自动重试…"
+          : "请求失败，稍后重试…",
+      });
+      await sleep(delayMs, options.control);
+      if (options.control?.cancelled) throw err;
     }
   }
   throw lastErr;
@@ -682,6 +735,12 @@ export async function chatStream(
     onReasoningDelta?: (text: string) => void;
     /** Fired before round > 0 so UI can clear interim assistant text. */
     onStreamRoundStart?: (round: number) => void;
+    onRetryWait?: (info: {
+      attempt: number;
+      maxAttempts: number;
+      delayMs: number;
+      reason: string;
+    }) => void;
     onToolStatus?: (
       phase: "start" | "done" | "error" | "waiting",
       id: string,
@@ -741,6 +800,7 @@ export async function chatStream(
       const result = await withRetry(settings, {
         control: options?.control,
         onAttemptStart: () => options?.onStreamRoundStart?.(round),
+        onRetryWait: options?.onRetryWait,
         action: () => runSingleCompletion(settings, convo, true, options),
       });
       totalUsage = mergeUsage(totalUsage, result.usage);

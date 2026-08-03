@@ -13,6 +13,7 @@ import {
   effectiveGameModel,
   effectiveModel,
   normalizeWebChatMode,
+  settingsForGame,
 } from "../lib/settings";
 
 type TierValue = "off" | ReasoningEffort;
@@ -102,25 +103,27 @@ export function ModelSwitcher({
   const [error, setError] = useState("");
   const fetchGen = useRef(0);
 
-  const isWeb = settings.deepseekTransport === "web";
+  /** Game always uses official API; never show web tiers in game scope. */
+  const isWeb = scope !== "game" && settings.deepseekTransport === "web";
   const model = activeModel(settings, scope);
   const tier = displayTiers(settings, scope);
   const webMode = activeWebMode(settings, scope);
   const webSearch = activeWebSearch(settings, scope);
 
   const loadModels = async (source: AppSettings) => {
-    if (source.deepseekTransport === "web") {
-      if (!source.webSessionToken.trim()) {
+    const resolved = scope === "game" ? settingsForGame(source) : source;
+    if (resolved.deepseekTransport === "web") {
+      if (!resolved.webSessionToken.trim()) {
         setModelOptions([]);
         setError("网页会话请先填写 Token");
         return;
       }
-    } else if (!source.apiKey.trim()) {
+    } else if (!resolved.apiKey.trim()) {
       setModelOptions([]);
       setError("请先在设置中填写 API Key");
       return;
     }
-    if (source.deepseekTransport === "web") {
+    if (resolved.deepseekTransport === "web") {
       const provider = getProvider();
       setModelOptions([provider.defaultModel, ...provider.models]);
       setError("");
@@ -130,7 +133,7 @@ export function ModelSwitcher({
     setLoading(true);
     setError("");
     try {
-      const models = await listModels(source);
+      const models = await listModels(resolved);
       if (gen !== fetchGen.current) return;
       setModelOptions(models);
     } catch (err) {
@@ -236,9 +239,7 @@ export function ModelSwitcher({
             <div className="modal-header">
               <h2>
                 {isWeb
-                  ? scope === "game"
-                    ? "游戏网页档位"
-                    : "网页档位"
+                  ? "网页档位"
                   : scope === "game"
                     ? "游戏模型"
                     : "选择"}

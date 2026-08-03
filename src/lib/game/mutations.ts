@@ -1,5 +1,12 @@
 import { ATTR_LABELS } from "./templates";
-import type { GameEvent, GameSheet, GameState, JudgeResult } from "./types";
+import type {
+  GameAgent,
+  GameContextFileEdit,
+  GameEvent,
+  GameSheet,
+  GameState,
+  JudgeResult,
+} from "./types";
 
 function evtId(): string {
   return `evt_${Math.random().toString(36).slice(2, 10)}`;
@@ -46,6 +53,81 @@ function snapshotSheet(sheet: GameSheet): Record<string, unknown> {
     flags: [...sheet.flags],
     notes: sheet.notes,
   };
+}
+
+export function syncContextFiles(game: GameState): void {
+  const set = (id: string, content: string) => {
+    const file = game.contextFiles.find((item) => item.id === id);
+    if (file) file.content = content;
+  };
+  set("worldview", game.worldview);
+  set(
+    "clock",
+    game.worldClock.timeText || game.worldClock.label || "未标注时刻",
+  );
+  set("scene", game.worldClock.sceneSummary || "");
+  set("timeline", recentEventsText(game, 40));
+  set(
+    "characters",
+    game.sheets.map(sheetPublicView).join("\n\n"),
+  );
+}
+
+export function readableContextFiles(
+  game: GameState,
+  agent: GameAgent,
+): string {
+  const allowed = new Set(agent.readableFileIds ?? []);
+  return game.contextFiles
+    .filter((file) => allowed.has(file.id))
+    .map((file) => `【${file.title} · ${file.id}】\n${file.content || "（暂无内容）"}`)
+    .join("\n\n");
+}
+
+export function applyAuthorizedContextFileEdits(
+  game: GameState,
+  agent: GameAgent,
+  rawEdits: unknown,
+): { applied: string[]; denied: string[] } {
+  if (!Array.isArray(rawEdits)) return { applied: [], denied: [] };
+  const readable = new Set(agent.readableFileIds ?? []);
+  const editable = new Set(
+    (agent.editableFileIds ?? []).filter((id) => readable.has(id)),
+  );
+  const applied: string[] = [];
+  const denied: string[] = [];
+  for (const raw of rawEdits) {
+    if (!raw || typeof raw !== "object") continue;
+    const edit = raw as Partial<GameContextFileEdit>;
+    const fileId = String(edit.fileId ?? "");
+    const file = game.contextFiles.find((item) => item.id === fileId);
+    if (!file || !editable.has(fileId)) {
+      if (fileId) denied.push(fileId);
+      continue;
+    }
+    if (typeof edit.content === "string") {
+      file.content = edit.content;
+    } else if (typeof edit.append === "string") {
+      file.content = `${file.content}\n${edit.append}`.trim();
+    } else {
+      continue;
+    }
+    applied.push(fileId);
+  }
+  if (denied.length) {
+    pushEvent(game, {
+      tick: game.worldClock.tick,
+      interactionRound: game.tickBuffer?.interactionRound ?? 0,
+      kind: "system",
+      actorId: agent.id,
+      actorName: agent.name,
+      summary: `已拦截 ${denied.length} 项无权限的文档修改。`,
+      detail: denied.join("、"),
+      audience: "private",
+      visibleTo: [agent.id],
+    });
+  }
+  return { applied, denied };
 }
 
 export function pushEvent(
@@ -99,7 +181,7 @@ export function recentEventsText(game: GameState, limit = 12): string {
     .slice(-limit)
     .map(
       (e) =>
-        `[第${e.tick}时·第${e.interactionRound}轮] ${e.actorName}: ${e.summary}`,
+        `[轮${e.interactionRound}·tick${e.tick}] ${e.actorName}: ${e.summary}`,
     )
     .join("\n");
 }
@@ -126,7 +208,7 @@ export function recentEventsTextFor(
   return eventsVisibleTo(game, agentId, limit)
     .map(
       (e) =>
-        `[第${e.tick}时·第${e.interactionRound}轮] ${e.actorName}: ${e.summary}`,
+        `[轮${e.interactionRound}·tick${e.tick}] ${e.actorName}: ${e.summary}`,
     )
     .join("\n");
 }
@@ -161,6 +243,19 @@ export function agentDisplayName(game: GameState, idOrName: string): string {
 export function formatEventSummary(text: string): string {
   const raw = text.trim();
   if (!raw) return "";
+  // 网页软限流/原始 SSE 误入时间线时，折叠成可读提示
+  if (
+    /消息发送过于频繁/.test(raw) ||
+    /finish_reason["'\s:=]+["']?rate_lim/i.test(raw)
+  ) {
+    return "（消息过于频繁，已跳过；请稍后继续）";
+  }
+  if (
+    (/(^|\n)event\s*:/i.test(raw) || /(^|\n)data\s*:/.test(raw)) &&
+    raw.length > 200
+  ) {
+    return "（异常流式响应，已隐藏）";
+  }
   if (raw.startsWith("{") && raw.includes("}")) {
     try {
       const obj = JSON.parse(raw) as Record<string, unknown>;
@@ -196,7 +291,9 @@ export function plainTextFromModel(
   if (json) {
     for (const key of ["content", "publicEvent", "sceneSummary"]) {
       if (typeof json[key] === "string" && String(json[key]).trim()) {
-        return String(json[key]).trim();
+        const v = String(json[key]).trim();
+        if (/消息发送过于频繁/.test(v)) continue;
+        return v;
       }
     }
   }

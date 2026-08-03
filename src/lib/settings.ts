@@ -52,6 +52,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   webSearchEnabled: false,
   gameWebChatMode: "fast",
   gameWebSearchEnabled: false,
+  gameAutoDelegateAi: false,
   model: "deepseek-v4-flash",
   gameModel: "deepseek-v4-flash",
   maxTokens: null,
@@ -80,16 +81,6 @@ export function isWebTransport(settings: AppSettings): boolean {
   return settings.deepseekTransport === "web";
 }
 
-/** 网页会话下单周期交互轮次封顶，降低请求量。 */
-export function effectiveGameMaxInteractionRounds(
-  settings: AppSettings,
-  gameMax: number,
-): number {
-  const n = Math.max(1, Math.round(gameMax || 6));
-  if (isWebTransport(settings)) return Math.min(n, 3);
-  return n;
-}
-
 function applyForcedOn(settings: AppSettings): AppSettings {
   return { ...settings, ...FORCED_ON };
 }
@@ -98,7 +89,7 @@ export function effectiveModel(settings: AppSettings): string {
   return resolveModel(settings);
 }
 
-/** Settings view used for game completions (independent model fields). */
+/** Settings view used for game completions (independent model fields). Always official API. */
 export function settingsForGame(settings: AppSettings): AppSettings {
   const gameModel =
     settings.gameModel?.trim() ||
@@ -106,6 +97,7 @@ export function settingsForGame(settings: AppSettings): AppSettings {
     DEEPSEEK_PROVIDER.defaultModel;
   return {
     ...settings,
+    deepseekTransport: "official",
     model: gameModel,
     thinkingMode: settings.gameThinkingMode ?? settings.thinkingMode,
     reasoningEffort: normalizeReasoningEffort(
@@ -265,6 +257,7 @@ export async function loadSettings(): Promise<AppSettings> {
     merged.gameWebSearchEnabled = Boolean(
       merged.gameWebSearchEnabled ?? merged.webSearchEnabled,
     );
+    merged.gameAutoDelegateAi = Boolean(merged.gameAutoDelegateAi);
     return applyForcedOn(merged);
   } catch {
     return { ...DEFAULT_SETTINGS };

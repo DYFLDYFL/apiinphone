@@ -7,6 +7,7 @@ import type {
 } from "./types";
 
 export const PIPELINE_NODE_KINDS: PipelineNodeKind[] = [
+  "agent",
   "world_open",
   "propose",
   "respond",
@@ -25,6 +26,7 @@ export const PIPELINE_EDGE_WHENS: PipelineEdgeWhen[] = [
 ];
 
 export const PIPELINE_KIND_LABELS: Record<PipelineNodeKind, string> = {
+  agent: "自由 AI 节点",
   world_open: "世界开场",
   propose: "角色提案",
   respond: "对端回应",
@@ -191,6 +193,9 @@ export function normalizePipeline(raw: unknown): GamePipeline {
     id: String(n.id).trim(),
     kind: n.kind,
     label: typeof n.label === "string" ? n.label : undefined,
+    agentIds: Array.isArray(n.agentIds) ? n.agentIds.map(String) : undefined,
+    targetIds: Array.isArray(n.targetIds) ? n.targetIds.map(String) : undefined,
+    dispatchMode: n.dispatchMode === "parallel" ? "parallel" : "serial",
   }));
   const edges: PipelineEdge[] = p.edges.map((e) => ({
     from: String(e.from).trim(),

@@ -8,7 +8,7 @@ import {
   stopChatKeepAlive,
 } from "../chatKeepAlive";
 import {
-  advanceGameTick,
+  advanceOneRound,
   injectPlayerEvent,
   type PlayerIntentDraft,
   type PlayerIntentRequest,
@@ -158,7 +158,7 @@ export async function startGameAdvance(
   control = createStreamControl();
   pendingPlayerIntent = null;
   resolvePlayerIntent = null;
-  setStatus("推进中…");
+  setStatus("推进一轮…");
   void startChatKeepAlive("游戏推进中", "多智能体回合进行中…");
 
   try {
@@ -168,17 +168,18 @@ export async function startGameAdvance(
       game = working;
       emit();
     }
-    const next = await advanceGameTick(settings, working, {
+    const next = await advanceOneRound(settings, working, {
       control: control ?? undefined,
       onProgress: (p: TickProgress) => {
         if (token !== runToken) return;
-        setStatus(
-          `${p.phase} · 交互 ${p.interactionRound}/${p.maxRounds}`,
-        );
+        const clock =
+          working.worldClock.timeText || working.worldClock.label || "";
+        setStatus(clock ? `${p.phase} · ${clock}` : p.phase);
       },
       onPersist: (g) => {
         if (token !== runToken) return;
         game = g;
+        working = g;
         activeGameId = g.id;
         emit();
       },
@@ -190,9 +191,7 @@ export async function startGameAdvance(
           }
           pendingPlayerIntent = req;
           resolvePlayerIntent = resolve;
-          setStatus(
-            `等待你扮演「${req.characterName}」· 交互 ${req.round}/${req.maxRounds}`,
-          );
+          setStatus(`等待你扮演「${req.characterName}」`);
           emit();
         }),
     });
@@ -203,11 +202,15 @@ export async function startGameAdvance(
     control = null;
     pendingPlayerIntent = null;
     resolvePlayerIntent = null;
-    setStatus(
-      next.tickBuffer?.status === "interrupted"
-        ? "已中断"
-        : `完成 ${next.worldClock.label}`,
-    );
+    const clock = next.worldClock.timeText || next.worldClock.label;
+    const buf = next.tickBuffer;
+    let doneMsg = `当前 ${clock}`;
+    if (buf?.status === "interrupted") doneMsg = "已中断";
+    else if (buf?.status === "need_open")
+      doneMsg = `一轮完成 · 现为 ${clock}`;
+    else if (buf?.status === "running")
+      doneMsg = `推进中 · ${clock}`;
+    setStatus(doneMsg);
   } catch (err) {
     if (token !== runToken) return;
     running = false;

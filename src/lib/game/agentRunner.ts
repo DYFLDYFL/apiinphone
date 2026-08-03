@@ -9,6 +9,11 @@ import {
   type ReasoningEffort,
 } from "../apiProviders";
 import { settingsForGame } from "../settings";
+import {
+  applyAuthorizedContextFileEdits,
+  readableContextFiles,
+  syncContextFiles,
+} from "./mutations";
 import type { AgentModelOverride, GameAgent, GameState } from "./types";
 
 const MAX_HISTORY = 8;
@@ -73,6 +78,7 @@ export async function runGameAgent(
   control?: StreamControl,
   onStatus?: (text: string) => void,
 ): Promise<{ text: string; json: Record<string, unknown> | null }> {
+  syncContextFiles(game);
   const gameSettings: AppSettings = {
     ...applyModelOverride(settingsForGame(settings), agent.modelOverride),
     toolsEnabled: false,
@@ -80,11 +86,21 @@ export async function runGameAgent(
     toolsPythonSandbox: false,
     systemPrompt: "",
   };
+  const readableFiles = readableContextFiles(game, agent);
 
   const messages: ChatMessage[] = [
     { role: "system", content: agent.systemPrompt },
     ...agent.history,
-    { role: "user", content: userPrompt },
+    {
+      role: "user",
+      content: [
+        userPrompt,
+        readableFiles
+          ? `\n\n你有权限查看的游戏文档：\n${readableFiles}`
+          : "",
+        '如需修改有权限的游戏文档，请在 JSON 中增加 fileEdits:[{"fileId":"文档 id","content":"完整新内容"}] 或 [{"fileId":"文档 id","append":"追加内容"}]；没有权限的修改会被拒绝。',
+      ].join(""),
+    },
   ];
 
   const ctrl = control ?? createStreamControl();
@@ -100,6 +116,7 @@ export async function runGameAgent(
   agent.history.push({ role: "user", content: userPrompt });
   agent.history.push({ role: "assistant", content: text || "(无内容)" });
   trimHistory(agent);
-  void game;
-  return { text, json: extractJsonObject(text) };
+  const json = extractJsonObject(text);
+  applyAuthorizedContextFileEdits(game, agent, json?.fileEdits);
+  return { text, json };
 }

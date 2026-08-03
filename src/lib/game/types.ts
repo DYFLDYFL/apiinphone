@@ -16,6 +16,42 @@ export interface GameSheet {
   notes: string;
 }
 
+export interface GameAttributeDefinition {
+  key: string;
+  label: string;
+  valueType: "number" | "text";
+  numberOptions?: number[];
+  textOptions?: string[];
+}
+
+export interface GameDateTime {
+  description: string;
+  year: number;
+  month: number;
+  day: number;
+  hour: number;
+  minute: number;
+}
+
+export interface GameContextFile {
+  id: string;
+  title: string;
+  content: string;
+}
+
+export interface GameContextFileEdit {
+  fileId: string;
+  content?: string;
+  append?: string;
+}
+
+export type AgentFeatureKey =
+  | "propose"
+  | "respond"
+  | "judge"
+  | "chronicle"
+  | "advance_clock";
+
 /** Per-agent model override; omitted fields inherit global game model settings. */
 export interface AgentModelOverride {
   model?: string;
@@ -23,10 +59,12 @@ export interface AgentModelOverride {
   reasoningEffort?: "low" | "high" | "max";
 }
 
+/** 仅供废弃的隐藏编辑器代码编译，当前建局流程不再读取这些字段。 */
 export type ProposeOrderMode = "template" | "random" | "custom";
 export type ProposeMode = "serial" | "parallel";
 
 export type PipelineNodeKind =
+  | "agent"
   | "world_open"
   | "propose"
   | "respond"
@@ -46,6 +84,9 @@ export interface PipelineNode {
   id: string;
   kind: PipelineNodeKind;
   label?: string;
+  agentIds?: string[];
+  targetIds?: string[];
+  dispatchMode?: "serial" | "parallel";
 }
 
 export interface PipelineEdge {
@@ -73,6 +114,9 @@ export interface GameAgent {
    */
   systemPromptOverride?: string;
   modelOverride?: AgentModelOverride;
+  readableFileIds?: string[];
+  editableFileIds?: string[];
+  disabledFeatures?: AgentFeatureKey[];
   history: ChatMessage[];
 }
 
@@ -151,20 +195,16 @@ export interface TickBuffer {
 }
 
 export interface GameSettings {
-  maxInteractionRounds: number;
   characterCount: number;
-  /** 角色提案顺序：模板序 / 每轮随机 / 自定义 agentId 序。 */
-  proposeOrder: ProposeOrderMode;
-  /** proposeOrder=custom 时的角色 agent id 列表。 */
-  customProposeOrder: string[];
-  /** 非玩家角色提案：串行或并行。 */
-  proposeMode: ProposeMode;
   /** 推进一轮流水线图；缺省用默认图。 */
   pipeline: GamePipeline;
   /** 书记提示词覆盖（空 = 默认）。 */
   chroniclerGodPrompt?: string;
   chroniclerPlayerPrompt?: string;
   chroniclerModel?: AgentModelOverride;
+  chroniclerReadableFileIds?: string[];
+  chroniclerEditableFileIds?: string[];
+  chroniclerDisabledFeatures?: AgentFeatureKey[];
 }
 
 export interface GameState {
@@ -181,16 +221,21 @@ export interface GameState {
     label: string;
     /** 具体世界时刻（叙事字符串，如「三月初二 05:30」）。 */
     timeText: string;
+    description?: string;
+    dateTime: GameDateTime;
     sceneSummary: string;
     /** tick → 该时段的 timeText（时间线展示用）。 */
     history?: Record<string, string>;
   };
   agents: GameAgent[];
   sheets: GameSheet[];
+  contextFiles: GameContextFile[];
+  /** 本局模板定义的属性集合；旧存档可由 attrs 推导。 */
+  attributeDefinitions: GameAttributeDefinition[];
   events: GameEvent[];
   tickBuffer: TickBuffer | null;
   settings: GameSettings;
-  /** 旁观斗蛐蛐 / 扮演角色。 */
+  /** 上帝视角 / 扮演角色。 */
   playMode: GamePlayMode;
   /** play 时扮演的角色 agent id。 */
   playerCharacterId: string | null;
@@ -202,7 +247,7 @@ export interface GameState {
   storyTick: number;
   /**
    * 是否已解锁时间线/上帝剧情。
-   * 旁观创建即为 true；扮演默认 false，解锁一次后不可再锁。
+   * 上帝视角创建即为 true；扮演默认 false，解锁一次后不可再锁。
    */
   godViewUnlocked: boolean;
 }
