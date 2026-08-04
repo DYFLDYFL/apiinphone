@@ -1211,6 +1211,30 @@ body {
   font-weight: 700;
 }
 
+.game-pipeline-node-title {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  padding: 4px 6px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.game-pipeline-node-title:focus {
+  outline: 2px solid var(--accent);
+  border-radius: 6px;
+}
+
+.game-pipeline-node-id {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 500;
+}
+
 .game-pipeline-edge-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto minmax(0, 1.15fr) auto;
@@ -1830,7 +1854,7 @@ body {
 
 .game-time-select-grid {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 8px;
 }
 
@@ -1846,6 +1870,44 @@ body {
   padding-top: 10px;
 }
 
+.game-agent-card-list {
+  display: grid;
+  gap: 12px;
+}
+
+.game-agent-card {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px;
+  background: var(--surface);
+}
+
+.game-agent-card-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.game-agent-card-title {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  padding: 2px 4px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.game-agent-card-title:focus {
+  outline: 2px solid var(--accent);
+  border-radius: 6px;
+}
+
 .game-agent-config .game-model-override {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -1858,7 +1920,7 @@ body {
 
 .game-agent-feature-grid {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 6px;
 }
 
@@ -1905,8 +1967,95 @@ body {
   white-space: nowrap;
 }
 
+.game-agent-attributes {
+  display: grid;
+  gap: 7px;
+}
+
+.game-agent-attribute-grid {
+  display: grid;
+  gap: 5px;
+}
+
+.game-agent-attribute-row {
+  display: grid;
+  grid-template-columns: minmax(70px, 1fr) repeat(4, auto);
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.game-agent-attribute-row label {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--muted);
+}
+
 .game-attribute-options-input {
   grid-column: 1 / -1;
+}
+
+.game-attribute-options {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 7px;
+}
+
+.game-attribute-number-hint {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.game-attribute-option-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.game-attribute-option-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--game-surface-soft);
+  padding: 3px 4px 3px 7px;
+}
+
+.game-attribute-option-chip input {
+  width: 86px;
+  min-height: 28px;
+  border: 0;
+  background: transparent;
+  padding: 2px 0;
+}
+
+.game-attribute-option-remove {
+  width: 24px;
+  height: 24px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.game-attribute-option-remove:hover {
+  background: var(--danger-soft, rgba(220, 50, 47, 0.12));
+  color: var(--danger, #c62828);
+}
+
+.game-attribute-option-add {
+  display: flex;
+  gap: 7px;
+}
+
+.game-attribute-option-add input {
+  min-width: 0;
+  flex: 1;
 }
 
 .game-pipeline-agent-select select {

@@ -1,6 +1,8 @@
 import { ATTR_LABELS } from "./templates";
+import { isValidAttributeNumber } from "./templates";
 import type {
   GameAgent,
+  GameAttributeDefinition,
   GameContextFileEdit,
   GameEvent,
   GameSheet,
@@ -15,14 +17,81 @@ function evtId(): string {
 export function applySheetPatches(
   game: GameState,
   patches: NonNullable<JudgeResult["sheetPatches"]>,
+  actor?: GameAgent,
 ): Array<{ sheetId: string; patch: Record<string, unknown> }> {
   const diffs: Array<{ sheetId: string; patch: Record<string, unknown> }> = [];
+  const denied: string[] = [];
+  const judge = actor ?? game.agents.find((item) => item.capabilities.includes("judge"));
+  const definitionFor = (key: string): GameAttributeDefinition | undefined =>
+    game.attributeDefinitions.find((definition) => definition.key === key);
+  const can = (key: string, operation: "set" | "add" | "remove") =>
+    Boolean(judge?.attributePermissions?.[key]?.[operation]);
+  const validValue = (definition: GameAttributeDefinition, value: unknown) => {
+    if (definition.valueType === "number") {
+      if (
+        typeof value !== "number" ||
+        !isValidAttributeNumber(value)
+      ) {
+        return false;
+      }
+      return true;
+    }
+    return (
+      typeof value === "string" &&
+      (!definition.textOptions?.length || definition.textOptions.includes(value))
+    );
+  };
   for (const p of patches) {
     const sheet = game.sheets.find((s) => s.id === p.sheetId);
     if (!sheet) continue;
     const before = snapshotSheet(sheet);
     if (p.attrs) {
-      sheet.attrs = { ...sheet.attrs, ...p.attrs };
+      for (const [key, value] of Object.entries(p.attrs)) {
+        const definition = definitionFor(key);
+        if (!definition || !can(key, "set") || !validValue(definition, value)) {
+          denied.push(`${sheet.name}.${key}`);
+          continue;
+        }
+        sheet.attrs[key] = value;
+      }
+    }
+    if (p.attrsAdd) {
+      for (const [key, rawDelta] of Object.entries(p.attrsAdd)) {
+        const definition = definitionFor(key);
+        const current = sheet.attrs[key];
+        if (!definition || !can(key, "add")) {
+          denied.push(`${sheet.name}.${key}（增加）`);
+          continue;
+        }
+        if (definition.valueType === "number" && typeof rawDelta === "number" && typeof current === "number") {
+          const next = current + rawDelta;
+          if (validValue({ ...definition, numberOptions: [] }, next)) sheet.attrs[key] = next;
+          else denied.push(`${sheet.name}.${key}（增加越界）`);
+        } else if (definition.valueType === "text" && typeof rawDelta === "string" && validValue(definition, rawDelta)) {
+          sheet.attrs[key] = rawDelta;
+        } else {
+          denied.push(`${sheet.name}.${key}（增加值无效）`);
+        }
+      }
+    }
+    if (p.attrsRemove) {
+      for (const [key, rawDelta] of Object.entries(p.attrsRemove)) {
+        const definition = definitionFor(key);
+        const current = sheet.attrs[key];
+        if (!definition || !can(key, "remove")) {
+          denied.push(`${sheet.name}.${key}（删除）`);
+          continue;
+        }
+        if (definition.valueType === "number" && typeof rawDelta === "number" && typeof current === "number") {
+          const next = current - rawDelta;
+          if (validValue({ ...definition, numberOptions: [] }, next)) sheet.attrs[key] = next;
+          else denied.push(`${sheet.name}.${key}（删除越界）`);
+        } else if (definition.valueType === "text" && current === rawDelta) {
+          sheet.attrs[key] = "";
+        } else {
+          denied.push(`${sheet.name}.${key}（删除值无效）`);
+        }
+      }
     }
     if (p.inventoryAdd?.length) {
       sheet.inventory = [...sheet.inventory, ...p.inventoryAdd];
@@ -42,6 +111,19 @@ export function applySheetPatches(
       sheet.notes = `${sheet.notes}\n${p.notesAppend}`.trim();
     }
     diffs.push({ sheetId: sheet.id, patch: { before, after: snapshotSheet(sheet) } });
+  }
+  if (denied.length && judge) {
+    pushEvent(game, {
+      tick: game.worldClock.tick,
+      interactionRound: game.tickBuffer?.interactionRound ?? 0,
+      kind: "system",
+      actorId: judge.id,
+      actorName: judge.name,
+      summary: `已拦截 ${denied.length} 项未授权属性修改。`,
+      detail: denied.join("、"),
+      audience: "private",
+      visibleTo: [judge.id],
+    });
   }
   return diffs;
 }
@@ -81,6 +163,26 @@ export function readableContextFiles(
   return game.contextFiles
     .filter((file) => allowed.has(file.id))
     .map((file) => `【${file.title} · ${file.id}】\n${file.content || "（暂无内容）"}`)
+    .join("\n\n");
+}
+
+export function readableSheets(
+  game: GameState,
+  agent: GameAgent,
+): string {
+  const permissions = agent.attributePermissions;
+  const hasConfiguredPermissions = Boolean(
+    permissions && Object.keys(permissions).length,
+  );
+  return game.sheets
+    .map((sheet) => {
+      const attrs = Object.fromEntries(
+        Object.entries(sheet.attrs).filter(([key]) =>
+          hasConfiguredPermissions ? Boolean(permissions?.[key]?.read) : true,
+        ),
+      );
+      return sheetPublicView({ ...sheet, attrs });
+    })
     .join("\n\n");
 }
 
@@ -220,9 +322,9 @@ export function notifySummary(toName: string, message: string): string {
 
 export function agentDirectory(game: GameState): string {
   return game.agents
-    .filter((a) => a.kind === "character" || a.kind === "world")
+    .filter((a) => a.kind === "character" || a.capabilities.includes("world_open"))
     .map((a) =>
-      a.kind === "world"
+      a.capabilities.includes("world_open")
         ? `- 世界（对世界/环境作用时 toId 填「世界」）`
         : `- ${a.name}（toId 填「${a.name}」）`,
     )

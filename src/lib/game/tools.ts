@@ -62,7 +62,7 @@ export function resolveInteraction(
   ) {
     diffs = applySheetPatches(game, input.sheetPatches);
   }
-  const referee = game.agents.find((a) => a.kind === "referee");
+  const referee = game.agents.find((a) => a.capabilities.includes("judge"));
   return pushEvent(game, {
     tick: input.tick,
     interactionRound: input.interactionRound,

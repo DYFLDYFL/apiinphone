@@ -7,6 +7,7 @@ import type {
 } from "./types";
 import {
   characterSystemPrompt,
+  chroniclerSystemPrompt,
   refereeSystemPrompt,
   worldSystemPrompt,
 } from "./prompts";
@@ -120,11 +121,6 @@ function gameJsonPath(id: string): string {
   return `${gameDir(id)}/game.json`;
 }
 
-/** 旧版单文件路径（迁移用） */
-function legacyGamePath(id: string): string {
-  return `${GAMES_DIR}/${id}.json`;
-}
-
 function tickPad(tick: number): string {
   return String(Math.max(0, Math.round(tick))).padStart(3, "0");
 }
@@ -144,27 +140,6 @@ function normalizeGameSettings(raw: Partial<GameSettings> | undefined): GameSett
   return {
     characterCount: base.characterCount,
     pipeline: normalizePipeline(raw?.pipeline),
-    chroniclerGodPrompt:
-      typeof raw?.chroniclerGodPrompt === "string"
-        ? raw.chroniclerGodPrompt
-        : undefined,
-    chroniclerPlayerPrompt:
-      typeof raw?.chroniclerPlayerPrompt === "string"
-        ? raw.chroniclerPlayerPrompt
-        : undefined,
-    chroniclerModel:
-      raw?.chroniclerModel && typeof raw.chroniclerModel === "object"
-        ? raw.chroniclerModel
-        : undefined,
-    chroniclerReadableFileIds: Array.isArray(raw?.chroniclerReadableFileIds)
-      ? raw.chroniclerReadableFileIds.filter((x) => typeof x === "string")
-      : undefined,
-    chroniclerEditableFileIds: Array.isArray(raw?.chroniclerEditableFileIds)
-      ? raw.chroniclerEditableFileIds.filter((x) => typeof x === "string")
-      : undefined,
-    chroniclerDisabledFeatures: Array.isArray(raw?.chroniclerDisabledFeatures)
-      ? raw.chroniclerDisabledFeatures.filter((x) => typeof x === "string") as GameSettings["chroniclerDisabledFeatures"]
-      : undefined,
   };
 }
 
@@ -187,17 +162,7 @@ function normalizeGame(game: GameState): GameState {
           key: fallback.key,
           label: saved.label?.trim() || fallback.label,
           valueType: saved.valueType === "text" ? "text" : fallback.valueType,
-          numberOptions:
-            saved.valueType === "text"
-              ? undefined
-              : Array.isArray(saved.numberOptions)
-                ? Array.from(
-                    new Set([
-                      ...(fallback.numberOptions ?? []),
-                      ...saved.numberOptions.filter((value) => Number.isFinite(value)),
-                    ]),
-                  ).sort((a, b) => a - b)
-                : fallback.numberOptions,
+          numberOptions: undefined,
           textOptions:
             saved.valueType === "text"
               ? Array.isArray(saved.textOptions)
@@ -223,12 +188,7 @@ function normalizeGame(game: GameState): GameState {
         key: saved.key.trim(),
         label: saved.label?.trim() || saved.key.trim(),
         valueType: saved.valueType === "text" ? "text" : "number",
-        numberOptions:
-          saved.valueType === "text"
-            ? undefined
-            : Array.isArray(saved.numberOptions)
-              ? saved.numberOptions.filter((value) => Number.isFinite(value))
-              : undefined,
+        numberOptions: undefined,
         textOptions:
           saved.valueType === "text" && Array.isArray(saved.textOptions)
             ? saved.textOptions.filter((value) => typeof value === "string")
@@ -355,17 +315,45 @@ function normalizeGame(game: GameState): GameState {
     if (!Array.isArray(e.visibleTo)) e.visibleTo = [];
   }
   for (const a of game.agents) {
+    const rawCapabilities = (a as GameState["agents"][number]).capabilities;
+    a.capabilities = Array.isArray(rawCapabilities)
+      ? rawCapabilities.filter((feature) =>
+          [
+            "world_open",
+            "propose",
+            "respond",
+            "judge",
+            "chronicle",
+            "advance_clock",
+          ].includes(feature),
+        )
+      : [];
+    if (a.attributePermissions && typeof a.attributePermissions === "object") {
+      a.attributePermissions = Object.fromEntries(
+        Object.entries(a.attributePermissions).map(([key, value]) => [
+          key,
+          {
+            read: Boolean(value?.read),
+            set: Boolean(value?.set),
+            add: Boolean(value?.add),
+            remove: Boolean(value?.remove),
+          },
+        ]),
+      );
+    }
     const override = a.systemPromptOverride?.trim();
     if (override) {
       a.systemPrompt = override;
       continue;
     }
-    if (a.kind === "referee") {
+    if (a.capabilities.includes("judge")) {
       a.systemPrompt = refereeSystemPrompt(a.persona);
     } else if (a.kind === "character") {
       a.systemPrompt = characterSystemPrompt(a.name, a.persona);
-    } else if (a.kind === "world") {
+    } else if (a.capabilities.includes("world_open")) {
       a.systemPrompt = worldSystemPrompt(game.worldview || a.persona);
+    } else if (a.capabilities.includes("chronicle")) {
+      a.systemPrompt = chroniclerSystemPrompt("god");
     }
   }
   return game;
@@ -527,12 +515,7 @@ export async function listGames(): Promise<
 }
 
 export async function loadGame(id: string): Promise<GameState | null> {
-  let raw = await readText(gameJsonPath(id));
-  let fromLegacy = false;
-  if (!raw) {
-    raw = await readText(legacyGamePath(id));
-    fromLegacy = Boolean(raw);
-  }
+  const raw = await readText(gameJsonPath(id));
   if (!raw) return null;
   try {
     const game = normalizeGame(JSON.parse(raw) as GameState);
@@ -562,11 +545,6 @@ export async function loadGame(id: string): Promise<GameState | null> {
       ) {
         game.playerStory = sanitizeStoryText(playerMirror);
       }
-    }
-    if (fromLegacy) {
-      // 读到旧单文件后迁入文件夹
-      await saveGame(game);
-      await removePath(legacyGamePath(id));
     }
     return game;
   } catch {
@@ -602,7 +580,6 @@ export async function createGame(
 
 export async function deleteGame(id: string): Promise<void> {
   await removePath(gameDir(id), true);
-  await removePath(legacyGamePath(id));
   const index = await loadIndex();
   index.order = index.order.filter((gid) => gid !== id);
   delete index.meta[id];

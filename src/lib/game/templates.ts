@@ -4,11 +4,14 @@ import {
   pickPromptOverride,
   refereeSystemPrompt,
   worldSystemPrompt,
+  chroniclerSystemPrompt,
 } from "./prompts";
 import type {
+  AgentFeatureKey,
   AgentModelOverride,
   GameAgent,
   GameAttributeDefinition,
+  GameAttributePermission,
   GameContextFile,
   GameDateTime,
   GamePipeline,
@@ -34,17 +37,29 @@ export const ATTR_LABELS: Record<string, string> = {
   reputation: "声望",
 };
 
+export const MIN_ATTRIBUTE_NUMBER = Number.MIN_SAFE_INTEGER;
+export const MAX_ATTRIBUTE_NUMBER = Number.MAX_SAFE_INTEGER;
+
+export function isValidAttributeNumber(value: unknown): value is number {
+  return (
+    typeof value === "number" &&
+    Number.isFinite(value) &&
+    value >= MIN_ATTRIBUTE_NUMBER &&
+    value <= MAX_ATTRIBUTE_NUMBER
+  );
+}
+
 export const DEFAULT_ATTRIBUTE_DEFINITIONS: GameAttributeDefinition[] = [
-  { key: "hp", label: "体力", valueType: "number", numberOptions: [0, 5, 10, 15, 20] },
-  { key: "stamina", label: "耐力", valueType: "number", numberOptions: [0, 5, 10, 15, 20] },
-  { key: "strength", label: "力量", valueType: "number", numberOptions: [0, 2, 4, 6, 8, 10] },
-  { key: "agility", label: "敏捷", valueType: "number", numberOptions: [0, 2, 4, 6, 8, 10] },
-  { key: "insight", label: "悟性", valueType: "number", numberOptions: [0, 2, 4, 6, 8, 10] },
-  { key: "charm", label: "魅力", valueType: "number", numberOptions: [0, 2, 4, 6, 8, 10] },
-  { key: "wealth", label: "银钱", valueType: "number", numberOptions: [0, 5, 10, 20, 50, 100] },
+  { key: "hp", label: "体力", valueType: "number" },
+  { key: "stamina", label: "耐力", valueType: "number" },
+  { key: "strength", label: "力量", valueType: "number" },
+  { key: "agility", label: "敏捷", valueType: "number" },
+  { key: "insight", label: "悟性", valueType: "number" },
+  { key: "charm", label: "魅力", valueType: "number" },
+  { key: "wealth", label: "银钱", valueType: "number" },
   { key: "location", label: "位置", valueType: "text", textOptions: ["广场", "药房", "铁匠铺", "东门外"] },
   { key: "mood", label: "心情", valueType: "text", textOptions: ["平静", "警惕", "沉稳", "轻快", "好奇"] },
-  { key: "reputation", label: "声望", valueType: "number", numberOptions: [0, 1, 2, 3, 5, 10] },
+  { key: "reputation", label: "声望", valueType: "number" },
 ];
 
 export function inferAttributeDefinitions(
@@ -53,18 +68,14 @@ export function inferAttributeDefinitions(
   const keys = new Set(DEFAULT_ATTRIBUTE_DEFINITIONS.map((item) => item.key));
   const definitions = DEFAULT_ATTRIBUTE_DEFINITIONS.map((item) => ({
     ...item,
-    numberOptions: item.numberOptions ? [...item.numberOptions] : undefined,
+    numberOptions: undefined,
     textOptions: item.textOptions ? [...item.textOptions] : undefined,
   }));
   for (const attrs of attrsList) {
     for (const [key, value] of Object.entries(attrs)) {
       const existing = definitions.find((item) => item.key === key);
       if (existing) {
-        if (existing.valueType === "number" && typeof value === "number") {
-          existing.numberOptions = Array.from(
-            new Set([...(existing.numberOptions ?? []), value]),
-          ).sort((a, b) => a - b);
-        } else if (existing.valueType === "text" && typeof value === "string") {
+        if (existing.valueType === "text" && typeof value === "string") {
           existing.textOptions = Array.from(
             new Set([...(existing.textOptions ?? []), value]),
           );
@@ -77,7 +88,7 @@ export function inferAttributeDefinitions(
         key,
         label: ATTR_LABELS[key] ?? key,
         valueType: typeof value === "number" ? "number" : "text",
-        numberOptions: typeof value === "number" ? [value] : undefined,
+        numberOptions: undefined,
         textOptions: typeof value === "number" ? undefined : [String(value)],
       });
     }
@@ -96,12 +107,7 @@ function normalizeAttributeDefinitions(
       key: item.key.trim(),
       label: item.label?.trim() || item.key.trim(),
       valueType: item.valueType === "text" ? "text" : "number",
-      numberOptions:
-        item.valueType === "text"
-          ? undefined
-          : Array.isArray(item.numberOptions)
-            ? item.numberOptions.filter((value) => Number.isFinite(value))
-            : undefined,
+      numberOptions: undefined,
       textOptions:
         item.valueType === "text"
           ? Array.isArray(item.textOptions)
@@ -120,15 +126,7 @@ function normalizeAttributeDefinitions(
     const fromData = inferred.find((candidate) => candidate.key === item.key);
     return {
       ...item,
-      numberOptions:
-        item.valueType === "number"
-          ? Array.from(
-              new Set([
-                ...(item.numberOptions ?? []),
-                ...(fromData?.numberOptions ?? []),
-              ]),
-            ).sort((a, b) => a - b)
-          : undefined,
+      numberOptions: undefined,
       textOptions:
         item.valueType === "text"
           ? Array.from(
@@ -144,6 +142,7 @@ export const DEFAULT_WORLDVIEW =
   "青石镇：边陲小镇，晨雾常在。有药房、铁匠铺、杂货铺与广场。民风朴实却暗流涌动，江湖传闻与邻里琐事交织。物理与人情须自洽；银钱、伤势、距离不可空口捏造。";
 
 export type CharTemplateDraft = {
+  id?: string;
   name: string;
   persona: string;
   attrs: Record<string, string | number | boolean>;
@@ -154,6 +153,22 @@ export type CharTemplateDraft = {
   readableFileIds?: string[];
   editableFileIds?: string[];
   disabledFeatures?: import("./types").AgentFeatureKey[];
+  attributePermissions?: Record<string, GameAttributePermission>;
+  capabilities?: AgentFeatureKey[];
+};
+
+export type AgentTemplateDraft = {
+  id: string;
+  /** 非空表示这是某个角色的 AI 控制器。 */
+  characterId?: string;
+  name: string;
+  persona: string;
+  systemPrompt?: string;
+  model?: AgentModelOverride;
+  capabilities: AgentFeatureKey[];
+  readableFileIds?: string[];
+  editableFileIds?: string[];
+  attributePermissions?: Record<string, GameAttributePermission>;
 };
 
 export const CHAR_TEMPLATES: CharTemplateDraft[] = [
@@ -270,6 +285,7 @@ export type GameTemplateDraft = {
   /** 初始世界时刻，完全使用结构化字段。 */
   initialTime: string;
   initialTimeParts: GameDateTime;
+  agents: AgentTemplateDraft[];
   characters: CharTemplateDraft[];
   attributeDefinitions?: GameAttributeDefinition[];
   contextFiles?: GameContextFile[];
@@ -282,18 +298,21 @@ export type GameTemplateDraft = {
   worldReadableFileIds?: string[];
   worldEditableFileIds?: string[];
   worldDisabledFeatures?: import("./types").AgentFeatureKey[];
+  worldAttributePermissions?: Record<string, GameAttributePermission>;
   refereePersona?: string;
   refereeSystemPrompt?: string;
   refereeModel?: AgentModelOverride;
   refereeReadableFileIds?: string[];
   refereeEditableFileIds?: string[];
   refereeDisabledFeatures?: import("./types").AgentFeatureKey[];
+  refereeAttributePermissions?: Record<string, GameAttributePermission>;
   chroniclerGodPrompt?: string;
   chroniclerPlayerPrompt?: string;
   chroniclerModel?: AgentModelOverride;
   chroniclerReadableFileIds?: string[];
   chroniclerEditableFileIds?: string[];
   chroniclerDisabledFeatures?: import("./types").AgentFeatureKey[];
+  chroniclerAttributePermissions?: Record<string, GameAttributePermission>;
   /** 废弃隐藏编辑器字段；当前建局不会使用。 */
   proposeOrder?: import("./types").ProposeOrderMode;
   customProposeOrder?: number[];
@@ -301,18 +320,7 @@ export type GameTemplateDraft = {
   pipeline?: GamePipeline;
 };
 
-export type GameAiPresetDraft = Pick<
-  GameTemplateDraft,
-  | "worldSystemPrompt"
-  | "worldModel"
-  | "refereePersona"
-  | "refereeSystemPrompt"
-  | "refereeModel"
-  | "chroniclerGodPrompt"
-  | "chroniclerPlayerPrompt"
-  | "chroniclerModel"
-  | "pipeline"
->;
+export type GameAiPresetDraft = Pick<GameTemplateDraft, "agents" | "pipeline">;
 
 export type GameAiPreset = {
   id: string;
@@ -324,6 +332,7 @@ export type GameAiPreset = {
 
 export const DEFAULT_INITIAL_TIME_PARTS: GameDateTime = {
   description: "开场",
+  era: "CE",
   year: 1,
   month: 3,
   day: 2,
@@ -331,31 +340,46 @@ export const DEFAULT_INITIAL_TIME_PARTS: GameDateTime = {
   minute: 30,
 };
 
-function daysInMonth(year: number, month: number): number {
-  return new Date(year, month, 0).getDate();
+export function isLeapYear(era: GameDateTime["era"], year: number): boolean {
+  const astronomicalYear = era === "BCE" ? 1 - year : year;
+  return (
+    astronomicalYear % 4 === 0 &&
+    (astronomicalYear % 100 !== 0 || astronomicalYear % 400 === 0)
+  );
+}
+
+export function daysInMonth(
+  era: GameDateTime["era"],
+  year: number,
+  month: number,
+): number {
+  if (month === 2) return isLeapYear(era, year) ? 29 : 28;
+  return [4, 6, 9, 11].includes(month) ? 30 : 31;
 }
 
 export function normalizeGameDateTime(
   value: Partial<GameDateTime> | undefined,
   fallback: GameDateTime = DEFAULT_INITIAL_TIME_PARTS,
 ): GameDateTime {
+  const era = value?.era === "BCE" ? "BCE" : value?.era === "CE" ? "CE" : fallback.era;
   const year = Number(value?.year);
-  const month = Number(value?.month);
-  const safeYear = Number.isInteger(year) && year >= 1 && year <= 9999
+  const safeYear = Number.isInteger(year) && year >= 1 && year <= 99999
     ? year
     : fallback.year;
+  const month = Number(value?.month);
   const safeMonth = Number.isInteger(month) && month >= 1 && month <= 12
     ? month
     : fallback.month;
   const rawDay = Number(value?.day);
-  const maxDay = daysInMonth(safeYear, safeMonth);
-  const day = Number.isInteger(rawDay) && rawDay >= 1 && rawDay <= maxDay
-    ? rawDay
+  const maxDay = daysInMonth(era, safeYear, safeMonth);
+  const day = Number.isInteger(rawDay) && rawDay >= 1
+    ? Math.min(rawDay, maxDay)
     : Math.min(fallback.day, maxDay);
   const hour = Number(value?.hour);
   const minute = Number(value?.minute);
   return {
     description: String(value?.description ?? fallback.description).trim() || fallback.description,
+    era,
     year: safeYear,
     month: safeMonth,
     day,
@@ -376,6 +400,7 @@ export function isValidGameDateTime(value: unknown): value is GameDateTime {
   });
   return (
     typeof item.description === "string" &&
+    (item.era === "BCE" || item.era === "CE") &&
     Number.isInteger(item.year) &&
     Number.isInteger(item.month) &&
     Number.isInteger(item.day) &&
@@ -391,7 +416,7 @@ export function isValidGameDateTime(value: unknown): value is GameDateTime {
 
 export function formatGameDateTime(value: GameDateTime): string {
   const time = `${String(value.hour).padStart(2, "0")}:${String(value.minute).padStart(2, "0")}`;
-  const date = `${value.year}年${value.month}月${value.day}日`;
+  const date = `${value.era === "BCE" ? "公元前" : "公元"} ${value.year}年${value.month}月${value.day}日`;
   return value.description.trim()
     ? `${value.description.trim()} · ${date} ${time}`
     : `${date} ${time}`;
@@ -423,6 +448,19 @@ export function defaultGameRunSettings(characterCount = 3): {
 
 export function defaultTemplateDraft(characterCount = 3): GameTemplateDraft {
   const n = Math.min(6, Math.max(2, Math.round(characterCount)));
+  const characters = CHAR_TEMPLATES.slice(0, n).map((c) => ({
+    ...c,
+    id: `character_${CHAR_TEMPLATES.indexOf(c)}`,
+    capabilities: ["propose", "respond"] as AgentFeatureKey[],
+    attrs: { ...c.attrs },
+  }));
+  const characterAgents: AgentTemplateDraft[] = characters.map((character) => ({
+    id: `agent_${character.id}`,
+    characterId: character.id,
+    name: character.name,
+    persona: character.persona,
+    capabilities: [...(character.capabilities ?? ["propose", "respond"])],
+  }));
   return {
     title: "青石镇",
     worldview: DEFAULT_WORLDVIEW,
@@ -433,10 +471,34 @@ export function defaultTemplateDraft(characterCount = 3): GameTemplateDraft {
       DEFAULT_WORLDVIEW,
       formatGameDateTime(DEFAULT_INITIAL_TIME_PARTS),
     ),
-    characters: CHAR_TEMPLATES.slice(0, n).map((c) => ({
-      ...c,
-      attrs: { ...c.attrs },
-    })),
+    agents: [
+      {
+        id: "world_agent",
+        name: "世界",
+        persona: DEFAULT_WORLDVIEW,
+        capabilities: ["world_open", "respond", "advance_clock"],
+      },
+      {
+        id: "judge_agent",
+        name: "裁判",
+        persona: DEFAULT_REFEREE_PERSONA,
+        capabilities: ["judge"],
+        attributePermissions: Object.fromEntries(
+          DEFAULT_ATTRIBUTE_DEFINITIONS.map((definition) => [
+            definition.key,
+            { read: true, set: true, add: true, remove: true },
+          ]),
+        ),
+      },
+      {
+        id: "chronicler_agent",
+        name: "书记",
+        persona: "整理本局剧情，区分全知视角与玩家视角。",
+        capabilities: ["chronicle"],
+      },
+      ...characterAgents,
+    ],
+    characters,
     playMode: "spectate",
     playerCharacterIndex: 0,
     worldSystemPrompt: "",
@@ -444,7 +506,15 @@ export function defaultTemplateDraft(characterCount = 3): GameTemplateDraft {
     refereeSystemPrompt: "",
     chroniclerGodPrompt: "",
     chroniclerPlayerPrompt: "",
-    pipeline: defaultPipeline(),
+    pipeline: defaultPipeline({
+      entryAgentIds: ["world_agent"],
+      openAgentIds: ["world_agent"],
+      proposeAgentIds: Array.from({ length: n }, (_, index) => `agent_character_${index}`),
+      respondAgentIds: ["world_agent"],
+      judgeAgentIds: ["judge_agent"],
+      chronicleAgentIds: ["chronicler_agent"],
+      clockAgentIds: ["world_agent"],
+    }),
   };
 }
 
@@ -462,14 +532,10 @@ function makeAiPreset(
     genre,
     description,
     draft: {
-      worldSystemPrompt: base.worldSystemPrompt,
-      worldModel: base.worldModel,
-      refereePersona: base.refereePersona,
-      refereeSystemPrompt: base.refereeSystemPrompt,
-      refereeModel: base.refereeModel,
-      chroniclerGodPrompt: base.chroniclerGodPrompt,
-      chroniclerPlayerPrompt: base.chroniclerPlayerPrompt,
-      chroniclerModel: base.chroniclerModel,
+      agents: base.agents.map((agent) => ({
+        ...agent,
+        capabilities: [...agent.capabilities],
+      })),
       pipeline: base.pipeline,
       ...patch,
     },
@@ -489,8 +555,14 @@ export const AI_RUNTIME_PRESETS: GameAiPreset[] = [
     "节奏",
     "角色提案并行处理，书记使用更短的整理提示，适合快速推进剧情。",
     {
-      chroniclerGodPrompt: "用紧凑的段落整理本轮关键因果、角色变化和下一步悬念。",
-      chroniclerPlayerPrompt: "只整理玩家角色亲历的关键行动与结果，保持简洁。",
+      agents: defaultTemplateDraft(3).agents.map((agent) =>
+        agent.capabilities.includes("chronicle")
+          ? {
+              ...agent,
+              systemPrompt: "用紧凑的段落整理本轮关键因果、角色变化和下一步悬念。",
+            }
+          : { ...agent, capabilities: [...agent.capabilities] },
+      ),
     },
   ),
   makeAiPreset(
@@ -499,10 +571,22 @@ export const AI_RUNTIME_PRESETS: GameAiPreset[] = [
     "规则",
     "强调证据、资源、距离和既有属性变化，适合悬疑、生存与策略玩法。",
     {
-      refereePersona:
-        `${baseRefereePersonaForPreset()} 裁定时优先检查因果、资源、距离与已知信息，禁止无依据跳跃。`,
-      worldSystemPrompt:
-        "严格维护世界连续性。所有资源、伤势、距离、线索和时间变化都必须有来源并可追溯。",
+      agents: defaultTemplateDraft(3).agents.map((agent) => {
+        if (agent.capabilities.includes("judge")) {
+          return {
+            ...agent,
+            persona: `${baseRefereePersonaForPreset()} 裁定时优先检查因果、资源、距离与已知信息，禁止无依据跳跃。`,
+          };
+        }
+        if (agent.capabilities.includes("world_open")) {
+          return {
+            ...agent,
+            systemPrompt:
+              "严格维护世界连续性。所有资源、伤势、距离、线索和时间变化都必须有来源并可追溯。",
+          };
+        }
+        return { ...agent, capabilities: [...agent.capabilities] };
+      }),
     },
   ),
 ];
@@ -596,7 +680,7 @@ export const GAME_TEMPLATE_PRESETS: GameTemplatePreset[] = [
     "科幻星际",
     "边境空间站接收到一段不该存在的求救信号。",
     "星环边境：空间站、跃迁航道与殖民地组成脆弱网络。氧气、能源、通讯延迟和船体损伤必须自洽。",
-    { description: "星环边境", year: 2187, month: 4, day: 12, hour: 6, minute: 0 },
+    { description: "星环边境", era: "CE", year: 2187, month: 4, day: 12, hour: 6, minute: 0 },
     [
       { key: "oxygen", label: "氧气", valueType: "number" },
       { key: "energy", label: "能源", valueType: "number" },
@@ -608,7 +692,7 @@ export const GAME_TEMPLATE_PRESETS: GameTemplatePreset[] = [
     "奇幻冒险",
     "王国边境的月光会改变魔法，古老契约正在苏醒。",
     "月影王国：精灵、工匠、骑士与术士共同生活。魔法有代价，誓约、血统与传说会影响现实。",
-    { description: "月影历·月升前", year: 302, month: 1, day: 1, hour: 18, minute: 0 },
+    { description: "月影历·月升前", era: "CE", year: 302, month: 1, day: 1, hour: 18, minute: 0 },
     [{ key: "mana", label: "魔力", valueType: "number" }],
   ),
 ];
@@ -629,16 +713,29 @@ export function createTemplateGame(
   const chars = tpl.characters.slice(0, 6);
   const sheets: GameSheet[] = [];
   const characters: GameAgent[] = [];
+  const characterAgentDrafts = new Map(
+    tpl.agents
+      .filter((agent) => Boolean(agent.characterId))
+      .map((agent) => [agent.characterId as string, agent]),
+  );
 
-  for (const t of chars) {
+  const agentIdMap = new Map<string, string>();
+  for (let index = 0; index < chars.length; index += 1) {
+    const t = chars[index];
     const sheetId = id("sheet");
     const agentId = id("char");
+    const characterId = t.id ?? `character_${index}`;
+    const agentDraft = characterAgentDrafts.get(characterId);
+    agentIdMap.set(characterId, agentId);
+    if (agentDraft) agentIdMap.set(agentDraft.id, agentId);
     const inventory = t.inventory
       .split(/[,，、]/)
       .map((x) => x.trim())
       .filter(Boolean);
-    const name = t.name.trim() || "未命名";
-    const override = t.systemPrompt?.trim() || "";
+    const name = agentDraft?.name?.trim() || t.name.trim() || "未命名";
+    const persona = agentDraft?.persona ?? t.persona;
+    const override =
+      agentDraft?.systemPrompt?.trim() || t.systemPrompt?.trim() || "";
     sheets.push({
       id: sheetId,
       name,
@@ -652,16 +749,21 @@ export function createTemplateGame(
       kind: "character",
       name,
       sheetId,
-      persona: t.persona,
+      persona,
       systemPrompt: pickPromptOverride(
         override,
-        characterSystemPrompt(name, t.persona),
+        characterSystemPrompt(name, persona),
       ),
       systemPromptOverride: override || undefined,
-      modelOverride: t.model,
-      readableFileIds: t.readableFileIds,
-      editableFileIds: t.editableFileIds,
-      disabledFeatures: t.disabledFeatures,
+      modelOverride: agentDraft?.model ?? t.model,
+      readableFileIds: agentDraft?.readableFileIds ?? t.readableFileIds,
+      editableFileIds: agentDraft?.editableFileIds ?? t.editableFileIds,
+      capabilities:
+        agentDraft?.capabilities ??
+        t.capabilities ??
+        ["propose", "respond"],
+      attributePermissions:
+        agentDraft?.attributePermissions ?? t.attributePermissions,
       history: [],
     });
   }
@@ -677,43 +779,37 @@ export function createTemplateGame(
     .filter((file) => file.id !== "clues")
     .map((file) => file.id);
   const defaultEditable: string[] = [];
-  const worldOverride = tpl.worldSystemPrompt?.trim() || "";
-  const world: GameAgent = {
-    id: id("world"),
-    kind: "world",
-    name: "世界",
-    persona: worldview,
-    systemPrompt: pickPromptOverride(
-      worldOverride,
-      worldSystemPrompt(worldview),
-    ),
-    systemPromptOverride: worldOverride || undefined,
-    modelOverride: tpl.worldModel,
-    readableFileIds: tpl.worldReadableFileIds,
-    editableFileIds: tpl.worldEditableFileIds,
-    disabledFeatures: tpl.worldDisabledFeatures,
-    history: [],
-  };
-
-  const refPersona = tpl.refereePersona?.trim() || DEFAULT_REFEREE_PERSONA;
-  const refOverride = tpl.refereeSystemPrompt?.trim() || "";
-  const referee: GameAgent = {
-    id: id("ref"),
-    kind: "referee",
-    name: "裁判",
-    persona: refPersona,
-    systemPrompt: pickPromptOverride(
-      refOverride,
-      refereeSystemPrompt(refPersona),
-    ),
-    systemPromptOverride: refOverride || undefined,
-    modelOverride: tpl.refereeModel,
-    readableFileIds: tpl.refereeReadableFileIds,
-    editableFileIds: tpl.refereeEditableFileIds,
-    disabledFeatures: tpl.refereeDisabledFeatures,
-    history: [],
-  };
-  const agents = [world, ...characters, referee].map((agent) => ({
+  const systemAgents: GameAgent[] = tpl.agents
+    .filter((draftAgent) => !draftAgent.characterId)
+    .map((draftAgent) => {
+    const agentId = id("agent");
+    agentIdMap.set(draftAgent.id, agentId);
+    const capabilities = [...draftAgent.capabilities];
+    const fallbackPrompt = capabilities.includes("judge")
+      ? refereeSystemPrompt(draftAgent.persona)
+      : capabilities.includes("chronicle")
+        ? chroniclerSystemPrompt("god")
+        : capabilities.includes("world_open") ||
+            capabilities.includes("respond") ||
+            capabilities.includes("advance_clock")
+          ? worldSystemPrompt(draftAgent.persona || worldview)
+          : draftAgent.persona;
+    return {
+      id: agentId,
+      kind: "agent",
+      name: draftAgent.name.trim() || "未命名 AI",
+      persona: draftAgent.persona,
+      systemPrompt: pickPromptOverride(draftAgent.systemPrompt, fallbackPrompt),
+      systemPromptOverride: draftAgent.systemPrompt?.trim() || undefined,
+      modelOverride: draftAgent.model,
+      capabilities,
+      readableFileIds: draftAgent.readableFileIds,
+      editableFileIds: draftAgent.editableFileIds,
+      attributePermissions: draftAgent.attributePermissions,
+      history: [],
+    };
+    });
+  const agents = [...systemAgents, ...characters].map((agent) => ({
     ...agent,
     readableFileIds: Array.isArray(agent.readableFileIds)
       ? [...agent.readableFileIds]
@@ -722,13 +818,10 @@ export function createTemplateGame(
       ? [...agent.editableFileIds]
       : [...defaultEditable],
   }));
-  const agentIdForDraftValue = (value: string): string => {
-    if (value === "world") return world.id;
-    if (value === "referee") return referee.id;
-    const match = value.match(/^character_(\d+)$/);
-    if (match) return characters[Number(match[1])]?.id ?? value;
-    return agents.find((agent) => agent.id === value || agent.name === value)?.id ?? value;
-  };
+  const agentIdForDraftValue = (value: string): string =>
+    agentIdMap.get(value) ??
+    agents.find((agent) => agent.id === value || agent.name === value)?.id ??
+    value;
   const pipeline = normalizePipeline(tpl.pipeline ?? defaultPipeline());
   pipeline.nodes = pipeline.nodes.map((node) => ({
     ...node,
@@ -776,16 +869,6 @@ export function createTemplateGame(
     settings: {
       ...defaultGameRunSettings(characters.length),
       pipeline,
-      chroniclerGodPrompt: tpl.chroniclerGodPrompt?.trim() || undefined,
-      chroniclerPlayerPrompt: tpl.chroniclerPlayerPrompt?.trim() || undefined,
-      chroniclerModel: tpl.chroniclerModel,
-      chroniclerReadableFileIds: Array.isArray(tpl.chroniclerReadableFileIds)
-        ? tpl.chroniclerReadableFileIds
-        : defaultReadable,
-      chroniclerEditableFileIds: Array.isArray(tpl.chroniclerEditableFileIds)
-        ? tpl.chroniclerEditableFileIds
-        : defaultEditable,
-      chroniclerDisabledFeatures: tpl.chroniclerDisabledFeatures,
     },
     attributeDefinitions: normalizeAttributeDefinitions(
       tpl.attributeDefinitions,

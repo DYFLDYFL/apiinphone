@@ -1,6 +1,6 @@
 import type { ChatMessage } from "../../types";
 
-export type GameAgentKind = "world" | "character" | "referee";
+export type GameAgentKind = "agent" | "character";
 
 export type GamePlayMode = "spectate" | "play";
 
@@ -24,8 +24,11 @@ export interface GameAttributeDefinition {
   textOptions?: string[];
 }
 
+export type GameEra = "BCE" | "CE";
+
 export interface GameDateTime {
   description: string;
+  era: GameEra;
   year: number;
   month: number;
   day: number;
@@ -45,7 +48,17 @@ export interface GameContextFileEdit {
   append?: string;
 }
 
+export type AttributePermissionOperation = "read" | "set" | "add" | "remove";
+
+export interface GameAttributePermission {
+  read?: boolean;
+  set?: boolean;
+  add?: boolean;
+  remove?: boolean;
+}
+
 export type AgentFeatureKey =
+  | "world_open"
   | "propose"
   | "respond"
   | "judge"
@@ -63,15 +76,6 @@ export interface AgentModelOverride {
 export type ProposeOrderMode = "template" | "random" | "custom";
 export type ProposeMode = "serial" | "parallel";
 
-export type PipelineNodeKind =
-  | "agent"
-  | "world_open"
-  | "propose"
-  | "respond"
-  | "judge"
-  | "chronicle"
-  | "advance_clock";
-
 export type PipelineEdgeWhen =
   | "always"
   | "has_intents"
@@ -82,8 +86,10 @@ export type PipelineEdgeWhen =
 
 export interface PipelineNode {
   id: string;
-  kind: PipelineNodeKind;
-  label?: string;
+  /** 用户可编辑的节点标题；为空时由界面显示占位标题。 */
+  name: string;
+  /** 节点实际调用的能力。 */
+  executionCapabilities?: AgentFeatureKey[];
   agentIds?: string[];
   targetIds?: string[];
   dispatchMode?: "serial" | "parallel";
@@ -96,7 +102,8 @@ export interface PipelineEdge {
 }
 
 export interface GamePipeline {
-  entry: string;
+  /** 首个节点绑定的真实 AI 组，作为流水线入口。 */
+  entryAgentIds: string[];
   nodes: PipelineNode[];
   edges: PipelineEdge[];
 }
@@ -116,7 +123,8 @@ export interface GameAgent {
   modelOverride?: AgentModelOverride;
   readableFileIds?: string[];
   editableFileIds?: string[];
-  disabledFeatures?: AgentFeatureKey[];
+  capabilities: AgentFeatureKey[];
+  attributePermissions?: Record<string, GameAttributePermission>;
   history: ChatMessage[];
 }
 
@@ -166,6 +174,8 @@ export interface JudgeResult {
   sheetPatches?: Array<{
     sheetId: string;
     attrs?: Record<string, string | number | boolean>;
+    attrsAdd?: Record<string, string | number>;
+    attrsRemove?: Record<string, string | number>;
     inventoryAdd?: string[];
     inventoryRemove?: string[];
     flagsAdd?: string[];
@@ -198,13 +208,6 @@ export interface GameSettings {
   characterCount: number;
   /** 推进一轮流水线图；缺省用默认图。 */
   pipeline: GamePipeline;
-  /** 书记提示词覆盖（空 = 默认）。 */
-  chroniclerGodPrompt?: string;
-  chroniclerPlayerPrompt?: string;
-  chroniclerModel?: AgentModelOverride;
-  chroniclerReadableFileIds?: string[];
-  chroniclerEditableFileIds?: string[];
-  chroniclerDisabledFeatures?: AgentFeatureKey[];
 }
 
 export interface GameState {

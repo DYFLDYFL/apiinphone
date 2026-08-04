@@ -10,8 +10,10 @@ import {
 } from "../apiProviders";
 import { settingsForGame } from "../settings";
 import {
+  applySheetPatches,
   applyAuthorizedContextFileEdits,
   readableContextFiles,
+  readableSheets,
   syncContextFiles,
 } from "./mutations";
 import type { AgentModelOverride, GameAgent, GameState } from "./types";
@@ -95,10 +97,11 @@ export async function runGameAgent(
       role: "user",
       content: [
         userPrompt,
+        `\n\n你有权限查看的角色属性：\n${readableSheets(game, agent)}`,
         readableFiles
           ? `\n\n你有权限查看的游戏文档：\n${readableFiles}`
           : "",
-        '如需修改有权限的游戏文档，请在 JSON 中增加 fileEdits:[{"fileId":"文档 id","content":"完整新内容"}] 或 [{"fileId":"文档 id","append":"追加内容"}]；没有权限的修改会被拒绝。',
+        '如需修改有权限的游戏文档，请在 JSON 中增加 fileEdits:[{"fileId":"文档 id","content":"完整新内容"}] 或 [{"fileId":"文档 id","append":"追加内容"}]；如需修改角色属性，请使用 attributeEdits:[{"sheetId":"角色面板 id","attrs":{},"attrsAdd":{},"attrsRemove":{}}]。所有修改都会按权限和属性选项校验。',
       ].join(""),
     },
   ];
@@ -118,5 +121,12 @@ export async function runGameAgent(
   trimHistory(agent);
   const json = extractJsonObject(text);
   applyAuthorizedContextFileEdits(game, agent, json?.fileEdits);
+  if (Array.isArray(json?.attributeEdits)) {
+    applySheetPatches(
+      game,
+      json.attributeEdits as NonNullable<import("./types").JudgeResult["sheetPatches"]>,
+      agent,
+    );
+  }
   return { text, json };
 }

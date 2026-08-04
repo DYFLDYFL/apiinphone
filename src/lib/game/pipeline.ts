@@ -1,20 +1,10 @@
 import type {
+  AgentFeatureKey,
   GamePipeline,
   PipelineEdge,
   PipelineEdgeWhen,
   PipelineNode,
-  PipelineNodeKind,
 } from "./types";
-
-export const PIPELINE_NODE_KINDS: PipelineNodeKind[] = [
-  "agent",
-  "world_open",
-  "propose",
-  "respond",
-  "judge",
-  "chronicle",
-  "advance_clock",
-];
 
 export const PIPELINE_EDGE_WHENS: PipelineEdgeWhen[] = [
   "always",
@@ -24,16 +14,6 @@ export const PIPELINE_EDGE_WHENS: PipelineEdgeWhen[] = [
   "judge_redo",
   "judge_reject",
 ];
-
-export const PIPELINE_KIND_LABELS: Record<PipelineNodeKind, string> = {
-  agent: "自由 AI 节点",
-  world_open: "世界开场",
-  propose: "角色提案",
-  respond: "对端回应",
-  judge: "裁判裁定",
-  chronicle: "整理剧情",
-  advance_clock: "世界拨钟",
-};
 
 export const PIPELINE_WHEN_LABELS: Record<PipelineEdgeWhen, string> = {
   always: "总是",
@@ -46,15 +26,23 @@ export const PIPELINE_WHEN_LABELS: Record<PipelineEdgeWhen, string> = {
 
 export const MAX_PIPELINE_STEPS = 32;
 
-/** 默认流水线：等价于旧版写死的推进一轮。 */
-export function defaultPipeline(): GamePipeline {
+/** 默认能力链：提供可直接运行的结构，但不预置流程标题。 */
+export function defaultPipeline(bindings: {
+  entryAgentIds?: string[];
+  openAgentIds?: string[];
+  proposeAgentIds?: string[];
+  respondAgentIds?: string[];
+  judgeAgentIds?: string[];
+  chronicleAgentIds?: string[];
+  clockAgentIds?: string[];
+} = {}): GamePipeline {
   const nodes: PipelineNode[] = [
-    { id: "n_open", kind: "world_open", label: "世界开场" },
-    { id: "n_propose", kind: "propose", label: "角色提案" },
-    { id: "n_respond", kind: "respond", label: "对端回应" },
-    { id: "n_judge", kind: "judge", label: "裁判裁定" },
-    { id: "n_chronicle", kind: "chronicle", label: "整理剧情" },
-    { id: "n_clock", kind: "advance_clock", label: "世界拨钟" },
+    { id: "n_open", name: "", executionCapabilities: ["world_open"], agentIds: bindings.openAgentIds },
+    { id: "n_propose", name: "", executionCapabilities: ["propose"], agentIds: bindings.proposeAgentIds },
+    { id: "n_respond", name: "", executionCapabilities: ["respond"], agentIds: bindings.respondAgentIds },
+    { id: "n_judge", name: "", executionCapabilities: ["judge"], agentIds: bindings.judgeAgentIds },
+    { id: "n_chronicle", name: "", executionCapabilities: ["chronicle"], agentIds: bindings.chronicleAgentIds },
+    { id: "n_clock", name: "", executionCapabilities: ["advance_clock"], agentIds: bindings.clockAgentIds },
   ];
   const edges: PipelineEdge[] = [
     { from: "n_open", to: "n_propose", when: "always" },
@@ -66,14 +54,11 @@ export function defaultPipeline(): GamePipeline {
     { from: "n_judge", to: "n_chronicle", when: "judge_reject" },
     { from: "n_chronicle", to: "n_clock", when: "always" },
   ];
-  return { entry: "n_open", nodes, edges };
-}
-
-function isNodeKind(v: unknown): v is PipelineNodeKind {
-  return (
-    typeof v === "string" &&
-    (PIPELINE_NODE_KINDS as string[]).includes(v)
-  );
+  return {
+    entryAgentIds: [...(bindings.entryAgentIds ?? bindings.openAgentIds ?? [])],
+    nodes,
+    edges,
+  };
 }
 
 function isEdgeWhen(v: unknown): v is PipelineEdgeWhen {
@@ -153,12 +138,12 @@ export function validatePipeline(raw: unknown): PipelineValidation {
     }
     if (ids.has(n.id)) errors.push(`重复节点 id：${n.id}`);
     ids.add(n.id);
-    if (!isNodeKind(n.kind)) errors.push(`未知节点类型：${String(n.kind)}`);
+    if (typeof n.name !== "string") {
+      errors.push(`节点标题无效：${n.id}`);
+    }
   }
-  if (typeof p.entry !== "string" || !p.entry.trim()) {
-    errors.push("缺少入口节点");
-  } else if (ids.size && !ids.has(p.entry)) {
-    errors.push(`入口节点不存在：${p.entry}`);
+  if (!Array.isArray(p.entryAgentIds) && !nodes.some((node) => Array.isArray(node.agentIds) && node.agentIds.length)) {
+    errors.push("缺少入口 AI");
   }
   for (const e of edges) {
     if (!e || typeof e !== "object") {
@@ -172,14 +157,14 @@ export function validatePipeline(raw: unknown): PipelineValidation {
       errors.push(`未知边条件：${String(e.when)}`);
     }
   }
-  const kinds = new Set(
-    nodes.filter((n) => n && isNodeKind(n.kind)).map((n) => n.kind),
-  );
-  if (!kinds.has("advance_clock")) {
-    warnings.push("未包含「世界拨钟」节点，推进后可能不拨钟");
+  if (!nodes.some((n) => n && Array.isArray(n.agentIds) && n.agentIds.length)) {
+    warnings.push("没有节点绑定执行 AI");
   }
-  if (!kinds.has("propose")) {
-    warnings.push("未包含「角色提案」节点");
+  if (!nodes.some((n) => n && n.executionCapabilities?.includes("advance_clock"))) {
+    warnings.push("未包含拨钟能力节点，推进后可能不拨钟");
+  }
+  if (!nodes.some((n) => n && n.executionCapabilities?.includes("propose"))) {
+    warnings.push("未包含提案能力节点");
   }
   return { ok: errors.length === 0, errors, warnings };
 }
@@ -191,8 +176,21 @@ export function normalizePipeline(raw: unknown): GamePipeline {
   const p = raw as GamePipeline;
   const nodes: PipelineNode[] = p.nodes.map((n) => ({
     id: String(n.id).trim(),
-    kind: n.kind,
-    label: typeof n.label === "string" ? n.label : undefined,
+    name: typeof n.name === "string" ? n.name.trim() : "",
+    executionCapabilities: Array.isArray(n.executionCapabilities)
+      ? n.executionCapabilities.filter(
+          (feature): feature is AgentFeatureKey =>
+            typeof feature === "string" &&
+            [
+              "world_open",
+              "propose",
+              "respond",
+              "judge",
+              "chronicle",
+              "advance_clock",
+            ].includes(feature),
+        )
+      : undefined,
     agentIds: Array.isArray(n.agentIds) ? n.agentIds.map(String) : undefined,
     targetIds: Array.isArray(n.targetIds) ? n.targetIds.map(String) : undefined,
     dispatchMode: n.dispatchMode === "parallel" ? "parallel" : "serial",
@@ -203,7 +201,9 @@ export function normalizePipeline(raw: unknown): GamePipeline {
     when: e.when,
   }));
   return {
-    entry: String(p.entry).trim(),
+    entryAgentIds: Array.isArray(p.entryAgentIds)
+      ? p.entryAgentIds.map(String)
+      : (nodes[0]?.agentIds ?? []),
     nodes,
     edges,
   };

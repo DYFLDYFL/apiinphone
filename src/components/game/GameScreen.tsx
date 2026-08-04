@@ -35,6 +35,7 @@ import {
   GAME_TEMPLATE_PRESETS,
   defaultTemplateDraft,
   defaultContextFiles,
+  daysInMonth,
   formatGameDateTime,
   inferAttributeDefinitions,
   normalizeGameDateTime,
@@ -53,6 +54,7 @@ import type {
   AgentFeatureKey,
   GameAgent,
   GameAttributeDefinition,
+  GameAttributePermission,
   GameDateTime,
   GameEvent,
   GamePipeline,
@@ -60,7 +62,6 @@ import type {
   PipelineEdge,
   PipelineEdgeWhen,
   PipelineNode,
-  PipelineNodeKind,
   ProposeMode,
   ProposeOrderMode,
 } from "../../lib/game/types";
@@ -68,8 +69,6 @@ import {
   defaultPipeline,
   newPipelineNodeId,
   PIPELINE_EDGE_WHENS,
-  PIPELINE_KIND_LABELS,
-  PIPELINE_NODE_KINDS,
   PIPELINE_WHEN_LABELS,
   validatePipeline,
 } from "../../lib/game/pipeline";
@@ -117,6 +116,45 @@ function sanitizeTimelineEvents(
       sheetDiffs: undefined,
     };
   });
+}
+
+function syncDraftCharacterAgents(
+  draft: GameTemplateDraft,
+  characters = draft.characters,
+): GameTemplateDraft {
+  const existingByCharacterId = new Map(
+    draft.agents
+      .filter((agent) => Boolean(agent.characterId))
+      .map((agent) => [agent.characterId as string, agent]),
+  );
+  const characterAgents = characters.map((character, index) => {
+    const characterId = character.id ?? `character_${index}`;
+    const existing = existingByCharacterId.get(characterId);
+    return {
+      id: existing?.id ?? `agent_${characterId}`,
+      characterId,
+      name: character.name,
+      persona: character.persona,
+      systemPrompt: existing?.systemPrompt,
+      model: existing?.model,
+      capabilities: [
+        ...(existing?.capabilities ??
+          character.capabilities ??
+          ["propose", "respond"]),
+      ],
+      readableFileIds: existing?.readableFileIds,
+      editableFileIds: existing?.editableFileIds,
+      attributePermissions: existing?.attributePermissions,
+    };
+  });
+  return {
+    ...draft,
+    characters,
+    agents: [
+      ...draft.agents.filter((agent) => !agent.characterId),
+      ...characterAgents,
+    ],
+  };
 }
 
 export function GameScreen({
@@ -271,7 +309,7 @@ export function GameScreen({
     const clamped = Math.min(6, Math.max(minimum, Math.round(n)));
     const base = defaultTemplateDraft(Math.max(2, clamped));
     const defaults = base.characters.slice(0, clamped);
-    return {
+    return syncDraftCharacterAgents({
       ...prev,
       characters: defaults.map((c, i) =>
         prev.characters[i]
@@ -284,7 +322,7 @@ export function GameScreen({
       playerCharacterIndex: clamped
         ? Math.min(clamped - 1, prev.playerCharacterIndex ?? 0)
         : 0,
-    };
+    });
   };
 
   const applyCharacterCount = (n: number) => {
@@ -385,7 +423,7 @@ export function GameScreen({
     if (!game || busy) return;
     const worldview = text.trim();
     const agents = game.agents.map((a) => {
-      if (a.kind !== "world") return a;
+      if (!a.capabilities.includes("world_open")) return a;
       const override = a.systemPromptOverride?.trim();
       return {
         ...a,
@@ -490,7 +528,7 @@ export function GameScreen({
   const updateCharacter = (index: number, next: CharTemplateDraft) => {
     const characters = [...draft.characters];
     characters[index] = next;
-    setDraft({ ...draft, characters });
+    setDraft(syncDraftCharacterAgents(draft, characters));
   };
 
   const startNewGame = () => {
@@ -513,6 +551,10 @@ export function GameScreen({
       initialTime: world.initialTime,
       initialTimeParts: { ...world.initialTimeParts },
       contextFiles: world.contextFiles?.map((file) => ({ ...file })),
+      agents: world.agents.map((agent) => ({
+        ...agent,
+        capabilities: [...agent.capabilities],
+      })),
       attributeDefinitions: world.attributeDefinitions?.map((item) => ({
         ...item,
       })),
@@ -526,7 +568,7 @@ export function GameScreen({
         draft.playerCharacterIndex ?? 0,
       ),
     };
-    setDraft(next);
+    setDraft(syncDraftCharacterAgents(next));
     setSelectedPresetId(preset.id);
     setSelectedAiPresetId("");
     setCharCountInput(String(next.characters.length));
@@ -549,7 +591,7 @@ export function GameScreen({
   };
 
   const selectAiPreset = (preset: GameAiPreset) => {
-    setDraft((prev) => applyAiPreset(prev, preset));
+    setDraft((prev) => syncDraftCharacterAgents(applyAiPreset(prev, preset)));
     setSelectedAiPresetId(preset.id);
     setCharacterEntryView("ai-choice");
     setView("characters");
@@ -576,10 +618,7 @@ export function GameScreen({
         model: template.model ? { ...template.model } : undefined,
       },
     ];
-    setDraft({
-      ...draft,
-      characters,
-    });
+    setDraft(syncDraftCharacterAgents(draft, characters));
     setCharCountInput(String(characters.length));
   };
 
@@ -598,11 +637,11 @@ export function GameScreen({
     const playerCharacterIndex = characters.length
       ? Math.min(characters.length - 1, draft.playerCharacterIndex ?? 0)
       : 0;
-    setDraft({
+    setDraft(syncDraftCharacterAgents({
       ...draft,
       characters,
       playerCharacterIndex,
-    });
+    }));
     setCharCountInput(String(characters.length));
   };
 
@@ -1437,25 +1476,40 @@ export function GameScreen({
                           {gameAttributeDefinitions.map((definition) => (
                             <label key={definition.key} className="game-attr-row">
                               {definition.label}
-                              <input
-                                disabled={busy}
-                                defaultValue={String(
-                                  sheet.attrs[definition.key] ?? "",
-                                )}
-                                onBlur={(e) => {
-                                  const raw = e.target.value.trim();
-                                  const num = Number(raw);
-                                  const value =
-                                    raw !== "" &&
-                                    !Number.isNaN(num) &&
-                                    definition.valueType === "number"
-                                      ? num
-                                      : raw;
-                                  void saveCharacter(ch, {
-                                    attrs: { [definition.key]: value },
-                                  });
-                                }}
-                              />
+                              {definition.valueType === "number" ? (
+                                <input
+                                  type="number"
+                                  min={Number.MIN_SAFE_INTEGER}
+                                  max={Number.MAX_SAFE_INTEGER}
+                                  step="any"
+                                  disabled={busy}
+                                  defaultValue={String(sheet.attrs[definition.key] ?? "")}
+                                  onBlur={(e) => {
+                                    const raw = e.target.value.trim();
+                                    const value = raw === "" ? "" : Number(raw);
+                                    void saveCharacter(ch, {
+                                      attrs: { [definition.key]: value },
+                                    });
+                                  }}
+                                />
+                              ) : (
+                                <select
+                                  disabled={busy}
+                                  defaultValue={String(sheet.attrs[definition.key] ?? "")}
+                                  onChange={(e) => {
+                                    void saveCharacter(ch, {
+                                      attrs: { [definition.key]: e.target.value },
+                                    });
+                                  }}
+                                >
+                                  <option value="">未设置</option>
+                                  {(definition.textOptions ?? []).map((option) => (
+                                    <option key={String(option)} value={String(option)}>
+                                      {String(option)}
+                                    </option>
+                                  ))}
+                                </select>
+                              )}
                             </label>
                           ))}
                           <label>
@@ -2155,7 +2209,7 @@ function AiSetupScreen({
           ))}
         </nav>
         {step === "agents" ? (
-          <WorldAgentsStep draft={draft} onChange={onChange} />
+          <UnifiedAgentsStep draft={draft} onChange={onChange} />
         ) : (
           <WorldPipelineStep draft={draft} onChange={onChange} />
         )}
@@ -2318,9 +2372,7 @@ function TimePickerEditor({
   };
   const options = (from: number, to: number) =>
     Array.from({ length: to - from + 1 }, (_, index) => from + index);
-  const yearOptions = Array.from(new Set([...options(1, 100), current.year])).sort(
-    (a, b) => a - b,
-  );
+  const dayCount = daysInMonth(current.era, current.year, current.month);
   return (
     <div className="game-time-picker">
       <div className="game-section-title">
@@ -2337,12 +2389,27 @@ function TimePickerEditor({
       </label>
       <div className="game-time-select-grid">
         <label className="game-field">
-          年
-          <select value={current.year} onChange={(e) => update({ year: Number(e.target.value) })}>
-            {yearOptions.map((value) => (
-              <option key={value} value={value}>{value} 年</option>
-            ))}
+          纪元
+          <select
+            value={current.era}
+            onChange={(e) =>
+              update({ era: e.target.value === "BCE" ? "BCE" : "CE" })
+            }
+          >
+            <option value="CE">公元</option>
+            <option value="BCE">公元前</option>
           </select>
+        </label>
+        <label className="game-field">
+          年
+          <input
+            type="number"
+            min={1}
+            max={99999}
+            step={1}
+            value={current.year}
+            onChange={(e) => update({ year: Number(e.target.value) })}
+          />
         </label>
         <label className="game-field">
           月
@@ -2355,7 +2422,7 @@ function TimePickerEditor({
         <label className="game-field">
           日
           <select value={current.day} onChange={(e) => update({ day: Number(e.target.value) })}>
-            {options(1, 31).map((value) => (
+            {options(1, dayCount).map((value) => (
               <option key={value} value={value}>{value} 日</option>
             ))}
           </select>
@@ -2378,6 +2445,88 @@ function TimePickerEditor({
         </label>
       </div>
       <p className="settings-hint">最终保存为：{formatGameDateTime(current)}</p>
+    </div>
+  );
+}
+
+function AttributeOptionsEditor({
+  valueType,
+  options,
+  onChange,
+}: {
+  valueType: GameAttributeDefinition["valueType"];
+  options: Array<string | number>;
+  onChange: (options: string[] | number[]) => void;
+}) {
+  const [draft, setDraft] = useState("");
+  const updateAt = (index: number, raw: string) => {
+    if (valueType === "number") {
+      if (!raw.trim()) return;
+      const number = Math.max(-10000, Math.min(10000, Math.round(Number(raw))));
+      if (!Number.isFinite(number)) return;
+      onChange(options.map((item, itemIndex) => itemIndex === index ? number : item) as number[]);
+      return;
+    }
+    if (raw.trim()) {
+      onChange(options.map((item, itemIndex) => itemIndex === index ? raw.trim() : item) as string[]);
+    }
+  };
+  const addOption = () => {
+    if (!draft.trim()) return;
+    if (valueType === "number") {
+      const number = Math.max(-10000, Math.min(10000, Math.round(Number(draft))));
+      if (!Number.isFinite(number)) return;
+      if (!options.some((item) => Number(item) === number)) {
+        onChange([...options, number] as number[]);
+      }
+    } else if (!options.includes(draft.trim())) {
+      onChange([...options, draft.trim()] as string[]);
+    }
+    setDraft("");
+  };
+  return (
+    <div className="game-attribute-options">
+      <div className="game-attribute-option-chips">
+        {options.map((option, index) => (
+          <div className="game-attribute-option-chip" key={`${String(option)}-${index}`}>
+            <input
+              type={valueType === "number" ? "number" : "text"}
+              min={valueType === "number" ? -10000 : undefined}
+              max={valueType === "number" ? 10000 : undefined}
+              value={String(option)}
+              onChange={(e) => updateAt(index, e.target.value)}
+              aria-label={`选项 ${index + 1}`}
+            />
+            <button
+              type="button"
+              className="game-attribute-option-remove"
+              onClick={() => onChange(options.filter((_, itemIndex) => itemIndex !== index) as string[] | number[])}
+              aria-label="删除选项"
+            >
+              ×
+            </button>
+          </div>
+        ))}
+      </div>
+      <div className="game-attribute-option-add">
+        <input
+          type={valueType === "number" ? "number" : "text"}
+          min={valueType === "number" ? -10000 : undefined}
+          max={valueType === "number" ? 10000 : undefined}
+          value={draft}
+          placeholder={valueType === "number" ? "-10000 至 10000" : "输入一个文字选项"}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              addOption();
+            }
+          }}
+        />
+        <button type="button" className="secondary-btn" onClick={addOption}>
+          添加选项
+        </button>
+      </div>
     </div>
   );
 }
@@ -2426,10 +2575,7 @@ function WorldAttributesStep({
                           ...item,
                           valueType:
                             e.target.value === "text" ? "text" : "number",
-                          numberOptions:
-                            e.target.value === "text"
-                              ? undefined
-                              : item.numberOptions ?? [0, 1, 2, 3, 5, 10],
+                          numberOptions: undefined,
                           textOptions:
                             e.target.value === "text"
                               ? item.textOptions ?? ["平静", "警惕", "沉稳"]
@@ -2443,36 +2589,25 @@ function WorldAttributesStep({
               <option value="number">数字</option>
               <option value="text">文字</option>
             </select>
-            <input
-              className="game-attribute-options-input"
-              aria-label="属性选项"
-              placeholder="选项，用逗号分隔"
-              value={
-                definition.valueType === "number"
-                  ? (definition.numberOptions ?? []).join(", ")
-                  : (definition.textOptions ?? []).join("，")
-              }
-              onChange={(e) => {
-                const values = e.target.value
-                  .split(/[,，]/)
-                  .map((value) => value.trim())
-                  .filter(Boolean);
-                setDefinitions(
-                  definitions.map((item, itemIndex) =>
-                    itemIndex === index
-                      ? item.valueType === "number"
-                        ? {
-                            ...item,
-                            numberOptions: values
-                              .map(Number)
-                              .filter((value) => Number.isFinite(value)),
-                          }
-                        : { ...item, textOptions: values }
-                      : item,
-                  ),
-                );
-              }}
-            />
+            {definition.valueType === "text" ? (
+              <AttributeOptionsEditor
+                valueType="text"
+                options={definition.textOptions ?? []}
+                onChange={(options) =>
+                  setDefinitions(
+                    definitions.map((item, itemIndex) =>
+                      itemIndex === index
+                        ? { ...item, textOptions: options as string[] }
+                        : item,
+                    ),
+                  )
+                }
+              />
+            ) : (
+              <p className="game-attribute-number-hint">
+                数值在人物编辑和游戏中填写，可输入任意安全范围内的数字
+              </p>
+            )}
             <button
               type="button"
               className="link-btn"
@@ -2496,7 +2631,7 @@ function WorldAttributesStep({
               key: `attribute_${definitions.length + 1}`,
               label: `新属性 ${definitions.length + 1}`,
               valueType: "number",
-              numberOptions: [0, 1, 2, 3, 5, 10],
+              numberOptions: undefined,
             },
           ])
         }
@@ -2519,6 +2654,9 @@ function AgentConfigEditor({
   disabledFeatures,
   onDisabledFeaturesChange,
   files,
+  attributeDefinitions = [],
+  attributePermissions = {},
+  onAttributePermissionsChange,
 }: {
   model?: AgentModelOverride;
   onModelChange: (model?: AgentModelOverride) => void;
@@ -2528,10 +2666,16 @@ function AgentConfigEditor({
   disabledFeatures?: AgentFeatureKey[];
   onDisabledFeaturesChange: (features: AgentFeatureKey[]) => void;
   files: Array<{ id: string; title: string }>;
+  attributeDefinitions?: GameAttributeDefinition[];
+  attributePermissions?: Record<string, GameAttributePermission>;
+  onAttributePermissionsChange?: (
+    permissions: Record<string, GameAttributePermission>,
+  ) => void;
 }) {
   const readable = new Set(readableFileIds ?? files.map((file) => file.id));
   const editable = new Set(editableFileIds ?? []);
   const features: Array<{ id: AgentFeatureKey; label: string }> = [
+    { id: "world_open", label: "世界开场" },
     { id: "propose", label: "提案" },
     { id: "respond", label: "回应" },
     { id: "judge", label: "裁判" },
@@ -2602,11 +2746,193 @@ function AgentConfigEditor({
           ))}
         </div>
       </div>
+      {attributeDefinitions.length ? (
+        <div className="game-agent-attributes">
+          <div className="game-agent-files-title">属性权限（按属性控制增删改）</div>
+          <div className="game-agent-attribute-grid">
+            {attributeDefinitions.map((definition) => {
+              const permission = attributePermissions[definition.key] ?? {};
+              const update = (operation: keyof GameAttributePermission) => {
+                const next = { ...permission, [operation]: !permission[operation] };
+                onAttributePermissionsChange?.({
+                  ...attributePermissions,
+                  [definition.key]: next,
+                });
+              };
+              return (
+                <div className="game-agent-attribute-row" key={definition.key}>
+                  <span>{definition.label}</span>
+                  {(["read", "set", "add", "remove"] as const).map((operation) => (
+                    <label key={operation}>
+                      <input
+                        type="checkbox"
+                        checked={Boolean(permission[operation])}
+                        onChange={() => update(operation)}
+                      />
+                      {operation === "read"
+                        ? "看"
+                        : operation === "set"
+                          ? "改"
+                          : operation === "add"
+                            ? "增"
+                            : "删"}
+                    </label>
+                  ))}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
 
-function WorldAgentsStep({
+function UnifiedAgentsStep({
+  draft,
+  onChange,
+}: {
+  draft: GameTemplateDraft;
+  onChange: (draft: GameTemplateDraft) => void;
+}) {
+  const files = (draft.contextFiles ?? defaultContextFiles(draft.worldview, draft.initialTime))
+    .map(({ id, title }) => ({ id, title }));
+  const definitions = attributeDefinitionsForDraft(draft);
+  const allFeatures: AgentFeatureKey[] = [
+    "world_open",
+    "propose",
+    "respond",
+    "judge",
+    "chronicle",
+    "advance_clock",
+  ];
+  const updateAgent = (
+    index: number,
+    patch: Partial<GameTemplateDraft["agents"][number]>,
+  ) => {
+    const current = draft.agents[index];
+    const nextAgents = draft.agents.map((agent, itemIndex) =>
+      itemIndex === index ? { ...agent, ...patch } : agent,
+    );
+    const nextCharacters = current?.characterId
+      ? draft.characters.map((character) =>
+          character.id === current.characterId
+            ? {
+                ...character,
+                name:
+                  typeof patch.name === "string"
+                    ? patch.name
+                    : character.name,
+                persona:
+                  typeof patch.persona === "string"
+                    ? patch.persona
+                    : character.persona,
+              }
+            : character,
+        )
+      : draft.characters;
+    onChange({
+      ...draft,
+      agents: nextAgents,
+      characters: nextCharacters,
+    });
+  };
+  const addAgent = () =>
+    onChange({
+      ...draft,
+      agents: [
+        ...draft.agents,
+        {
+          id: `agent_${Math.random().toString(36).slice(2, 8)}`,
+          name: `新 AI ${draft.agents.length + 1}`,
+          persona: "",
+          capabilities: ["respond"],
+        },
+      ],
+    });
+  return (
+    <section className="game-editor-section game-card">
+      <div className="game-section-title">
+        <h3>统一 AI 列表</h3>
+        <span>每个 AI 都可承担一个或多个职责，也可以全部删除后重新添加</span>
+      </div>
+      <div className="game-agent-card-list">
+        {draft.agents.map((agent, index) => {
+          const disabled = allFeatures.filter((feature) => !agent.capabilities.includes(feature));
+          return (
+            <article className="game-agent-card" key={agent.id}>
+              <div className="game-agent-card-heading">
+                <input
+                  className="game-agent-card-title"
+                  value={agent.name}
+                  placeholder={`AI ${index + 1}`}
+                  aria-label={`AI ${index + 1} 名称`}
+                  onChange={(event) =>
+                    updateAgent(index, { name: event.target.value })
+                  }
+                />
+                <button
+                  type="button"
+                  className="link-btn"
+                  onClick={() =>
+                    onChange({
+                      ...draft,
+                      agents: draft.agents.filter((_, itemIndex) => itemIndex !== index),
+                    })
+                  }
+                >
+                  删除
+                </button>
+              </div>
+              <label className="game-field">
+                人设
+                <textarea
+                  rows={3}
+                  value={agent.persona}
+                  onChange={(e) => updateAgent(index, { persona: e.target.value })}
+                />
+              </label>
+              <label className="game-field">
+                专属提示词（空=按能力生成）
+                <textarea
+                  rows={3}
+                  value={agent.systemPrompt ?? ""}
+                  onChange={(e) => updateAgent(index, { systemPrompt: e.target.value })}
+                />
+              </label>
+              <AgentConfigEditor
+                model={agent.model}
+                onModelChange={(model) => updateAgent(index, { model })}
+                readableFileIds={agent.readableFileIds}
+                editableFileIds={agent.editableFileIds}
+                onAccessChange={(readableFileIds, editableFileIds) =>
+                  updateAgent(index, { readableFileIds, editableFileIds })
+                }
+                disabledFeatures={disabled}
+                onDisabledFeaturesChange={(nextDisabled) =>
+                  updateAgent(index, {
+                    capabilities: allFeatures.filter((feature) => !nextDisabled.includes(feature)),
+                  })
+                }
+                attributeDefinitions={definitions}
+                attributePermissions={agent.attributePermissions}
+                onAttributePermissionsChange={(attributePermissions) =>
+                  updateAgent(index, { attributePermissions })
+                }
+                files={files}
+              />
+            </article>
+          );
+        })}
+      </div>
+      <button type="button" className="secondary-btn" onClick={addAgent}>
+        添加 AI
+      </button>
+    </section>
+  );
+}
+
+export function WorldAgentsStep({
   draft,
   onChange,
 }: {
@@ -2750,19 +3076,18 @@ function WorldPipelineStep({
       </div>
       <p className="settings-hint">
         新建游戏不再单独固定顺序或串并行；下面的节点可以指定多个 AI、目标和调度方式。
-        旧存档中的顺序字段仍会兼容读取。
+        节点标题可直接编辑，实际执行由绑定 AI 的能力和执行能力配置决定。
       </p>
       <PipelineEditor
         value={draft.pipeline ?? defaultPipeline()}
         onChange={(pipeline) => onChange({ ...draft, pipeline })}
         agents={[
-          { id: "world", name: "世界", kind: "world" },
-          ...draft.characters.map((character, index) => ({
-            id: `character_${index}`,
-            name: character.name || `角色 ${index + 1}`,
-            kind: "character" as const,
+          ...draft.agents.map((agent) => ({
+            id: agent.id,
+            name: agent.name || agent.id,
+            kind: "agent",
+            capabilities: agent.capabilities,
           })),
-          { id: "referee", name: "裁判", kind: "referee" },
         ]}
       />
     </section>
@@ -2888,36 +3213,25 @@ export function TemplateEditorScreen({
                   <option value="number">数字</option>
                   <option value="text">文字</option>
                 </select>
-                <input
-                  className="game-attribute-options-input"
-                  aria-label="属性选项"
-                  placeholder="选项，用逗号分隔"
-                  value={
-                    definition.valueType === "number"
-                      ? (definition.numberOptions ?? []).join(", ")
-                      : (definition.textOptions ?? []).join("，")
-                  }
-                  onChange={(e) => {
-                    const values = e.target.value
-                      .split(/[,，]/)
-                      .map((value) => value.trim())
-                      .filter(Boolean);
-                    setDefinitions(
-                      definitions.map((item, itemIndex) =>
-                        itemIndex === index
-                          ? item.valueType === "number"
-                            ? {
-                                ...item,
-                                numberOptions: values
-                                  .map(Number)
-                                  .filter((value) => Number.isFinite(value)),
-                              }
-                            : { ...item, textOptions: values }
-                          : item,
-                      ),
-                    );
-                  }}
-                />
+                {definition.valueType === "text" ? (
+                  <AttributeOptionsEditor
+                    valueType="text"
+                    options={definition.textOptions ?? []}
+                    onChange={(options) =>
+                      setDefinitions(
+                        definitions.map((item, itemIndex) =>
+                          itemIndex === index
+                            ? { ...item, textOptions: options as string[] }
+                            : item,
+                        ),
+                      )
+                    }
+                  />
+                ) : (
+                  <p className="game-attribute-number-hint">
+                    数值在人物编辑和游戏中填写，可输入任意安全范围内的数字
+                  </p>
+                )}
                 <button
                   type="button"
                   className="link-btn"
@@ -2939,7 +3253,7 @@ export function TemplateEditorScreen({
                   key: `attribute_${definitions.length + 1}`,
                   label: `新属性 ${definitions.length + 1}`,
                   valueType: "number",
-                  numberOptions: [0, 1, 2, 3, 5, 10],
+                  numberOptions: undefined,
                 },
               ])
             }
@@ -3272,6 +3586,7 @@ function CharacterEditorScreen({
   const definitions = attributeDefinitionsForDraft(draft);
   const files = (draft.contextFiles ?? defaultContextFiles(draft.worldview, draft.initialTime))
     .map(({ id, title }) => ({ id, title }));
+  const characterFeatures: AgentFeatureKey[] = ["propose", "respond"];
   const setAttr = (definition: GameAttributeDefinition, raw: string) => {
     const value =
       definition.valueType === "number" && raw.trim() !== ""
@@ -3320,9 +3635,21 @@ function CharacterEditorScreen({
             onAccessChange={(readableFileIds, editableFileIds) =>
               onChange({ ...character, readableFileIds, editableFileIds })
             }
-            disabledFeatures={character.disabledFeatures}
+            disabledFeatures={characterFeatures.filter(
+              (feature) => !(character.capabilities ?? characterFeatures).includes(feature),
+            )}
             onDisabledFeaturesChange={(disabledFeatures) =>
-              onChange({ ...character, disabledFeatures })
+              onChange({
+                ...character,
+                capabilities: characterFeatures.filter(
+                  (feature) => !disabledFeatures.includes(feature),
+                ),
+              })
+            }
+            attributeDefinitions={definitions}
+            attributePermissions={character.attributePermissions}
+            onAttributePermissionsChange={(attributePermissions) =>
+              onChange({ ...character, attributePermissions })
             }
             files={files}
           />
@@ -3336,33 +3663,28 @@ function CharacterEditorScreen({
             {definitions.map((definition) => (
               <label className="game-attribute-field" key={definition.key}>
                 <span>{definition.label}</span>
-                <select
-                  value={String(character.attrs[definition.key] ?? "")}
-                  onChange={(e) => setAttr(definition, e.target.value)}
-                >
-                  <option value="">未设置</option>
-                  {(definition.valueType === "number"
-                    ? definition.numberOptions ?? []
-                    : definition.textOptions ?? []
-                  ).map((value) => (
-                    <option key={String(value)} value={String(value)}>
-                      {String(value)}
-                    </option>
-                  ))}
-                  {!(
-                    definition.valueType === "number"
-                      ? definition.numberOptions ?? []
-                      : definition.textOptions ?? []
-                  ).some(
-                    (value) =>
-                      String(value) === String(character.attrs[definition.key] ?? ""),
-                  ) &&
-                    character.attrs[definition.key] !== undefined && (
-                      <option value={String(character.attrs[definition.key])}>
-                        {String(character.attrs[definition.key])}（旧值）
+                {definition.valueType === "number" ? (
+                  <input
+                    type="number"
+                    min={Number.MIN_SAFE_INTEGER}
+                    max={Number.MAX_SAFE_INTEGER}
+                    step="any"
+                    value={String(character.attrs[definition.key] ?? "")}
+                    onChange={(e) => setAttr(definition, e.target.value)}
+                  />
+                ) : (
+                  <select
+                    value={String(character.attrs[definition.key] ?? "")}
+                    onChange={(e) => setAttr(definition, e.target.value)}
+                  >
+                    <option value="">未设置</option>
+                    {(definition.textOptions ?? []).map((value) => (
+                      <option key={String(value)} value={String(value)}>
+                        {String(value)}
                       </option>
-                    )}
-                </select>
+                    ))}
+                  </select>
+                )}
               </label>
             ))}
           </div>
@@ -3391,74 +3713,79 @@ function PipelineEditor({
 }: {
   value: GamePipeline;
   onChange: (next: GamePipeline) => void;
-  agents?: Array<{ id: string; name: string; kind: string }>;
+  agents?: Array<{
+    id: string;
+    name: string;
+    kind: string;
+    capabilities?: AgentFeatureKey[];
+  }>;
 }) {
   const validation = validatePipeline(value);
   const setNodes = (nodes: PipelineNode[]) => onChange({ ...value, nodes });
   const setEdges = (edges: PipelineEdge[]) => onChange({ ...value, edges });
+  const capabilityLabels: Array<{ id: AgentFeatureKey; label: string }> = [
+    { id: "world_open", label: "世界开场" },
+    { id: "propose", label: "提案" },
+    { id: "respond", label: "回应" },
+    { id: "judge", label: "裁判" },
+    { id: "chronicle", label: "整理剧情" },
+    { id: "advance_clock", label: "拨钟" },
+  ];
 
   return (
     <div className="game-pipeline-editor">
       <p className="settings-hint">流水线节点与出边（条件按列表顺序取第一条匹配）</p>
-      <label>
-        入口节点
-        <select
-          value={value.entry}
-          onChange={(e) => onChange({ ...value, entry: e.target.value })}
-        >
-          {value.nodes.map((n) => (
-            <option key={n.id} value={n.id}>
-              {n.label || PIPELINE_KIND_LABELS[n.kind]}（{n.id}）
-            </option>
-          ))}
-        </select>
-      </label>
+      <p className="settings-hint">
+        没有单独的入口节点；第一个节点绑定的 AI（可多选）就是入口组：
+        {value.entryAgentIds
+          .map((id) => agents.find((agent) => agent.id === id)?.name ?? id)
+          .join("、") || "未绑定"}
+      </p>
       {value.nodes.map((node, idx) => {
+        const eligibleAgents = agents;
         const outs = value.edges
           .map((e, ei) => ({ e, ei }))
           .filter(({ e }) => e.from === node.id);
         return (
           <details key={node.id} className="game-pipeline-node" open={idx < 2}>
-            <summary>
-              {PIPELINE_KIND_LABELS[node.kind]}
-              {node.label ? ` · ${node.label}` : ""}（{node.id}）
-            </summary>
-            <label>
-              类型
-              <select
-                value={node.kind}
-                onChange={(e) => {
-                  const kind = e.target.value as PipelineNodeKind;
-                  const nodes = value.nodes.map((n) =>
-                    n.id === node.id
-                      ? {
-                          ...n,
-                          kind,
-                          label: PIPELINE_KIND_LABELS[kind],
-                        }
-                      : n,
-                  );
-                  setNodes(nodes);
-                }}
-              >
-                {PIPELINE_NODE_KINDS.map((k) => (
-                  <option key={k} value={k}>
-                    {PIPELINE_KIND_LABELS[k]}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              备注名
+            <summary onClick={(event) => event.stopPropagation()}>
               <input
-                value={node.label ?? ""}
-                onChange={(e) => {
+                className="game-pipeline-node-title"
+                value={node.name}
+                placeholder="未命名节点"
+                aria-label="节点名称"
+                onClick={(event) => event.stopPropagation()}
+                onChange={(event) => {
                   const nodes = value.nodes.map((n) =>
-                    n.id === node.id ? { ...n, label: e.target.value } : n,
+                    n.id === node.id ? { ...n, name: event.target.value } : n,
                   );
                   setNodes(nodes);
                 }}
               />
+              <span className="game-pipeline-node-id">（{node.id}）</span>
+            </summary>
+            <label className="game-pipeline-agent-select">
+              执行能力（可多选，标题文字不参与判断）
+              <select
+                multiple
+                value={node.executionCapabilities ?? []}
+                onChange={(e) => {
+                  const executionCapabilities = Array.from(
+                    e.target.selectedOptions,
+                  ).map((option) => option.value as AgentFeatureKey);
+                  setNodes(
+                    value.nodes.map((n) =>
+                      n.id === node.id ? { ...n, executionCapabilities } : n,
+                    ),
+                  );
+                }}
+              >
+                {capabilityLabels.map((capability) => (
+                  <option key={capability.id} value={capability.id}>
+                    {capability.label}
+                  </option>
+                ))}
+              </select>
             </label>
             <label className="game-pipeline-agent-select">
               执行 AI（可多选）
@@ -3469,14 +3796,20 @@ function PipelineEditor({
                   const agentIds = Array.from(e.target.selectedOptions).map(
                     (option) => option.value,
                   );
-                  setNodes(
-                    value.nodes.map((n) =>
-                      n.id === node.id ? { ...n, agentIds } : n,
-                    ),
+                  const nodes = value.nodes.map((n) =>
+                    n.id === node.id ? { ...n, agentIds } : n,
                   );
+                  onChange({
+                    ...value,
+                    nodes,
+                    entryAgentIds:
+                      value.nodes[0]?.id === node.id
+                        ? agentIds
+                        : value.entryAgentIds,
+                  });
                 }}
               >
-                {agents.map((agent) => (
+                {eligibleAgents.map((agent) => (
                   <option key={agent.id} value={agent.id}>{agent.name}</option>
                 ))}
               </select>
@@ -3559,7 +3892,7 @@ function PipelineEditor({
                   >
                     {value.nodes.map((n) => (
                       <option key={n.id} value={n.id}>
-                        {n.label || PIPELINE_KIND_LABELS[n.kind]}
+                        {n.name || "未命名节点"}
                       </option>
                     ))}
                   </select>
@@ -3597,11 +3930,12 @@ function PipelineEditor({
                 const edges = value.edges.filter(
                   (e) => e.from !== node.id && e.to !== node.id,
                 );
-                const entry =
-                  value.entry === node.id
-                    ? nodes[0]?.id ?? ""
-                    : value.entry;
-                onChange({ entry, nodes, edges });
+                onChange({
+                  ...value,
+                  entryAgentIds: nodes[0]?.agentIds ?? [],
+                  nodes,
+                  edges,
+                });
               }}
             >
               删除节点
@@ -3621,14 +3955,13 @@ function PipelineEditor({
                 ...value.nodes,
                 {
                   id,
-                  kind: "agent",
-                  label: PIPELINE_KIND_LABELS.agent,
+                  name: "",
+                  executionCapabilities: [],
                   agentIds: [],
                   targetIds: [],
                   dispatchMode: "parallel",
                 },
               ],
-              entry: value.entry || id,
             });
           }}
         >
@@ -3637,7 +3970,24 @@ function PipelineEditor({
         <button
           type="button"
           className="link-btn"
-          onClick={() => onChange(defaultPipeline())}
+          onClick={() => {
+            const byCapability = (feature: AgentFeatureKey) =>
+              agents
+                .filter((agent) => agent.capabilities?.includes(feature))
+                .map((agent) => agent.id);
+            const open = byCapability("world_open");
+            onChange(
+              defaultPipeline({
+                entryAgentIds: open.slice(0, 1),
+                openAgentIds: open.slice(0, 1),
+                proposeAgentIds: byCapability("propose"),
+                respondAgentIds: byCapability("respond"),
+                judgeAgentIds: byCapability("judge"),
+                chronicleAgentIds: byCapability("chronicle"),
+                clockAgentIds: byCapability("advance_clock"),
+              }),
+            );
+          }}
         >
           恢复默认流水线
         </button>
