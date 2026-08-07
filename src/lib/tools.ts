@@ -1,10 +1,6 @@
 import type { AppSettings, ChatMessage } from "../types";
 import { Capacitor } from "@capacitor/core";
 import {
-  customToolExtensions,
-  executeCustomTool,
-} from "./customTools";
-import {
   formatExportToolResult,
   saveExportedFile,
   type ExportFormat,
@@ -34,7 +30,6 @@ export function isPythonSandboxAvailable(): boolean {
   return isNativePythonAvailable();
 }
 
-export { DEFAULT_MAX_TOOL_ROUNDS } from "./settings";
 export { waitingLabel, buildToolTraceFromApiMessages as buildToolTrace };
 
 export interface ToolExecutionResult {
@@ -272,22 +267,6 @@ export function buildTools(
   if (settings.toolsPythonSandbox && isPythonSandboxAvailable()) {
     tools.push(RUN_PYTHON_TOOL);
   }
-  const raw = settings.toolsCustomJson.trim();
-  if (raw) {
-    try {
-      const extra = JSON.parse(raw) as unknown;
-      if (!Array.isArray(extra)) {
-        throw new ToolError("自定义工具 JSON 必须是数组。");
-      }
-      tools.push(...(extra as Array<Record<string, unknown>>));
-    } catch (err) {
-      throw new ToolError(
-        err instanceof ToolError
-          ? err.message
-          : `自定义工具 JSON 无效：${String(err)}`,
-      );
-    }
-  }
   return tools.length ? tools : null;
 }
 
@@ -300,11 +279,6 @@ export async function executeTool(
   if (signal?.aborted) throw new ToolError("已取消");
   const payload = parseToolArgs(argumentsJson);
 
-  const custom = customToolExtensions(settings).get(name);
-  if (custom) {
-    return { content: await executeCustomTool(name, payload, custom, signal) };
-  }
-
   const handler = BUILTIN_HANDLERS[name];
   if (handler) {
     const out = await handler(payload, settings, signal);
@@ -313,7 +287,7 @@ export async function executeTool(
   }
 
   throw new ToolError(
-    `未知工具：${name}。可在自定义工具 JSON 中添加 x-apiinphone 扩展以配置 HTTP/JS 处理器。`,
+    `未知工具：${name}。`,
   );
 }
 

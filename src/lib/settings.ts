@@ -1,16 +1,11 @@
 import { Preferences } from "@capacitor/preferences";
-import type { AppSettings, WebChatMode } from "../types";
+import type { AppSettings } from "../types";
 import {
   DEEPSEEK_PROVIDER,
   defaultRecentModels,
   normalizeReasoningEffort,
   resolveModel,
 } from "./apiProviders";
-
-export function normalizeWebChatMode(value: unknown): WebChatMode {
-  if (value === "fast" || value === "deep" || value === "expert") return value;
-  return "fast";
-}
 
 const LEGACY_MODEL_PRESETS: Record<string, string> = {
   flash: "deepseek-v4-flash",
@@ -32,9 +27,7 @@ const FORCED_ON = {
   toolsEnabled: true,
   toolsWebSearch: true,
   toolsPythonSandbox: true,
-  toolsCustomJson: "",
   baseUrl: DEEPSEEK_PROVIDER.baseUrl,
-  exportLocation: "documents" as const,
   maxToolRounds: DEFAULT_MAX_TOOL_ROUNDS,
   webSearchDefaultTopK: DEFAULT_WEB_SEARCH_TOP_K,
   webSearchMaxTopK: DEFAULT_WEB_SEARCH_MAX_TOP_K,
@@ -44,13 +37,7 @@ const FORCED_ON = {
 export const DEFAULT_SETTINGS: AppSettings = {
   apiProvider: "deepseek",
   apiKey: "",
-  deepseekTransport: "official",
-  webSessionToken: "",
-  webSessionCookies: "",
-  webMinIntervalMs: 3000,
-  webChatMode: "fast",
   webSearchEnabled: false,
-  gameWebChatMode: "fast",
   gameWebSearchEnabled: false,
   gameAutoDelegateAi: false,
   model: "deepseek-v4-flash",
@@ -72,14 +59,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   retryBackoffMs: 1000,
   systemPrompt:
     "时效问题先 get_current_time 再 web_search；引用搜索结果只用 [1][2]…。",
-  appTitle: "AI API Client",
   theme: "light",
   recentModels: defaultRecentModels(),
 };
-
-export function isWebTransport(settings: AppSettings): boolean {
-  return settings.deepseekTransport === "web";
-}
 
 function applyForcedOn(settings: AppSettings): AppSettings {
   return { ...settings, ...FORCED_ON };
@@ -97,15 +79,11 @@ export function settingsForGame(settings: AppSettings): AppSettings {
     DEEPSEEK_PROVIDER.defaultModel;
   return {
     ...settings,
-    deepseekTransport: "official",
     model: gameModel,
     thinkingMode: settings.gameThinkingMode ?? settings.thinkingMode,
     reasoningEffort: normalizeReasoningEffort(
       settings.gameReasoningEffort ?? settings.reasoningEffort,
       gameModel,
-    ),
-    webChatMode: normalizeWebChatMode(
-      settings.gameWebChatMode ?? settings.webChatMode,
     ),
     webSearchEnabled: Boolean(
       settings.gameWebSearchEnabled ?? settings.webSearchEnabled,
@@ -117,19 +95,7 @@ export function effectiveGameModel(settings: AppSettings): string {
   return resolveModel(settingsForGame(settings));
 }
 
-export function effectiveWebChatMode(settings: AppSettings): WebChatMode {
-  return normalizeWebChatMode(settings.webChatMode);
-}
-
-export function effectiveWebSearchEnabled(settings: AppSettings): boolean {
-  return Boolean(settings.webSearchEnabled);
-}
-
 export function thinkingActive(settings: AppSettings): boolean {
-  if (isWebTransport(settings)) {
-    const mode = effectiveWebChatMode(settings);
-    return mode === "deep" || mode === "expert";
-  }
   if (settings.thinkingMode !== "enabled") return false;
   const model = effectiveModel(settings).toLowerCase();
   return model.includes("reasoner") || model.includes("v4");
@@ -193,20 +159,6 @@ export async function loadSettings(): Promise<AppSettings> {
         LEGACY_MODEL_PRESETS[raw.modelPreset] ?? merged.model;
     }
     merged.apiProvider = "deepseek";
-    if (merged.deepseekTransport !== "web") {
-      merged.deepseekTransport = "official";
-    }
-    if (typeof merged.webSessionToken !== "string") merged.webSessionToken = "";
-    if (typeof merged.webSessionCookies !== "string") {
-      merged.webSessionCookies = "";
-    }
-    {
-      const interval = Number(merged.webMinIntervalMs);
-      merged.webMinIntervalMs =
-        Number.isNaN(interval) || interval < 500
-          ? 3000
-          : Math.min(60000, Math.round(interval));
-    }
     if (!merged.recentModels?.length) {
       merged.recentModels = defaultRecentModels();
     }
@@ -249,11 +201,7 @@ export async function loadSettings(): Promise<AppSettings> {
       merged.gameReasoningEffort ?? merged.reasoningEffort,
       merged.gameModel,
     );
-    merged.webChatMode = normalizeWebChatMode(merged.webChatMode);
     merged.webSearchEnabled = Boolean(merged.webSearchEnabled);
-    merged.gameWebChatMode = normalizeWebChatMode(
-      merged.gameWebChatMode ?? merged.webChatMode,
-    );
     merged.gameWebSearchEnabled = Boolean(
       merged.gameWebSearchEnabled ?? merged.webSearchEnabled,
     );

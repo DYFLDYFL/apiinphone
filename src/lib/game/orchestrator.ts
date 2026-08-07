@@ -7,6 +7,7 @@ import {
   agentDisplayName,
   applySheetPatches,
   notifySummary,
+  mapDistance,
   plainTextFromModel,
   pushEvent,
   recentEventsText,
@@ -16,7 +17,7 @@ import {
 } from "./mutations";
 import { chroniclerSystemPrompt, pickPromptOverride } from "./prompts";
 import {
-  formatGameDateTime,
+  formatGameClock,
   isValidGameDateTime,
   normalizeGameDateTime,
 } from "./templates";
@@ -92,7 +93,7 @@ function rememberClock(game: GameState): void {
 
 function setClockText(game: GameState, value: GameDateTime): void {
   const dateTime = normalizeGameDateTime(value);
-  const t = formatGameDateTime(dateTime);
+  const t = formatGameClock(dateTime, game.settings.weekCycleEnabled);
   game.worldClock.dateTime = dateTime;
   game.worldClock.description = dateTime.description;
   game.worldClock.timeText = t;
@@ -237,7 +238,6 @@ function parseJudge(json: Record<string, unknown> | null, _text: string): JudgeR
     return {
       verdict: "reject",
       reason: "裁判未返回 JSON",
-      periodComplete: false,
       publicSummary: "本轮交互已裁定：驳回",
       redo: true,
     };
@@ -261,7 +261,6 @@ function parseJudge(json: Record<string, unknown> | null, _text: string): JudgeR
     sheetPatches: Array.isArray(json.sheetPatches)
       ? (json.sheetPatches as JudgeResult["sheetPatches"])
       : [],
-    periodComplete: Boolean(json.periodComplete),
     publicSummary,
     redo,
     notify: parseNotify(json.notify),
@@ -524,6 +523,45 @@ async function appendChronicles(
     }
   }
 
+  const personalBodiesThisTick: Array<{
+    characterId: string;
+    body: string;
+  }> = [];
+  game.personalStories ??= {};
+  for (const character of characters(game)) {
+    if (control?.cancelled) break;
+    const characterId = character.characterId ?? character.id;
+    let body = "";
+    if (character.id === game.playerCharacterId && playerBodyThisTick) {
+      body = playerBodyThisTick;
+    } else {
+      try {
+        const personalRes = await runGameAgent(
+          settings,
+          game,
+          character,
+          [
+            `角色「${character.name}」。请根据本时你能看到的材料，写一节你的个人经历。`,
+            "只写你的行动、见闻和感受，不补写你没有看到的秘密，不替其他角色做全知判断。",
+            eventsTextForTick(game, tick),
+          ].join("\n\n"),
+          control,
+          (text) =>
+            onProgress?.({
+              phase: text,
+              interactionRound: game.tickBuffer?.interactionRound ?? 0,
+              maxRounds: 0,
+            }),
+        );
+        body = cleanStoryBody(personalRes.text || "") || "（本时经历生成失败）";
+      } catch {
+        body = "（本时经历生成失败）";
+      }
+    }
+    game.personalStories[characterId] = `${game.personalStories[characterId] ?? ""}${sectionHeader}${body}`.trim();
+    personalBodiesThisTick.push({ characterId, body });
+  }
+
   if (godBodyThisTick) {
     await archiveStoryTick({
       gameId: game.id,
@@ -542,15 +580,27 @@ async function appendChronicles(
       body: playerBodyThisTick,
     });
   }
+  for (const personal of personalBodiesThisTick) {
+    await archiveStoryTick({
+      gameId: game.id,
+      tick,
+      label,
+      kind: `personal-${personal.characterId}`,
+      body: personal.body,
+    });
+  }
 
   game.storyTick = tick;
+  syncContextFiles(game);
   await persist(game, onPersist);
 }
 
 function rosterBrief(game: GameState): string {
   return game.sheets
     .map((s) => {
-      const loc = s.attrs.location != null ? String(s.attrs.location) : "";
+      const loc = s.position
+        ? `坐标 ${s.position.x},${s.position.y}`
+        : "未定位";
       const mood = s.attrs.mood != null ? String(s.attrs.mood) : "";
       return `- ${s.name}（${loc}${mood ? ` · ${mood}` : ""}）`;
     })
@@ -622,7 +672,13 @@ export async function seedInitialChronicles(
           `请为角色「${player?.name ?? "你"}」写开场个人经历（仅其可知）。`,
           `人设：${player?.persona ?? ""}`,
           sheet
-            ? `面板摘要：位置=${String(sheet.attrs.location ?? "")}，心情=${String(sheet.attrs.mood ?? "")}，物品=${sheet.inventory.join("、") || "无"}`
+            ? `面板摘要：坐标=${
+                sheet.position
+                  ? `${sheet.position.x},${sheet.position.y}`
+                  : "未定位"
+              }，心情=${String(sheet.attrs.mood ?? "")}，物品=${
+                sheet.inventory.join("、") || "无"
+              }`
             : "",
           `你所在场景氛围：${scene}`,
           "不要写其他角色的私密心思；可写你能看见/听见的晨间日常。",
@@ -1080,6 +1136,22 @@ export async function advanceOneRound(
     });
     const intents = game.tickBuffer?.intents ?? allIntents;
     const resps = game.tickBuffer?.responses ?? responses;
+    const movementDistanceText = intents
+      .map((intent) => {
+        const from = game.agents.find((agent) => agent.id === intent.fromId);
+        const to = game.agents.find(
+          (agent) => agent.id === resolveTargetId(game, intent.toId),
+        );
+        const fromSheet = from ? sheetFor(game, from) : undefined;
+        const toSheet = to ? sheetFor(game, to) : undefined;
+        if (!from || !to || !fromSheet?.position || !toSheet?.position) return "";
+        return `${from.name} 到 ${to.name} 的地图距离为 ${mapDistance(
+          fromSheet.position,
+          toSheet.position,
+        )} 格`;
+      })
+      .filter(Boolean)
+      .join("\n");
     const judgePrompt = [
       `当前时刻 ${clockText(game)} · 本轮交互`,
       `场景：${game.worldClock.sceneSummary}`,
@@ -1093,6 +1165,9 @@ export async function advanceOneRound(
       `本轮回应：\n${resps
         .map((r) => `${agentDisplayName(game, r.fromId)}：${r.content}`)
         .join("\n")}`,
+      movementDistanceText
+        ? `地图移动距离参考：\n${movementDistanceText}`
+        : "地图移动距离参考：无完整坐标",
       `近期事件：\n${recentEventsText(game, 10)}`,
       "请输出裁定 JSON。publicSummary 仅写公开可察后果；细因放 reason；突发用 notify。",
     ]
@@ -1109,7 +1184,6 @@ export async function advanceOneRound(
     );
     const judge = parseJudge(judgeRes.json, judgeRes.text);
     const redo = shouldRedoRound(judge);
-    game.tickBuffer!.lastJudge = judge;
 
     let diffs: ReturnType<typeof applySheetPatches> = [];
     if (
@@ -1314,8 +1388,12 @@ export async function advanceOneRound(
       `本轮事件：\n${eventsTextForTick(game, closedTick)}`,
       `世界观：${game.worldview || clockAgent.persona}`,
       "请根据本轮事件疏密给出下一精确时刻：事件紧凑则只推进数十分钟～一两小时；平静则可推到半天、入夜或次日。",
-      "nextTime 必须是结构化对象，包含 description、era、year、month、day、hour、minute；禁止自由描述时间。",
-      '输出 JSON：{"nextTime":{"description":"午后","era":"CE","year":10000,"month":3,"day":2,"hour":14,"minute":20},"sceneSummary":"...","publicEvent":"..."}。',
+      `nextTime 必须是结构化对象，包含 description、era、year、month、day、hour、minute${
+        game.settings.weekCycleEnabled ? "、weekday（1=周一至7=周日）" : ""
+      }；禁止自由描述时间。`,
+      `输出 JSON：{"nextTime":{"description":"午后","era":"CE","year":10000,"month":3,"day":2,"hour":14,"minute":20${
+        game.settings.weekCycleEnabled ? ',"weekday":3' : ""
+      }},"sceneSummary":"...","publicEvent":"..." }。`,
     ].join("\n\n");
 
     try {
@@ -1331,7 +1409,7 @@ export async function advanceOneRound(
       const invalidStructuredTime = !isValidGameDateTime(rawNextTime);
       const nextTime =
         isValidGameDateTime(rawNextTime)
-          ? normalizeGameDateTime(rawNextTime)
+          ? normalizeGameDateTime(rawNextTime, game.worldClock.dateTime)
           : normalizeGameDateTime(game.worldClock.dateTime);
       const nextScene = String(
         adv.json?.sceneSummary ?? game.worldClock.sceneSummary,
@@ -1506,23 +1584,6 @@ export async function advanceOneRound(
     await persist(game, options?.onPersist);
   }
   return game;
-}
-
-/** @deprecated 使用 advanceOneRound；保留别名以免旧引用断裂。 */
-export async function advanceGameTick(
-  settings: AppSettings,
-  game: GameState,
-  options?: {
-    control?: StreamControl;
-    onProgress?: (p: TickProgress) => void;
-    inject?: string;
-    onPersist?: (g: GameState) => void | Promise<void>;
-    awaitPlayerIntent?: (
-      req: PlayerIntentRequest,
-    ) => Promise<PlayerIntentDraft | null>;
-  },
-): Promise<GameState> {
-  return advanceOneRound(settings, game, options);
 }
 
 export async function injectPlayerEvent(

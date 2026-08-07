@@ -20,25 +20,12 @@ export const DEEPSEEK_PROVIDER: ApiProvider = {
   apiKeyUrl: "https://platform.deepseek.com/api_keys",
 };
 
-/** @deprecated Use DEEPSEEK_PROVIDER; kept for call sites that keyed by id. */
-export const PROVIDERS: Record<"deepseek", ApiProvider> = {
-  deepseek: DEEPSEEK_PROVIDER,
-};
-
 export function defaultRecentModels(): string[] {
   return [DEEPSEEK_PROVIDER.defaultModel];
 }
 
 export function getProvider(_providerId?: string): ApiProvider {
   return DEEPSEEK_PROVIDER;
-}
-
-/** Normalize legacy saved provider ids (e.g. poe) to deepseek. */
-export function inferProviderId(
-  _baseUrl?: string,
-  _saved?: string,
-): "deepseek" {
-  return "deepseek";
 }
 
 export function contextLimitForModel(model: string): number {
@@ -103,13 +90,4 @@ export function resolveModel(settings: AppSettings): string {
 /** DeepSeek chat API does not accept image inputs. */
 export function providerSupportsVision(_settings?: AppSettings): boolean {
   return false;
-}
-
-export function applyDeepSeekPreset(settings: AppSettings): AppSettings {
-  return {
-    ...settings,
-    apiProvider: "deepseek",
-    baseUrl: DEEPSEEK_PROVIDER.baseUrl,
-    model: settings.model?.trim() || DEEPSEEK_PROVIDER.defaultModel,
-  };
 }

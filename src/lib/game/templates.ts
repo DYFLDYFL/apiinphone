@@ -17,6 +17,9 @@ import type {
   GamePipeline,
   GameSheet,
   GameState,
+  GameWeekday,
+  GameMapCell,
+  GameWorldMap,
 } from "./types";
 import { defaultPipeline, normalizePipeline } from "./pipeline";
 
@@ -32,7 +35,6 @@ export const ATTR_LABELS: Record<string, string> = {
   insight: "悟性",
   charm: "魅力",
   wealth: "银钱",
-  location: "位置",
   mood: "心情",
   reputation: "声望",
 };
@@ -57,8 +59,7 @@ export const DEFAULT_ATTRIBUTE_DEFINITIONS: GameAttributeDefinition[] = [
   { key: "insight", label: "悟性", valueType: "number" },
   { key: "charm", label: "魅力", valueType: "number" },
   { key: "wealth", label: "银钱", valueType: "number" },
-  { key: "location", label: "位置", valueType: "text", textOptions: ["广场", "药房", "铁匠铺", "东门外"] },
-  { key: "mood", label: "心情", valueType: "text", textOptions: ["平静", "警惕", "沉稳", "轻快", "好奇"] },
+  { key: "mood", label: "心情", valueType: "text", textOptions: ["平静", "焦虑", "专注", "疲惫", "警觉"] },
   { key: "reputation", label: "声望", valueType: "number" },
 ];
 
@@ -145,6 +146,7 @@ export type CharTemplateDraft = {
   id?: string;
   name: string;
   persona: string;
+  position?: { x: number; y: number };
   attrs: Record<string, string | number | boolean>;
   inventory: string;
   /** 非空则覆盖默认角色 system prompt。 */
@@ -184,7 +186,6 @@ export const CHAR_TEMPLATES: CharTemplateDraft[] = [
       insight: 8,
       charm: 6,
       wealth: 12,
-      location: "药房",
       mood: "平静",
       reputation: 3,
     },
@@ -202,7 +203,6 @@ export const CHAR_TEMPLATES: CharTemplateDraft[] = [
       insight: 5,
       charm: 4,
       wealth: 20,
-      location: "铁匠铺",
       mood: "沉稳",
       reputation: 5,
     },
@@ -220,7 +220,6 @@ export const CHAR_TEMPLATES: CharTemplateDraft[] = [
       insight: 6,
       charm: 9,
       wealth: 8,
-      location: "广场",
       mood: "轻快",
       reputation: 4,
     },
@@ -237,7 +236,6 @@ export const CHAR_TEMPLATES: CharTemplateDraft[] = [
       insight: 7,
       charm: 5,
       wealth: 10,
-      location: "东门外",
       mood: "警惕",
       reputation: 4,
     },
@@ -254,7 +252,6 @@ export const CHAR_TEMPLATES: CharTemplateDraft[] = [
       insight: 8,
       charm: 7,
       wealth: 80,
-      location: "杂货铺",
       mood: "精明",
       reputation: 6,
     },
@@ -271,7 +268,6 @@ export const CHAR_TEMPLATES: CharTemplateDraft[] = [
       insight: 4,
       charm: 7,
       wealth: 2,
-      location: "广场",
       mood: "好奇",
       reputation: 2,
     },
@@ -285,38 +281,15 @@ export type GameTemplateDraft = {
   /** 初始世界时刻，完全使用结构化字段。 */
   initialTime: string;
   initialTimeParts: GameDateTime;
+  weekCycleEnabled?: boolean;
   agents: AgentTemplateDraft[];
   characters: CharTemplateDraft[];
   attributeDefinitions?: GameAttributeDefinition[];
   contextFiles?: GameContextFile[];
+  worldMap?: GameWorldMap;
   playMode?: import("./types").GamePlayMode;
   /** 扮演时选中的角色在 characters 数组中的下标。 */
   playerCharacterIndex?: number;
-  /** 非空则覆盖世界 system prompt。 */
-  worldSystemPrompt?: string;
-  worldModel?: AgentModelOverride;
-  worldReadableFileIds?: string[];
-  worldEditableFileIds?: string[];
-  worldDisabledFeatures?: import("./types").AgentFeatureKey[];
-  worldAttributePermissions?: Record<string, GameAttributePermission>;
-  refereePersona?: string;
-  refereeSystemPrompt?: string;
-  refereeModel?: AgentModelOverride;
-  refereeReadableFileIds?: string[];
-  refereeEditableFileIds?: string[];
-  refereeDisabledFeatures?: import("./types").AgentFeatureKey[];
-  refereeAttributePermissions?: Record<string, GameAttributePermission>;
-  chroniclerGodPrompt?: string;
-  chroniclerPlayerPrompt?: string;
-  chroniclerModel?: AgentModelOverride;
-  chroniclerReadableFileIds?: string[];
-  chroniclerEditableFileIds?: string[];
-  chroniclerDisabledFeatures?: import("./types").AgentFeatureKey[];
-  chroniclerAttributePermissions?: Record<string, GameAttributePermission>;
-  /** 废弃隐藏编辑器字段；当前建局不会使用。 */
-  proposeOrder?: import("./types").ProposeOrderMode;
-  customProposeOrder?: number[];
-  proposeMode?: import("./types").ProposeMode;
   pipeline?: GamePipeline;
 };
 
@@ -336,8 +309,19 @@ export const DEFAULT_INITIAL_TIME_PARTS: GameDateTime = {
   year: 1,
   month: 3,
   day: 2,
+  weekday: 1,
   hour: 5,
   minute: 30,
+};
+
+export const WEEKDAY_LABELS: Record<GameWeekday, string> = {
+  1: "周一",
+  2: "周二",
+  3: "周三",
+  4: "周四",
+  5: "周五",
+  6: "周六",
+  7: "周日",
 };
 
 export function isLeapYear(era: GameDateTime["era"], year: number): boolean {
@@ -375,6 +359,7 @@ export function normalizeGameDateTime(
   const day = Number.isInteger(rawDay) && rawDay >= 1
     ? Math.min(rawDay, maxDay)
     : Math.min(fallback.day, maxDay);
+  const weekday = Number(value?.weekday);
   const hour = Number(value?.hour);
   const minute = Number(value?.minute);
   return {
@@ -383,6 +368,10 @@ export function normalizeGameDateTime(
     year: safeYear,
     month: safeMonth,
     day,
+    weekday:
+      Number.isInteger(weekday) && weekday >= 1 && weekday <= 7
+        ? (weekday as GameWeekday)
+        : fallback.weekday,
     hour: Number.isInteger(hour) && hour >= 0 && hour <= 23 ? hour : fallback.hour,
     minute:
       Number.isInteger(minute) && minute >= 0 && minute <= 59
@@ -422,26 +411,179 @@ export function formatGameDateTime(value: GameDateTime): string {
     : `${date} ${time}`;
 }
 
+export function formatGameClock(
+  value: GameDateTime,
+  weekCycleEnabled = false,
+): string {
+  const dateText = formatGameDateTime(value);
+  if (!weekCycleEnabled || !value.weekday) return dateText;
+  return `${WEEKDAY_LABELS[value.weekday]} · ${dateText}`;
+}
+
 export function defaultContextFiles(
   worldview = "",
   timeText = formatGameDateTime(DEFAULT_INITIAL_TIME_PARTS),
 ): GameContextFile[] {
   return [
     { id: "worldview", title: "世界设定", content: worldview },
+    { id: "world_map", title: "世界地图与地形", content: "" },
     { id: "clock", title: "当前时间", content: timeText },
     { id: "scene", title: "当前场景", content: "" },
     { id: "timeline", title: "公开时间线", content: "" },
-    { id: "characters", title: "角色档案", content: "" },
+    { id: "characters", title: "全角色档案", content: "" },
     { id: "clues", title: "线索与秘密", content: "" },
+    { id: "god_story", title: "上帝视角剧情", content: "" },
+    { id: "personal_stories", title: "全个人剧情", content: "" },
   ];
+}
+
+export function mapCellKey(x: number, y: number): string {
+  return `${Math.round(x)},${Math.round(y)}`;
+}
+
+export function createWorldMap(
+  cells: Array<GameMapCell> = [],
+  terrainTypes: string[] = [],
+): GameWorldMap {
+  const inferredTerrainTypes = Array.from(
+    new Set(cells.map((cell) => cell.terrain?.trim()).filter(Boolean)),
+  ) as string[];
+  return {
+    terrainTypes: terrainTypes.length ? [...terrainTypes] : inferredTerrainTypes,
+    cells: Object.fromEntries(
+      cells.map((cell) => [
+        mapCellKey(cell.x, cell.y),
+        {
+          ...cell,
+          x: Math.round(cell.x),
+          y: Math.round(cell.y),
+          properties: { ...cell.properties },
+          objects: [...cell.objects],
+        },
+      ]),
+    ),
+  };
+}
+
+export function defaultWorldMapForGenre(genre: string): GameWorldMap {
+  if (genre.includes("科幻")) {
+    return createWorldMap([
+      { x: 0, y: 0, zoneName: "空间站中枢", terrain: "舱室", properties: {}, objects: ["控制台"] },
+      { x: 1, y: 0, zoneName: "生活区", terrain: "舱室", properties: {}, objects: ["居住舱"] },
+      { x: -1, y: 0, zoneName: "停泊区", terrain: "舱室", properties: {}, objects: ["飞船接口"] },
+      { x: 0, y: 1, zoneName: "维修环廊", terrain: "维护区", properties: {}, objects: ["工具柜"] },
+      { x: 0, y: -1, zoneName: "能源区", terrain: "机房", properties: {}, objects: ["反应堆"] },
+    ], ["舱室", "维护区", "机房", "真空区"]);
+  }
+  if (genre.includes("现代")) {
+    return createWorldMap([
+      { x: 0, y: 0, zoneName: "市中心", terrain: "城市道路", properties: {}, objects: ["地铁站", "商场"] },
+      { x: 1, y: 0, zoneName: "旧城区", terrain: "街巷", properties: {}, objects: ["老楼"] },
+      { x: 0, y: 1, zoneName: "江岸", terrain: "滨水", properties: {}, objects: ["步道"] },
+      { x: -1, y: 0, zoneName: "工业区", terrain: "工业用地", properties: {}, objects: ["仓库"] },
+      { x: 0, y: -1, zoneName: "大学城", terrain: "公共设施", properties: {}, objects: ["图书馆"] },
+    ], ["城市道路", "街巷", "滨水", "工业用地", "公共设施"]);
+  }
+  if (genre.includes("末日")) {
+    return createWorldMap([
+      { x: 0, y: 0, zoneName: "聚落", terrain: "废墟", properties: {}, objects: ["净水器"] },
+      { x: 1, y: 0, zoneName: "旧公路", terrain: "荒地", properties: {}, objects: ["废弃车辆"] },
+      { x: 0, y: 1, zoneName: "水源地", terrain: "湿地", properties: {}, objects: ["蓄水池"] },
+      { x: -1, y: 0, zoneName: "感染区", terrain: "危险区", properties: {}, objects: ["警示牌"] },
+      { x: 0, y: -1, zoneName: "农场遗址", terrain: "荒地", properties: {}, objects: ["破旧温室"] },
+    ], ["废墟", "荒地", "湿地", "危险区"]);
+  }
+  if (genre.includes("奇幻")) {
+    return createWorldMap([
+      { x: 0, y: 0, zoneName: "王都", terrain: "城镇", properties: {}, objects: ["城门", "集市"] },
+      { x: 1, y: 0, zoneName: "月林", terrain: "森林", properties: {}, objects: ["古树"] },
+      { x: 0, y: 1, zoneName: "边境路", terrain: "道路", properties: {}, objects: ["路碑"] },
+      { x: -1, y: 0, zoneName: "矿谷", terrain: "山地", properties: {}, objects: ["矿井"] },
+      { x: 0, y: -1, zoneName: "湖畔村", terrain: "水域", properties: {}, objects: ["码头"] },
+    ], ["城镇", "森林", "道路", "山地", "水域"]);
+  }
+  return createWorldMap([
+    { x: 0, y: 0, zoneName: "青石镇广场", terrain: "城镇", properties: {}, objects: ["告示牌"] },
+    { x: 1, y: 0, zoneName: "药房街", terrain: "街巷", properties: {}, objects: ["药房"] },
+    { x: -1, y: 0, zoneName: "铁匠街", terrain: "街巷", properties: {}, objects: ["铁匠铺"] },
+    { x: 0, y: 1, zoneName: "东门外", terrain: "道路", properties: {}, objects: ["城门"] },
+    { x: 0, y: -1, zoneName: "杂货街", terrain: "街巷", properties: {}, objects: ["杂货铺"] },
+    { x: 1, y: 1, zoneName: "河堤", terrain: "河岸", properties: {}, objects: ["渡口"] },
+  ], ["城镇", "街巷", "道路", "河岸", "荒地"]);
+}
+
+export type AgentInformationPreset =
+  | "world"
+  | "judge"
+  | "chronicler"
+  | "character";
+
+export const AGENT_INFORMATION_PRESET_LABELS: Record<
+  AgentInformationPreset,
+  string
+> = {
+  world: "世界 AI（全局资料）",
+  judge: "裁判 AI（完整裁定资料）",
+  chronicler: "书记 AI（整理资料）",
+  character: "角色 AI（公开资料与自身属性）",
+};
+
+export function informationPresetForAgent(agent: {
+  capabilities: AgentFeatureKey[];
+  characterId?: string;
+}): AgentInformationPreset {
+  if (agent.characterId) return "character";
+  if (agent.capabilities.includes("judge")) return "judge";
+  if (agent.capabilities.includes("chronicle")) return "chronicler";
+  return "world";
+}
+
+export function informationAccessForAgent(
+  preset: AgentInformationPreset,
+  fileIds: string[],
+  attributeKeys: string[],
+  characterId?: string,
+): {
+  readableFileIds: string[];
+  editableFileIds: string[];
+  attributePermissions: Record<string, GameAttributePermission>;
+} {
+  const readableFileIds =
+    preset === "character"
+      ? fileIds.filter(
+          (id) =>
+            ["worldview", "clock", "scene", "timeline", "world_map"].includes(id) ||
+            Boolean(characterId && id === `personal_story_${characterId}`),
+        )
+      : [...fileIds];
+  const editableCandidates =
+    preset === "world"
+      ? ["clock", "scene", "timeline"]
+      : preset === "chronicler"
+        ? ["timeline"]
+        : [];
+  const editableFileIds = editableCandidates.filter((id) =>
+    readableFileIds.includes(id),
+  );
+  const attributePermissions = Object.fromEntries(
+    attributeKeys.map((key) => [
+      key,
+      preset === "judge"
+        ? { read: true, set: true, add: true, remove: true }
+        : { read: true },
+    ]),
+  );
+  return { readableFileIds, editableFileIds, attributePermissions };
 }
 
 export function defaultGameRunSettings(characterCount = 3): {
   characterCount: number;
+  weekCycleEnabled: boolean;
   pipeline: GamePipeline;
 } {
   return {
     characterCount,
+    weekCycleEnabled: false,
     pipeline: defaultPipeline(),
   };
 }
@@ -460,29 +602,84 @@ export function defaultTemplateDraft(characterCount = 3): GameTemplateDraft {
     name: character.name,
     persona: character.persona,
     capabilities: [...(character.capabilities ?? ["propose", "respond"])],
+    readableFileIds: [
+      "worldview",
+      "clock",
+      "scene",
+      "timeline",
+      "world_map",
+      `personal_story_${character.id}`,
+    ],
+    editableFileIds: [],
+    attributePermissions: Object.fromEntries(
+      DEFAULT_ATTRIBUTE_DEFINITIONS.map((definition) => [
+        definition.key,
+        { read: true },
+      ]),
+    ),
   }));
   return {
     title: "青石镇",
     worldview: DEFAULT_WORLDVIEW,
     initialTime: formatGameDateTime(DEFAULT_INITIAL_TIME_PARTS),
     initialTimeParts: { ...DEFAULT_INITIAL_TIME_PARTS },
+    weekCycleEnabled: false,
     attributeDefinitions: DEFAULT_ATTRIBUTE_DEFINITIONS.map((item) => ({ ...item })),
-    contextFiles: defaultContextFiles(
-      DEFAULT_WORLDVIEW,
-      formatGameDateTime(DEFAULT_INITIAL_TIME_PARTS),
-    ),
+    contextFiles: [
+      ...defaultContextFiles(
+        DEFAULT_WORLDVIEW,
+        formatGameDateTime(DEFAULT_INITIAL_TIME_PARTS),
+      ),
+      ...characterAgents.map((agent) => ({
+        id: `personal_story_${agent.characterId}`,
+        title: `${agent.name}的个人剧情`,
+        content: "",
+      })),
+    ],
     agents: [
       {
         id: "world_agent",
         name: "世界",
         persona: DEFAULT_WORLDVIEW,
         capabilities: ["world_open", "respond", "advance_clock"],
+        readableFileIds: [
+          "worldview",
+          "clock",
+          "scene",
+          "timeline",
+          "world_map",
+          "characters",
+          "clues",
+          "god_story",
+          "personal_stories",
+          ...characterAgents.map((agent) => `personal_story_${agent.characterId}`),
+        ],
+        editableFileIds: ["clock", "scene", "timeline"],
+        attributePermissions: Object.fromEntries(
+          DEFAULT_ATTRIBUTE_DEFINITIONS.map((definition) => [
+            definition.key,
+            { read: true },
+          ]),
+        ),
       },
       {
         id: "judge_agent",
         name: "裁判",
         persona: DEFAULT_REFEREE_PERSONA,
         capabilities: ["judge"],
+        readableFileIds: [
+          "worldview",
+          "clock",
+          "scene",
+          "timeline",
+          "world_map",
+          "characters",
+          "clues",
+          "god_story",
+          "personal_stories",
+          ...characterAgents.map((agent) => `personal_story_${agent.characterId}`),
+        ],
+        editableFileIds: [],
         attributePermissions: Object.fromEntries(
           DEFAULT_ATTRIBUTE_DEFINITIONS.map((definition) => [
             definition.key,
@@ -495,17 +692,36 @@ export function defaultTemplateDraft(characterCount = 3): GameTemplateDraft {
         name: "书记",
         persona: "整理本局剧情，区分全知视角与玩家视角。",
         capabilities: ["chronicle"],
+        readableFileIds: [
+          "worldview",
+          "clock",
+          "scene",
+          "timeline",
+          "world_map",
+          "characters",
+          "clues",
+          "god_story",
+          "personal_stories",
+          ...characterAgents.map((agent) => `personal_story_${agent.characterId}`),
+        ],
+        editableFileIds: [
+          "timeline",
+          "god_story",
+          "personal_stories",
+          ...characterAgents.map((agent) => `personal_story_${agent.characterId}`),
+        ],
+        attributePermissions: Object.fromEntries(
+          DEFAULT_ATTRIBUTE_DEFINITIONS.map((definition) => [
+            definition.key,
+            { read: true },
+          ]),
+        ),
       },
       ...characterAgents,
     ],
     characters,
     playMode: "spectate",
     playerCharacterIndex: 0,
-    worldSystemPrompt: "",
-    refereePersona: DEFAULT_REFEREE_PERSONA,
-    refereeSystemPrompt: "",
-    chroniclerGodPrompt: "",
-    chroniclerPlayerPrompt: "",
     pipeline: defaultPipeline({
       entryAgentIds: ["world_agent"],
       openAgentIds: ["world_agent"],
@@ -542,6 +758,18 @@ function makeAiPreset(
   };
 }
 
+function pipelineWithDispatchMode(
+  mode: "serial" | "parallel",
+): GamePipeline {
+  const pipeline = defaultTemplateDraft(3).pipeline ?? defaultPipeline();
+  return {
+    ...pipeline,
+    nodes: pipeline.nodes.map((node) =>
+      node.id === "n_propose" ? { ...node, dispatchMode: mode } : node,
+    ),
+  };
+}
+
 export const AI_RUNTIME_PRESETS: GameAiPreset[] = [
   makeAiPreset(
     "standard-narrative",
@@ -563,6 +791,7 @@ export const AI_RUNTIME_PRESETS: GameAiPreset[] = [
             }
           : { ...agent, capabilities: [...agent.capabilities] },
       ),
+      pipeline: pipelineWithDispatchMode("parallel"),
     },
   ),
   makeAiPreset(
@@ -623,10 +852,51 @@ function genrePreset(
   extraAttributes: GameAttributeDefinition[] = [],
 ): GameTemplatePreset {
   const draft = defaultTemplateDraft(3);
+  const commonKeys = new Set(
+    genre.includes("现代")
+      ? ["hp", "stamina", "insight", "charm", "reputation", "mood"]
+      : genre.includes("末日")
+        ? ["hp", "stamina", "strength", "agility", "insight", "mood"]
+        : genre.includes("科幻")
+          ? ["hp", "stamina", "strength", "agility", "insight", "reputation", "mood"]
+          : genre.includes("奇幻")
+            ? ["hp", "stamina", "strength", "agility", "insight", "charm", "reputation", "mood"]
+            : DEFAULT_ATTRIBUTE_DEFINITIONS.map((item) => item.key),
+  );
   const definitions = [
-    ...(draft.attributeDefinitions ?? DEFAULT_ATTRIBUTE_DEFINITIONS),
+    ...(draft.attributeDefinitions ?? DEFAULT_ATTRIBUTE_DEFINITIONS).filter(
+      (item) => commonKeys.has(item.key),
+    ),
     ...extraAttributes,
-  ];
+  ].map((item) =>
+    item.key === "mood"
+      ? {
+          ...item,
+          textOptions: genre.includes("现代")
+            ? ["平静", "焦虑", "专注", "疲惫", "警觉"]
+            : genre.includes("末日")
+              ? ["警觉", "紧张", "疲惫", "麻木", "希望"]
+              : genre.includes("科幻")
+                ? ["冷静", "警戒", "专注", "疲惫", "兴奋"]
+                : genre.includes("奇幻")
+                  ? ["平静", "警觉", "敬畏", "兴奋", "疲惫"]
+                  : ["平静", "焦虑", "专注", "疲惫", "警觉"],
+        }
+      : item,
+  );
+  const moodOptions =
+    definitions.find((item) => item.key === "mood")?.textOptions ?? [];
+  const characters = draft.characters.map((character) => ({
+    ...character,
+    attrs: {
+      ...Object.fromEntries(
+        Object.entries(character.attrs).filter(([key]) => commonKeys.has(key)),
+      ),
+      ...(moodOptions.length
+        ? { mood: moodOptions[draft.characters.indexOf(character) % moodOptions.length] }
+        : {}),
+    },
+  }));
   return {
     id,
     title,
@@ -634,14 +904,25 @@ function genrePreset(
     description,
     draft: {
       ...draft,
+      characters,
       title,
       worldview,
       initialTime: formatGameDateTime(initialTimeParts),
       initialTimeParts,
-      contextFiles: defaultContextFiles(
-        worldview,
-        formatGameDateTime(initialTimeParts),
-      ),
+      worldMap: defaultWorldMapForGenre(genre),
+      contextFiles: [
+        ...defaultContextFiles(
+          worldview,
+          formatGameDateTime(initialTimeParts),
+        ),
+        ...draft.agents
+          .filter((agent) => Boolean(agent.characterId))
+          .map((agent) => ({
+            id: `personal_story_${agent.characterId}`,
+            title: `${agent.name}的个人剧情`,
+            content: "",
+          })),
+      ],
       attributeDefinitions: definitions.map((item) => ({ ...item })),
     },
   };
@@ -662,8 +943,8 @@ export const GAME_TEMPLATE_PRESETS: GameTemplatePreset[] = [
     "现代都市",
     "一座被暴雨笼罩的城市，线索藏在监控、街巷与人心之间。",
     "临江市：高楼、旧城与地下交通交错。案件必须遵循现代社会常识，证据、舆论与时间都不可凭空跳过。",
-    { ...DEFAULT_INITIAL_TIME_PARTS, description: "周一早晨", hour: 8, minute: 30 },
-    [{ key: "clues", label: "线索", valueType: "number" }],
+    { ...DEFAULT_INITIAL_TIME_PARTS, description: "早晨", weekday: 1, hour: 8, minute: 30 },
+    [{ key: "evidence", label: "证据掌握", valueType: "number" }],
   ),
   genrePreset(
     "ash-era",
@@ -718,6 +999,41 @@ export function createTemplateGame(
       .filter((agent) => Boolean(agent.characterId))
       .map((agent) => [agent.characterId as string, agent]),
   );
+  const worldview = tpl.worldview.trim() || DEFAULT_WORLDVIEW;
+  const initialDateTime = normalizeGameDateTime(tpl.initialTimeParts);
+  const weekCycleEnabled = Boolean(tpl.weekCycleEnabled);
+  const timeText = formatGameClock(initialDateTime, weekCycleEnabled);
+  const contextFiles = (tpl.contextFiles?.length
+    ? tpl.contextFiles
+    : defaultContextFiles(worldview, timeText)
+  ).map((file) => ({ ...file }));
+  for (const required of [
+    ["god_story", "上帝视角剧情"],
+    ["personal_stories", "全个人剧情"],
+  ] as const) {
+    if (!contextFiles.some((file) => file.id === required[0])) {
+      contextFiles.push({ id: required[0], title: required[1], content: "" });
+    }
+  }
+  for (const character of chars) {
+    const characterId = character.id ?? "";
+    const fileId = `personal_story_${characterId}`;
+    if (
+      characterId &&
+      !contextFiles.some((file) => file.id === fileId)
+    ) {
+      contextFiles.push({
+        id: fileId,
+        title: `${character.name || characterId}的个人剧情`,
+        content: "",
+      });
+    }
+  }
+  const attributeDefinitions = normalizeAttributeDefinitions(
+    tpl.attributeDefinitions,
+    chars.map((character) => character.attrs),
+  );
+  const worldMap = tpl.worldMap ?? defaultWorldMapForGenre("古代悬疑");
 
   const agentIdMap = new Map<string, string>();
   for (let index = 0; index < chars.length; index += 1) {
@@ -743,10 +1059,12 @@ export function createTemplateGame(
       inventory,
       flags: [],
       notes: "",
+      position: t.position ?? { x: index % 3, y: Math.floor(index / 3) },
     });
     characters.push({
       id: agentId,
       kind: "character",
+      characterId,
       name,
       sheetId,
       persona,
@@ -768,17 +1086,6 @@ export function createTemplateGame(
     });
   }
 
-  const worldview = tpl.worldview.trim() || DEFAULT_WORLDVIEW;
-  const initialDateTime = normalizeGameDateTime(tpl.initialTimeParts);
-  const timeText = formatGameDateTime(initialDateTime);
-  const contextFiles = (tpl.contextFiles?.length
-    ? tpl.contextFiles
-    : defaultContextFiles(worldview, timeText)
-  ).map((file) => ({ ...file }));
-  const defaultReadable = contextFiles
-    .filter((file) => file.id !== "clues")
-    .map((file) => file.id);
-  const defaultEditable: string[] = [];
   const systemAgents: GameAgent[] = tpl.agents
     .filter((draftAgent) => !draftAgent.characterId)
     .map((draftAgent) => {
@@ -811,12 +1118,28 @@ export function createTemplateGame(
     });
   const agents = [...systemAgents, ...characters].map((agent) => ({
     ...agent,
-    readableFileIds: Array.isArray(agent.readableFileIds)
-      ? [...agent.readableFileIds]
-      : [...defaultReadable],
-    editableFileIds: Array.isArray(agent.editableFileIds)
-      ? [...agent.editableFileIds]
-      : [...defaultEditable],
+    ...(() => {
+      const access = informationAccessForAgent(
+        informationPresetForAgent({
+          capabilities: agent.capabilities,
+          characterId:
+            agent.kind === "character" ? agent.characterId : undefined,
+        }),
+        contextFiles.map((file) => file.id),
+        attributeDefinitions.map((definition) => definition.key),
+        agent.kind === "character" ? agent.characterId : undefined,
+      );
+      return {
+        readableFileIds: Array.isArray(agent.readableFileIds)
+          ? [...agent.readableFileIds]
+          : access.readableFileIds,
+        editableFileIds: Array.isArray(agent.editableFileIds)
+          ? [...agent.editableFileIds]
+          : access.editableFileIds,
+        attributePermissions:
+          agent.attributePermissions ?? access.attributePermissions,
+      };
+    })(),
   }));
   const agentIdForDraftValue = (value: string): string =>
     agentIdMap.get(value) ??
@@ -835,6 +1158,7 @@ export function createTemplateGame(
     createdAt: now,
     updatedAt: now,
     worldview,
+    worldMap,
     worldClock: {
       tick: 0,
       label: timeText,
@@ -868,16 +1192,17 @@ export function createTemplateGame(
     },
     settings: {
       ...defaultGameRunSettings(characters.length),
+      weekCycleEnabled,
       pipeline,
     },
-    attributeDefinitions: normalizeAttributeDefinitions(
-      tpl.attributeDefinitions,
-      characters.map((ch) => sheets.find((sheet) => sheet.id === ch.sheetId)?.attrs ?? {}),
-    ),
+    attributeDefinitions,
     playMode: tpl.playMode === "play" ? "play" : "spectate",
     playerCharacterId: null,
     godStory: "",
     playerStory: "",
+    personalStories: Object.fromEntries(
+      chars.map((character) => [character.id ?? "", ""]),
+    ),
     storyTick: -1,
     godViewUnlocked: tpl.playMode !== "play",
   };

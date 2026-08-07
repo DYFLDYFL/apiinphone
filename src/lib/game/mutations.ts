@@ -44,6 +44,10 @@ export function applySheetPatches(
   for (const p of patches) {
     const sheet = game.sheets.find((s) => s.id === p.sheetId);
     if (!sheet) continue;
+    if (actor?.kind === "character" && actor.sheetId !== sheet.id) {
+      denied.push(`${sheet.name}（角色 AI 只能修改自身面板）`);
+      continue;
+    }
     const before = snapshotSheet(sheet);
     if (p.attrs) {
       for (const [key, value] of Object.entries(p.attrs)) {
@@ -143,6 +147,7 @@ export function syncContextFiles(game: GameState): void {
     if (file) file.content = content;
   };
   set("worldview", game.worldview);
+  set("world_map", worldMapText(game));
   set(
     "clock",
     game.worldClock.timeText || game.worldClock.label || "未标注时刻",
@@ -153,6 +158,47 @@ export function syncContextFiles(game: GameState): void {
     "characters",
     game.sheets.map(sheetPublicView).join("\n\n"),
   );
+  set("god_story", game.godStory || "");
+  const personalStories = game.personalStories ?? {};
+  set(
+    "personal_stories",
+    Object.entries(personalStories)
+      .filter(([key, value]) => key !== "__all__" && value.trim())
+      .map(([key, value]) => `【${key}】\n${value}`)
+      .concat(
+        personalStories.__all__?.trim()
+          ? [`【全个人剧情补充】\n${personalStories.__all__}`]
+          : [],
+      )
+      .join("\n\n"),
+  );
+  Object.entries(personalStories).forEach(([key, content]) => {
+    if (key !== "__all__") set(`personal_story_${key}`, content || "");
+  });
+}
+
+export function worldMapText(game: GameState): string {
+  const cells = Object.values(game.worldMap?.cells ?? {});
+  if (!cells.length) return "（地图暂无已记录区域）";
+  return cells
+    .sort((a, b) => a.y - b.y || a.x - b.x)
+    .map(
+      (cell) =>
+        `[${cell.x},${cell.y}] ${cell.zoneName || "未命名区域"} · 地形：${
+          cell.terrain || "未标注"
+        } · 属性：${Object.entries(cell.properties)
+          .map(([key, value]) => `${key}=${value}`)
+          .join("，") || "无"} · 物件：${cell.objects.join("、") || "无"}`,
+    )
+    .join("\n");
+}
+
+export function mapDistance(
+  from: { x: number; y: number },
+  to: { x: number; y: number },
+): number {
+  return Math.abs(Math.round(from.x) - Math.round(to.x)) +
+    Math.abs(Math.round(from.y) - Math.round(to.y));
 }
 
 export function readableContextFiles(
@@ -162,7 +208,23 @@ export function readableContextFiles(
   const allowed = new Set(agent.readableFileIds ?? []);
   return game.contextFiles
     .filter((file) => allowed.has(file.id))
-    .map((file) => `【${file.title} · ${file.id}】\n${file.content || "（暂无内容）"}`)
+    .map((file) => {
+      if (
+        agent.kind === "character" &&
+        file.id === "characters" &&
+        !allowed.has("characters")
+      ) {
+        const content = game.sheets
+          .map((sheet) =>
+            sheet.id === agent.sheetId
+              ? sheetPublicView(sheet)
+              : `姓名: ${sheet.name}`,
+          )
+          .join("\n\n");
+        return `【${file.title} · ${file.id}】\n${content || "（暂无内容）"}`;
+      }
+      return `【${file.title} · ${file.id}】\n${file.content || "（暂无内容）"}`;
+    })
     .join("\n\n");
 }
 
@@ -174,7 +236,11 @@ export function readableSheets(
   const hasConfiguredPermissions = Boolean(
     permissions && Object.keys(permissions).length,
   );
-  return game.sheets
+  const sheets =
+    agent.kind === "character" && !agent.readableFileIds?.includes("characters")
+      ? game.sheets.filter((sheet) => sheet.id === agent.sheetId)
+      : game.sheets;
+  return sheets
     .map((sheet) => {
       const attrs = Object.fromEntries(
         Object.entries(sheet.attrs).filter(([key]) =>
@@ -207,12 +273,29 @@ export function applyAuthorizedContextFileEdits(
       if (fileId) denied.push(fileId);
       continue;
     }
-    if (typeof edit.content === "string") {
-      file.content = edit.content;
-    } else if (typeof edit.append === "string") {
-      file.content = `${file.content}\n${edit.append}`.trim();
-    } else {
+    const nextContent =
+      typeof edit.content === "string"
+        ? edit.content
+        : typeof edit.append === "string"
+          ? `${file.content}\n${edit.append}`.trim()
+          : null;
+    if (nextContent === null) {
       continue;
+    }
+    file.content = nextContent;
+    if (fileId === "god_story") {
+      game.godStory = nextContent;
+    } else if (fileId === "personal_stories") {
+      game.personalStories = {
+        ...(game.personalStories ?? {}),
+        __all__: nextContent,
+      };
+    } else if (fileId.startsWith("personal_story_")) {
+      const characterId = fileId.slice("personal_story_".length);
+      game.personalStories = {
+        ...(game.personalStories ?? {}),
+        [characterId]: nextContent,
+      };
     }
     applied.push(fileId);
   }

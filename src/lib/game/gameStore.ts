@@ -15,7 +15,8 @@ import {
   createTemplateGame,
   defaultContextFiles,
   defaultGameRunSettings,
-  formatGameDateTime,
+  formatGameClock,
+  defaultWorldMapForGenre,
   normalizeGameDateTime,
   inferAttributeDefinitions,
 } from "./templates";
@@ -128,7 +129,7 @@ function tickPad(tick: number): string {
 function tickStoryPath(
   id: string,
   tick: number,
-  kind: "god" | "player",
+  kind: "god" | "player" | `personal-${string}`,
 ): string {
   return `${gameDir(id)}/ticks/${tickPad(tick)}-${kind}.txt`;
 }
@@ -139,6 +140,7 @@ function normalizeGameSettings(raw: Partial<GameSettings> | undefined): GameSett
   );
   return {
     characterCount: base.characterCount,
+    weekCycleEnabled: Boolean(raw?.weekCycleEnabled),
     pipeline: normalizePipeline(raw?.pipeline),
   };
 }
@@ -200,9 +202,19 @@ function normalizeGame(game: GameState): GameState {
   if (typeof game.worldview !== "string") {
     game.worldview = "";
   }
+  if (
+    !game.worldMap ||
+    typeof game.worldMap !== "object" ||
+    !game.worldMap.cells
+  ) {
+    game.worldMap = defaultWorldMapForGenre(game.worldview);
+  }
   if (!game.worldClock) {
     const dateTime = normalizeGameDateTime(undefined);
-    const timeText = formatGameDateTime(dateTime);
+    const timeText = formatGameClock(
+      dateTime,
+      game.settings.weekCycleEnabled,
+    );
     game.worldClock = {
       tick: 0,
       label: timeText,
@@ -218,7 +230,10 @@ function normalizeGame(game: GameState): GameState {
       game.worldClock.sceneSummary = "";
     }
     game.worldClock.dateTime = normalizeGameDateTime(game.worldClock.dateTime);
-    const timeText = formatGameDateTime(game.worldClock.dateTime);
+    const timeText = formatGameClock(
+      game.worldClock.dateTime,
+      game.settings.weekCycleEnabled,
+    );
     game.worldClock.timeText = timeText;
     game.worldClock.label = timeText;
     if (
@@ -299,6 +314,27 @@ function normalizeGame(game: GameState): GameState {
   if (typeof game.playerStory !== "string") game.playerStory = "";
   game.godStory = sanitizeStoryText(game.godStory);
   game.playerStory = sanitizeStoryText(game.playerStory);
+  if (
+    !game.personalStories ||
+    typeof game.personalStories !== "object" ||
+    Array.isArray(game.personalStories)
+  ) {
+    game.personalStories = {};
+  } else {
+    game.personalStories = Object.fromEntries(
+      Object.entries(game.personalStories).map(([key, value]) => [
+        key,
+        sanitizeStoryText(typeof value === "string" ? value : ""),
+      ]),
+    );
+  }
+  for (const agent of game.agents) {
+    if (agent.kind === "character" && agent.characterId) {
+      if (typeof game.personalStories[agent.characterId] !== "string") {
+        game.personalStories[agent.characterId] = "";
+      }
+    }
+  }
   {
     const n = Number(game.storyTick);
     // -1 = 仅有开场种子、尚未归档任何时段剧情
@@ -415,7 +451,7 @@ export async function archiveStoryTick(options: {
   gameId: string;
   tick: number;
   label: string;
-  kind: "god" | "player";
+  kind: "god" | "player" | `personal-${string}`;
   body: string;
 }): Promise<void> {
   const body = sanitizeStoryText(options.body).trim();
@@ -489,6 +525,10 @@ async function writeStoryMirrors(game: GameState): Promise<void> {
   const dir = gameDir(game.id);
   await writeText(`${dir}/god-story.txt`, game.godStory || "");
   await writeText(`${dir}/player-story.txt`, game.playerStory || "");
+  await writeText(
+    `${dir}/personal-stories.json`,
+    JSON.stringify(game.personalStories ?? {}, null, 2),
+  );
 }
 
 export async function listGames(): Promise<

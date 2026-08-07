@@ -1,26 +1,9 @@
-export type DeepseekTransport = "official" | "web";
-
-/** 网页会话档位：快速 / 深度思考 / 专家。仅 deepseekTransport=web 生效。 */
-export type WebChatMode = "fast" | "deep" | "expert";
-
 export interface AppSettings {
   apiProvider: "deepseek";
   apiKey: string;
   baseUrl: string;
-  /** official = api.deepseek.com；web = chat.deepseek.com 会话 Token。 */
-  deepseekTransport: DeepseekTransport;
-  /** chat.deepseek.com LocalStorage userToken.value（或整段 JSON）。 */
-  webSessionToken: string;
-  /** 浏览器 Cookie 字符串，建议含 aws-waf-token。 */
-  webSessionCookies: string;
-  /** 网页通道相邻请求最小间隔（毫秒）。 */
-  webMinIntervalMs: number;
-  /** 对话网页档位（快速 / 深度 / 专家）。 */
-  webChatMode: WebChatMode;
   /** 对话网页联网搜索。 */
   webSearchEnabled: boolean;
-  /** 游戏网页档位。 */
-  gameWebChatMode: WebChatMode;
   /** 游戏网页联网搜索。 */
   gameWebSearchEnabled: boolean;
   /** 扮演时默认本轮交给 AI，无需每次点按钮。 */
@@ -51,17 +34,13 @@ export interface AppSettings {
   webSearchDefaultTopK: number;
   /** Maximum topK allowed per web_search call. */
   webSearchMaxTopK: number;
-  toolsCustomJson: string;
   httpConnectTimeout: number;
   httpReadTimeout: number;
   retryCount: number;
   retryBackoffMs: number;
   systemPrompt: string;
-  appTitle: string;
   theme: "dark" | "light";
   recentModels: string[];
-  /** Where generated documents are saved. */
-  exportLocation: "documents" | "data" | "cache";
 }
 
 export interface TokenUsage {

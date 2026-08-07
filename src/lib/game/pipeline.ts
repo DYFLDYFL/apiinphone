@@ -37,12 +37,12 @@ export function defaultPipeline(bindings: {
   clockAgentIds?: string[];
 } = {}): GamePipeline {
   const nodes: PipelineNode[] = [
-    { id: "n_open", name: "", executionCapabilities: ["world_open"], agentIds: bindings.openAgentIds },
-    { id: "n_propose", name: "", executionCapabilities: ["propose"], agentIds: bindings.proposeAgentIds },
-    { id: "n_respond", name: "", executionCapabilities: ["respond"], agentIds: bindings.respondAgentIds },
-    { id: "n_judge", name: "", executionCapabilities: ["judge"], agentIds: bindings.judgeAgentIds },
-    { id: "n_chronicle", name: "", executionCapabilities: ["chronicle"], agentIds: bindings.chronicleAgentIds },
-    { id: "n_clock", name: "", executionCapabilities: ["advance_clock"], agentIds: bindings.clockAgentIds },
+    { id: "n_open", name: "世界开场", executionCapabilities: ["world_open"], agentIds: bindings.openAgentIds },
+    { id: "n_propose", name: "角色提案", executionCapabilities: ["propose"], agentIds: bindings.proposeAgentIds },
+    { id: "n_respond", name: "回应互动", executionCapabilities: ["respond"], agentIds: bindings.respondAgentIds },
+    { id: "n_judge", name: "裁判裁定", executionCapabilities: ["judge"], agentIds: bindings.judgeAgentIds },
+    { id: "n_chronicle", name: "整理剧情", executionCapabilities: ["chronicle"], agentIds: bindings.chronicleAgentIds },
+    { id: "n_clock", name: "推进时刻", executionCapabilities: ["advance_clock"], agentIds: bindings.clockAgentIds },
   ];
   const edges: PipelineEdge[] = [
     { from: "n_open", to: "n_propose", when: "always" },

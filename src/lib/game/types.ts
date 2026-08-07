@@ -9,11 +9,30 @@ export type GameEventAudience = "public" | "private";
 export interface GameSheet {
   id: string;
   name: string;
-  /** Free-form numeric / string attrs (hp, strength, location, …). */
+  /** Free-form numeric / string attrs (hp, strength, mood, …). */
   attrs: Record<string, string | number | boolean>;
   inventory: string[];
   flags: string[];
   notes: string;
+  position?: GameMapPosition;
+}
+
+export interface GameMapPosition {
+  x: number;
+  y: number;
+}
+
+export interface GameMapCell extends GameMapPosition {
+  zoneName?: string;
+  terrain?: string;
+  properties: Record<string, string | number | boolean>;
+  objects: string[];
+  passable?: boolean;
+}
+
+export interface GameWorldMap {
+  terrainTypes: string[];
+  cells: Record<string, GameMapCell>;
 }
 
 export interface GameAttributeDefinition {
@@ -25,6 +44,7 @@ export interface GameAttributeDefinition {
 }
 
 export type GameEra = "BCE" | "CE";
+export type GameWeekday = 1 | 2 | 3 | 4 | 5 | 6 | 7;
 
 export interface GameDateTime {
   description: string;
@@ -32,6 +52,7 @@ export interface GameDateTime {
   year: number;
   month: number;
   day: number;
+  weekday?: GameWeekday;
   hour: number;
   minute: number;
 }
@@ -72,10 +93,6 @@ export interface AgentModelOverride {
   reasoningEffort?: "low" | "high" | "max";
 }
 
-/** 仅供废弃的隐藏编辑器代码编译，当前建局流程不再读取这些字段。 */
-export type ProposeOrderMode = "template" | "random" | "custom";
-export type ProposeMode = "serial" | "parallel";
-
 export type PipelineEdgeWhen =
   | "always"
   | "has_intents"
@@ -112,6 +129,8 @@ export interface GameAgent {
   id: string;
   kind: GameAgentKind;
   name: string;
+  /** Stable template character id when this is a character controller. */
+  characterId?: string;
   /** Character sheet id when kind === character. */
   sheetId?: string;
   persona: string;
@@ -182,7 +201,6 @@ export interface JudgeResult {
     flagsRemove?: string[];
     notesAppend?: string;
   }>;
-  periodComplete: boolean;
   publicSummary: string;
   /**
    * true = 本轮作废并重做（不改面板）。
@@ -201,11 +219,12 @@ export interface TickBuffer {
   worldBrief?: string;
   intents?: InteractionIntent[];
   responses?: InteractionResponse[];
-  lastJudge?: JudgeResult;
 }
 
 export interface GameSettings {
   characterCount: number;
+  /** 是否启用独立的 7 日循环计时表。 */
+  weekCycleEnabled: boolean;
   /** 推进一轮流水线图；缺省用默认图。 */
   pipeline: GamePipeline;
 }
@@ -235,6 +254,7 @@ export interface GameState {
   contextFiles: GameContextFile[];
   /** 本局模板定义的属性集合；旧存档可由 attrs 推导。 */
   attributeDefinitions: GameAttributeDefinition[];
+  worldMap: GameWorldMap;
   events: GameEvent[];
   tickBuffer: TickBuffer | null;
   settings: GameSettings;
@@ -246,6 +266,8 @@ export interface GameState {
   godStory: string;
   /** 玩家视角剧情/个人经历（累积）。 */
   playerStory: string;
+  /** 每个角色 AI 对应的个人剧情正文。 */
+  personalStories: Record<string, string>;
   /** 已写入「时段剧情」的 tick（开场种子可为 -1）。 */
   storyTick: number;
   /**

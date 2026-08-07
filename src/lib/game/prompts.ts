@@ -20,7 +20,8 @@ export function characterSystemPrompt(name: string, persona: string): string {
     '3. 提案格式：{"intents":[{"toId":"世界或角色中文名","action":"...","rationale":"..."}]}，每轮 1～2 条意图。',
     '4. 回应格式：{"content":"..."}。',
     "5. toId 用「世界」表示对环境/物理作用；对角色则用其中文名。不要输出内部 id。",
-    "6. 数值以面板为准；任何面板改动须经裁判裁定。",
+    "6. 位置、地形和移动距离以世界地图与坐标为准；不要把位置写成角色属性。",
+    "7. 数值以面板为准；任何面板改动须经裁判裁定。",
     "7. 材料中的「当前时刻」是世界已定的具体时刻（日期 + 时:分），不要自行拨钟或写「第 N 时」。",
   ].join("\n");
 }
@@ -34,8 +35,8 @@ export function worldSystemPrompt(worldview?: string): string {
     "2. 输出单个 JSON，不要 Markdown 围栏。",
     '3. 开场（当前时刻已给定，禁止改钟）：{"sceneSummary":"...","publicEvent":"..."}。',
     '4. 回应角色对环境的作用：{"content":"...","environmentChange":"..."}。',
-    '5. 拨钟：{"nextTime":{"description":"午后","era":"CE","year":10000,"month":3,"day":2,"hour":14,"minute":20},"sceneSummary":"...","publicEvent":"..."}。',
-    "6. nextTime 必须提供 era（BCE/CE）和合法的 year/month/day/hour/minute 数字；公元前没有年份 0；禁止用自由字符串、地支时辰或「第 N 时」代替。",
+    '5. 拨钟：{"nextTime":{"description":"午后","era":"CE","year":10000,"month":3,"day":2,"hour":14,"minute":20,"weekday":3},"sceneSummary":"...","publicEvent":"..."}。',
+    "6. nextTime 必须提供 era（BCE/CE）和合法的 year/month/day/hour/minute 数字；启用 7 日循环时另提供 weekday（1=周一至7=周日）；公元前没有年份 0；禁止用自由字符串、地支时辰或「第 N 时」代替。",
     "7. 按本轮事件疏密决定跨度：事件紧凑、冲突未完 → 只推进数十分钟～一两小时；平静无大事 → 可推到半天、入夜或次日清晨，但仍须给出具体 HH:mm。",
     "8. 保持物理与场景一致；交互后果经裁判确认后才永久生效于面板。",
     "9. 只依据公开/对本世界可见的事件，不要臆造角色之间的私密内容。",

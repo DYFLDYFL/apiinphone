@@ -30,7 +30,6 @@ import {
 import {
   composeSystemPrompt,
   effectiveModel,
-  isWebTransport,
   loadSettings,
   rememberModel,
   saveSettings,
@@ -184,11 +183,6 @@ export default function App() {
   }, [session?.id, viewerReady, showThinkingChain, renderSession]);
 
   const refreshBalance = useCallback(async (current: AppSettings) => {
-    if (isWebTransport(current)) {
-      setBalanceLines(["网页会话（无余额）"]);
-      setBalanceError("");
-      return;
-    }
     if (!current.apiKey.trim()) {
       setBalanceLines([]);
       setBalanceError("");
@@ -209,12 +203,7 @@ export default function App() {
 
   useEffect(() => {
     if (settings) void refreshBalance(settings);
-  }, [
-    settings?.apiKey,
-    settings?.deepseekTransport,
-    settings?.webSessionToken,
-    refreshBalance,
-  ]);
+  }, [settings?.apiKey, refreshBalance]);
 
   const persistSettings = async (next: AppSettings) => {
     setSettings(next);
@@ -304,23 +293,18 @@ export default function App() {
 
     try {
       let balanceBefore: number | null = null;
-      if (!isWebTransport(settings)) {
-        try {
-          const beforeBal = await fetchDeepseekBalance(settings);
-          balanceBefore = cnyTotalFromBalance(beforeBal);
-          setBalanceLines(formatBalanceDisplay(beforeBal));
-          setBalanceError("");
-        } catch {
-          /* spend falls back to rate table */
-        }
+      try {
+        const beforeBal = await fetchDeepseekBalance(settings);
+        balanceBefore = cnyTotalFromBalance(beforeBal);
+        setBalanceLines(formatBalanceDisplay(beforeBal));
+        setBalanceError("");
+      } catch {
+        /* spend falls back to rate table */
       }
 
       const resolveSpend = async (
         usage: TokenUsage | null,
       ): Promise<{ amount: number; kind: SpendKind }> => {
-        if (isWebTransport(settings)) {
-          return { amount: 0, kind: "balance" };
-        }
         let fromBalance: number | null = null;
         try {
           const afterBal = await fetchDeepseekBalance(settings);
@@ -790,9 +774,6 @@ export default function App() {
                 void persistSettings(remembered);
               }}
             />
-            {isWebTransport(settings) ? (
-              <span className="status-hint">{" · "}网页</span>
-            ) : null}
             {(statusText || balanceLines[0]) && (
               <span className="status-hint">
                 {" · "}

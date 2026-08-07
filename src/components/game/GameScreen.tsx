@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type PointerEvent as ReactPointerEvent,
+  type ReactNode,
+  type WheelEvent as ReactWheelEvent,
+} from "react";
 import type { AppSettings } from "../../types";
 import {
   createGame,
@@ -22,24 +30,28 @@ import type { PlayerIntentRequest } from "../../lib/game/orchestrator";
 import { seedInitialChronicles } from "../../lib/game/orchestrator";
 import {
   characterSystemPrompt,
-  chroniclerSystemPrompt,
   worldSystemPrompt,
 } from "../../lib/game/prompts";
 import {
   AI_RUNTIME_PRESETS,
-  ATTR_LABELS,
   CHAR_TEMPLATES,
   applyAiPreset,
   cloneTemplateDraft,
   DEFAULT_ATTRIBUTE_DEFINITIONS,
   GAME_TEMPLATE_PRESETS,
+  AGENT_INFORMATION_PRESET_LABELS,
   defaultTemplateDraft,
   defaultContextFiles,
   daysInMonth,
+  formatGameClock,
   formatGameDateTime,
+  WEEKDAY_LABELS,
   inferAttributeDefinitions,
+  informationAccessForAgent,
+  informationPresetForAgent,
   normalizeGameDateTime,
   type CharTemplateDraft,
+  type AgentInformationPreset,
   type GameAiPreset,
   type GameTemplateDraft,
   type GameTemplatePreset,
@@ -49,6 +61,16 @@ import {
   formatAttrLines,
   formatEventSummary,
 } from "../../lib/game/mutations";
+import {
+  deleteSavedAiPreset,
+  deleteSavedWorldPreset,
+  loadSavedAiPresets,
+  loadSavedWorldPresets,
+  saveAiPreset,
+  saveWorldPreset,
+  type SavedAiPreset,
+  type SavedWorldPreset,
+} from "../../lib/game/presetStore";
 import type {
   AgentModelOverride,
   AgentFeatureKey,
@@ -56,14 +78,13 @@ import type {
   GameAttributeDefinition,
   GameAttributePermission,
   GameDateTime,
+  GameMapCell,
   GameEvent,
   GamePipeline,
   GameState,
   PipelineEdge,
   PipelineEdgeWhen,
   PipelineNode,
-  ProposeMode,
-  ProposeOrderMode,
 } from "../../lib/game/types";
 import {
   defaultPipeline,
@@ -94,10 +115,9 @@ interface GameScreenProps {
 
 type LogTab = "timeline" | "story" | "playerStory";
 type SidePanel = "collapsed" | "world" | "chars";
-type WorldSetupStep = "basic" | "attributes";
+type WorldSetupStep = "basic" | "attributes" | "map";
 type AiSetupStep = "agents" | "pipeline";
 
-const EDIT_ATTR_KEYS = DEFAULT_ATTRIBUTE_DEFINITIONS.map((item) => item.key);
 
 function sanitizeTimelineEvents(
   events: GameEvent[],
@@ -130,6 +150,16 @@ function syncDraftCharacterAgents(
   const characterAgents = characters.map((character, index) => {
     const characterId = character.id ?? `character_${index}`;
     const existing = existingByCharacterId.get(characterId);
+    const defaultAccess = informationAccessForAgent(
+      "character",
+      (draft.contextFiles ?? defaultContextFiles(draft.worldview, draft.initialTime)).map(
+        (file) => file.id,
+      ),
+      (draft.attributeDefinitions ?? DEFAULT_ATTRIBUTE_DEFINITIONS).map(
+        (definition) => definition.key,
+      ),
+      characterId,
+    );
     return {
       id: existing?.id ?? `agent_${characterId}`,
       characterId,
@@ -142,14 +172,32 @@ function syncDraftCharacterAgents(
           character.capabilities ??
           ["propose", "respond"]),
       ],
-      readableFileIds: existing?.readableFileIds,
-      editableFileIds: existing?.editableFileIds,
-      attributePermissions: existing?.attributePermissions,
+      readableFileIds: existing?.readableFileIds ?? defaultAccess.readableFileIds,
+      editableFileIds: existing?.editableFileIds ?? defaultAccess.editableFileIds,
+      attributePermissions:
+        existing?.attributePermissions ?? defaultAccess.attributePermissions,
+    };
+  });
+  const baseContextFiles =
+    draft.contextFiles ??
+    defaultContextFiles(draft.worldview, draft.initialTime);
+  const characterStoryFiles = characters.map((character, index) => {
+    const characterId = character.id ?? `character_${index}`;
+    return {
+      id: `personal_story_${characterId}`,
+      title: `${character.name || `角色 ${index + 1}`}的个人剧情`,
+      content: "",
     };
   });
   return {
     ...draft,
     characters,
+    contextFiles: [
+      ...baseContextFiles.filter(
+        (file) => !file.id.startsWith("personal_story_"),
+      ),
+      ...characterStoryFiles,
+    ],
     agents: [
       ...draft.agents.filter((agent) => !agent.characterId),
       ...characterAgents,
@@ -181,11 +229,24 @@ export function GameScreen({
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState("");
   const [inject, setInject] = useState("");
-  const [showTemplate, setShowTemplate] = useState(false);
   const [draft, setDraft] = useState<GameTemplateDraft>(() =>
     defaultTemplateDraft(3),
   );
+  const [savedWorldPresets, setSavedWorldPresets] = useState<SavedWorldPreset[]>(
+    [],
+  );
+  const [savedAiPresets, setSavedAiPresets] = useState<SavedAiPreset[]>([]);
   const [selectedPresetId, setSelectedPresetId] = useState("qing-shi");
+  const [editingWorldPresetId, setEditingWorldPresetId] = useState<string>();
+  const [editingWorldPresetSourceId, setEditingWorldPresetSourceId] =
+    useState<string>();
+  const [editingWorldPresetName, setEditingWorldPresetName] =
+    useState("新世界预设");
+  const [editingAiPresetId, setEditingAiPresetId] = useState<string>();
+  const [editingAiPresetSourceId, setEditingAiPresetSourceId] =
+    useState<string>();
+  const [editingAiPresetName, setEditingAiPresetName] =
+    useState("新 AI 逻辑预设");
   const [editingCharacterIndex, setEditingCharacterIndex] = useState(0);
   const [characterEntryView, setCharacterEntryView] = useState<
     "ai-choice" | "ai-editor"
@@ -205,6 +266,15 @@ export function GameScreen({
   const [intentTo, setIntentTo] = useState("世界");
   const [intentAction, setIntentAction] = useState("");
   const [intentWhy, setIntentWhy] = useState("");
+
+  useEffect(() => {
+    void Promise.all([loadSavedWorldPresets(), loadSavedAiPresets()]).then(
+      ([worldPresets, aiPresets]) => {
+        setSavedWorldPresets(worldPresets);
+        setSavedAiPresets(aiPresets);
+      },
+    );
+  }, []);
 
   const refreshList = useCallback(async () => {
     setGames(await listGames());
@@ -542,7 +612,161 @@ export function GameScreen({
     setView("template-choice");
   };
 
-  const selectWorldPreset = (preset: GameTemplatePreset) => {
+  const applyWorldPresetFields = (
+    base: GameTemplateDraft,
+    preset?: GameTemplatePreset,
+  ): GameTemplateDraft => {
+    const source = preset?.draft ?? defaultTemplateDraft(base.characters.length);
+    return syncDraftCharacterAgents(
+      {
+        ...base,
+        title: source.title,
+        worldview: source.worldview,
+        initialTime: source.initialTime,
+        initialTimeParts: { ...source.initialTimeParts },
+        weekCycleEnabled: Boolean(source.weekCycleEnabled),
+        worldMap: source.worldMap
+          ? JSON.parse(JSON.stringify(source.worldMap))
+          : undefined,
+        contextFiles: source.contextFiles?.map((file) => ({ ...file })),
+        attributeDefinitions: source.attributeDefinitions?.map((item) => ({
+          ...item,
+          textOptions: item.textOptions ? [...item.textOptions] : undefined,
+        })),
+      },
+      base.characters,
+    );
+  };
+
+  const applyAiDraft = (
+    base: GameTemplateDraft,
+    aiDraft: GameAiPreset["draft"],
+  ): GameTemplateDraft =>
+    syncDraftCharacterAgents({
+      ...base,
+      agents: aiDraft.agents.map((agent) => ({
+        ...agent,
+        capabilities: [...agent.capabilities],
+        readableFileIds: agent.readableFileIds
+          ? [...agent.readableFileIds]
+          : undefined,
+        editableFileIds: agent.editableFileIds
+          ? [...agent.editableFileIds]
+          : undefined,
+        attributePermissions: agent.attributePermissions
+          ? { ...agent.attributePermissions }
+          : undefined,
+      })),
+      pipeline: cloneTemplateDraft({
+        ...base,
+        pipeline: aiDraft.pipeline,
+      }).pipeline,
+    });
+
+  const startNewWorldPreset = () => {
+    setDraft(defaultTemplateDraft(draft.characters.length));
+    setEditingWorldPresetId(undefined);
+    setEditingWorldPresetSourceId(undefined);
+    setEditingWorldPresetName("新世界预设");
+    setSelectedPresetId("custom-new-world");
+    setWorldSetupStep("basic");
+    setView("world-editor");
+  };
+
+  const editWorldPreset = (preset: GameTemplatePreset | SavedWorldPreset) => {
+    setDraft((prev) => applyWorldPresetFields(prev, preset));
+    setEditingWorldPresetId(
+      "origin" in preset && preset.origin === "custom" ? preset.id : undefined,
+    );
+    setEditingWorldPresetSourceId(
+      "origin" in preset && preset.origin === "custom"
+        ? preset.sourcePresetId
+        : preset.id,
+    );
+    setEditingWorldPresetName(preset.title);
+    setSelectedPresetId(preset.id);
+    setWorldSetupStep("basic");
+    setView("world-editor");
+  };
+
+  const saveCurrentWorldPreset = async () => {
+    const saved = await saveWorldPreset({
+      id: editingWorldPresetId,
+      title: editingWorldPresetName,
+      draft,
+      sourcePresetId: editingWorldPresetSourceId,
+    });
+    setSavedWorldPresets((prev) => [
+      ...prev.filter((item) => item.id !== saved.id),
+      saved,
+    ]);
+    setEditingWorldPresetId(saved.id);
+    setEditingWorldPresetSourceId(saved.sourcePresetId);
+    setSelectedPresetId(saved.id);
+    setStatus("世界预设已保存");
+  };
+
+  const startNewAiPreset = () => {
+    const base = defaultTemplateDraft(draft.characters.length);
+    setDraft((prev) => applyAiDraft(prev, base.pipeline ? {
+      agents: base.agents,
+      pipeline: base.pipeline,
+    } : { agents: base.agents, pipeline: defaultTemplateDraft(3).pipeline }));
+    setEditingAiPresetId(undefined);
+    setEditingAiPresetSourceId(undefined);
+    setEditingAiPresetName("新 AI 逻辑预设");
+    setSelectedAiPresetId("custom-new-ai");
+    setAiSetupStep("agents");
+    setView("ai-editor");
+  };
+
+  const editAiPreset = (preset: GameAiPreset | SavedAiPreset) => {
+    setDraft((prev) => applyAiDraft(prev, preset.draft));
+    setEditingAiPresetId(
+      "origin" in preset && preset.origin === "custom" ? preset.id : undefined,
+    );
+    setEditingAiPresetSourceId(
+      "origin" in preset && preset.origin === "custom"
+        ? preset.sourcePresetId
+        : preset.id,
+    );
+    setEditingAiPresetName(preset.title);
+    setSelectedAiPresetId(preset.id);
+    setAiSetupStep("agents");
+    setView("ai-editor");
+  };
+
+  const saveCurrentAiPreset = async () => {
+    const saved = await saveAiPreset({
+      id: editingAiPresetId,
+      title: editingAiPresetName,
+      draft: {
+        agents: draft.agents,
+        pipeline: draft.pipeline ?? defaultTemplateDraft(draft.characters.length).pipeline!,
+      },
+      sourcePresetId: editingAiPresetSourceId,
+    });
+    setSavedAiPresets((prev) => [
+      ...prev.filter((item) => item.id !== saved.id),
+      saved,
+    ]);
+    setEditingAiPresetId(saved.id);
+    setEditingAiPresetSourceId(saved.sourcePresetId);
+    setSelectedAiPresetId(saved.id);
+    setStatus("AI 逻辑预设已保存");
+  };
+
+  const removeSavedWorldPreset = async (id: string) => {
+    await deleteSavedWorldPreset(id);
+    setSavedWorldPresets((prev) => prev.filter((item) => item.id !== id));
+  };
+
+  const removeSavedAiPreset = async (id: string) => {
+    await deleteSavedAiPreset(id);
+    setSavedAiPresets((prev) => prev.filter((item) => item.id !== id));
+  };
+
+  const selectWorldPreset = (preset: GameTemplatePreset | SavedWorldPreset) => {
     const world = cloneTemplateDraft(preset.draft);
     const next: GameTemplateDraft = {
       ...draft,
@@ -550,11 +774,11 @@ export function GameScreen({
       worldview: world.worldview,
       initialTime: world.initialTime,
       initialTimeParts: { ...world.initialTimeParts },
+      weekCycleEnabled: Boolean(world.weekCycleEnabled),
+      worldMap: world.worldMap
+        ? JSON.parse(JSON.stringify(world.worldMap))
+        : undefined,
       contextFiles: world.contextFiles?.map((file) => ({ ...file })),
-      agents: world.agents.map((agent) => ({
-        ...agent,
-        capabilities: [...agent.capabilities],
-      })),
       attributeDefinitions: world.attributeDefinitions?.map((item) => ({
         ...item,
       })),
@@ -576,31 +800,16 @@ export function GameScreen({
     setView("ai-choice");
   };
 
-  const openCustomWorld = () => {
-    setSelectedPresetId("custom");
-    setSelectedAiPresetId("");
-    setCharacterEntryView("ai-choice");
-    setAiChoiceBackView("world-editor");
-    setWorldSetupStep("basic");
-    setView("world-editor");
-  };
-
   const confirmWorld = () => {
     setAiChoiceBackView("world-editor");
     setView("ai-choice");
   };
 
-  const selectAiPreset = (preset: GameAiPreset) => {
+  const selectAiPreset = (preset: GameAiPreset | SavedAiPreset) => {
     setDraft((prev) => syncDraftCharacterAgents(applyAiPreset(prev, preset)));
     setSelectedAiPresetId(preset.id);
     setCharacterEntryView("ai-choice");
     setView("characters");
-  };
-
-  const openCustomAi = () => {
-    setSelectedAiPresetId("custom");
-    setAiSetupStep("agents");
-    setView("ai-editor");
   };
 
   const confirmAi = () => {
@@ -652,7 +861,10 @@ export function GameScreen({
         topActions={topActions}
         onBack={() => setView("lobby")}
         onSelectPreset={selectWorldPreset}
-        onOpenCustom={openCustomWorld}
+        onEditPreset={editWorldPreset}
+        onNewPreset={startNewWorldPreset}
+        savedPresets={savedWorldPresets}
+        onDeleteSavedPreset={removeSavedWorldPreset}
       />
     );
   }
@@ -667,6 +879,9 @@ export function GameScreen({
         onChange={setDraft}
         onStepChange={setWorldSetupStep}
         onConfirm={confirmWorld}
+        presetName={editingWorldPresetName}
+        onPresetNameChange={setEditingWorldPresetName}
+        onSavePreset={() => void saveCurrentWorldPreset()}
       />
     );
   }
@@ -678,7 +893,10 @@ export function GameScreen({
         topActions={topActions}
         onBack={() => setView(aiChoiceBackView)}
         onSelectPreset={selectAiPreset}
-        onOpenCustom={openCustomAi}
+        onEditPreset={editAiPreset}
+        onNewPreset={startNewAiPreset}
+        savedPresets={savedAiPresets}
+        onDeleteSavedPreset={removeSavedAiPreset}
       />
     );
   }
@@ -693,6 +911,9 @@ export function GameScreen({
         onChange={setDraft}
         onStepChange={setAiSetupStep}
         onConfirm={confirmAi}
+        presetName={editingAiPresetName}
+        onPresetNameChange={setEditingAiPresetName}
+        onSavePreset={() => void saveCurrentAiPreset()}
       />
     );
   }
@@ -764,454 +985,6 @@ export function GameScreen({
     );
   }
 
-  if (false) {
-    return (
-      <LobbyScreen
-        draft={draft}
-        games={games}
-        charCountInput={charCountInput}
-        selectedPresetId={selectedPresetId}
-        topActions={topActions}
-        onBack={onBack}
-        onChangeDraft={setDraft}
-        onSelectPreset={selectWorldPreset}
-        onCharCountChange={(value) => {
-          setCharCountInput(value);
-          if (value.trim() !== "") {
-            const n = Number(value);
-            if (Number.isFinite(n) && n >= 2 && n <= 6) applyCharacterCount(n);
-          }
-        }}
-        onCharCountBlur={() =>
-          applyCharacterCount(
-            Number(charCountInput) || draft.characters.length || 3,
-          )
-        }
-        onOpenTemplate={() => setView("template-choice")}
-        onOpenCharacters={() => setView("characters")}
-        onCreate={() => void handleCreate()}
-        onOpenGame={(id) => void openGame(id)}
-        onDelete={(id) => void handleDelete(id)}
-        isGameRunning={isGameRunning}
-      />
-    );
-  }
-
-  if (false) {
-    const draftPlay = draft.playMode === "play" ? "play" : "spectate";
-    return (
-      <div className="game-screen">
-        <header className="game-topbar">
-          <button type="button" className="icon-btn" onClick={onBack}>
-            ←
-          </button>
-          <div className="game-topbar-title">
-            <div>游戏</div>
-          </div>
-          {topActions}
-        </header>
-        <div className="game-body game-lobby">
-          <section className="game-card game-create-card">
-            <div className="game-card-heading">
-              <div>
-                <h3>新建游戏</h3>
-                <p>先定下世界与角色，再开始第一轮故事。</p>
-              </div>
-              <span className="game-card-badge">建局</span>
-            </div>
-            <div className="game-form-grid">
-              <label className="game-field">
-                标题
-                <input
-                  value={draft.title}
-                  placeholder="例如：青石镇的晨雾"
-                  onChange={(e) =>
-                    setDraft({ ...draft, title: e.target.value })
-                  }
-                />
-              </label>
-              <label className="game-field">
-                初始时刻
-                <input
-                  value={draft.initialTime}
-                  placeholder="例如：三月初二 05:30"
-                  onChange={(e) =>
-                    setDraft({ ...draft, initialTime: e.target.value })
-                  }
-                />
-              </label>
-            </div>
-            <fieldset className="settings-fieldset game-view-fieldset">
-              <legend>开局视角（创建后不可改）</legend>
-              <label className="radio-row">
-                <input
-                  type="radio"
-                  name="draftPlayMode"
-                  checked={draftPlay === "spectate"}
-                  onChange={() =>
-                    setDraft({ ...draft, playMode: "spectate" })
-                  }
-                />
-                上帝视角
-              </label>
-              <label className="radio-row">
-                <input
-                  type="radio"
-                  name="draftPlayMode"
-                  checked={draftPlay === "play"}
-                  onChange={() =>
-                    setDraft({
-                      ...draft,
-                      playMode: "play",
-                      playerCharacterIndex: draft.playerCharacterIndex ?? 0,
-                    })
-                  }
-                />
-                扮演角色
-              </label>
-              {draftPlay === "play" ? (
-                <label>
-                  扮演谁
-                  <select
-                    value={String(draft.playerCharacterIndex ?? 0)}
-                    onChange={(e) =>
-                      setDraft({
-                        ...draft,
-                        playerCharacterIndex: Number(e.target.value) || 0,
-                      })
-                    }
-                  >
-                    {draft.characters.map((c, i) => (
-                      <option key={i} value={i}>
-                        {c.name || `角色 ${i + 1}`}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              ) : null}
-              <p className="settings-hint">
-                扮演开局默认只看「玩家剧情」；点「时间线/剧情」会提示是否解锁（作弊）。
-              </p>
-            </fieldset>
-            <div className="game-create-controls">
-              <label className="game-field game-count-field">
-                角色数量
-                <span className="game-field-hint">2–6 名角色</span>
-                <input
-                  type="number"
-                  min={2}
-                  max={6}
-                  value={charCountInput}
-                  onChange={(e) => {
-                    const raw = e.target.value;
-                    setCharCountInput(raw);
-                    if (raw.trim() === "") return;
-                    const num = Number(raw);
-                    if (!Number.isFinite(num)) return;
-                    if (num < 2 || num > 6) return;
-                    applyCharacterCount(num);
-                  }}
-                  onBlur={() => {
-                    applyCharacterCount(
-                      Number(charCountInput) || draft.characters.length || 3,
-                    );
-                  }}
-                />
-              </label>
-              <button
-                type="button"
-                className="secondary-btn game-template-toggle"
-                onClick={() => setShowTemplate((v) => !v)}
-              >
-                <span>{showTemplate ? "收起模板" : "编辑模板"}</span>
-                <span aria-hidden="true">{showTemplate ? "⌃" : "⌄"}</span>
-              </button>
-            </div>
-            {showTemplate ? (
-              <div className="game-template-editor">
-                <fieldset className="game-ai-block">
-                  <legend>运行逻辑</legend>
-                  <label>
-                    提案顺序
-                    <select
-                      value={draft.proposeOrder ?? "template"}
-                      onChange={(e) =>
-                        setDraft({
-                          ...draft,
-                          proposeOrder: e.target.value as ProposeOrderMode,
-                        })
-                      }
-                    >
-                      <option value="template">固定模板顺序</option>
-                      <option value="random">每轮随机</option>
-                      <option value="custom">自定义排序</option>
-                    </select>
-                  </label>
-                  <label>
-                    提案方式
-                    <select
-                      value={draft.proposeMode ?? "serial"}
-                      onChange={(e) =>
-                        setDraft({
-                          ...draft,
-                          proposeMode: e.target.value as ProposeMode,
-                        })
-                      }
-                    >
-                      <option value="serial">串行</option>
-                      <option value="parallel">并行</option>
-                    </select>
-                  </label>
-                  {(draft.proposeOrder ?? "template") === "custom" ? (
-                    <div className="game-order-list">
-                      <p className="settings-hint">自定义提案顺序（↑↓）</p>
-                      {(draft.customProposeOrder ??
-                        draft.characters.map((_, i) => i)
-                      ).map((idx, pos) => {
-                        const ch = draft.characters[idx];
-                        if (!ch) return null;
-                        const order =
-                          draft.customProposeOrder ??
-                          draft.characters.map((_, i) => i);
-                        return (
-                          <div key={`${idx}-${pos}`} className="game-order-row">
-                            <span>
-                              {pos + 1}. {ch.name || `角色 ${idx + 1}`}
-                            </span>
-                            <span>
-                              <button
-                                type="button"
-                                className="link-btn"
-                                disabled={pos === 0}
-                                onClick={() => {
-                                  if (pos === 0) return;
-                                  const next = [...order];
-                                  [next[pos - 1], next[pos]] = [
-                                    next[pos],
-                                    next[pos - 1],
-                                  ];
-                                  setDraft({
-                                    ...draft,
-                                    customProposeOrder: next,
-                                  });
-                                }}
-                              >
-                                ↑
-                              </button>
-                              <button
-                                type="button"
-                                className="link-btn"
-                                disabled={pos >= order.length - 1}
-                                onClick={() => {
-                                  if (pos >= order.length - 1) return;
-                                  const next = [...order];
-                                  [next[pos], next[pos + 1]] = [
-                                    next[pos + 1],
-                                    next[pos],
-                                  ];
-                                  setDraft({
-                                    ...draft,
-                                    customProposeOrder: next,
-                                  });
-                                }}
-                              >
-                                ↓
-                              </button>
-                            </span>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  ) : null}
-                  <PipelineEditor
-                    value={draft.pipeline ?? defaultPipeline()}
-                    onChange={(pipeline) => setDraft({ ...draft, pipeline })}
-                  />
-                </fieldset>
-
-                <fieldset className="game-ai-block">
-                  <legend>世界 AI</legend>
-                  <label>
-                    世界观
-                    <textarea
-                      rows={4}
-                      value={draft.worldview}
-                      onChange={(e) =>
-                        setDraft({ ...draft, worldview: e.target.value })
-                      }
-                    />
-                  </label>
-                  <label>
-                    System 提示词（空=默认）
-                    <textarea
-                      rows={3}
-                      value={draft.worldSystemPrompt ?? ""}
-                      placeholder={worldSystemPrompt(draft.worldview).slice(0, 80) + "…"}
-                      onChange={(e) =>
-                        setDraft({
-                          ...draft,
-                          worldSystemPrompt: e.target.value,
-                        })
-                      }
-                    />
-                  </label>
-                  <ModelOverrideEditor
-                    value={draft.worldModel}
-                    onChange={(worldModel) =>
-                      setDraft({ ...draft, worldModel })
-                    }
-                  />
-                </fieldset>
-
-                <fieldset className="game-ai-block">
-                  <legend>裁判 AI</legend>
-                  <label>
-                    人设
-                    <input
-                      value={draft.refereePersona ?? ""}
-                      onChange={(e) =>
-                        setDraft({
-                          ...draft,
-                          refereePersona: e.target.value,
-                        })
-                      }
-                    />
-                  </label>
-                  <label>
-                    System 提示词（空=默认）
-                    <textarea
-                      rows={3}
-                      value={draft.refereeSystemPrompt ?? ""}
-                      onChange={(e) =>
-                        setDraft({
-                          ...draft,
-                          refereeSystemPrompt: e.target.value,
-                        })
-                      }
-                    />
-                  </label>
-                  <ModelOverrideEditor
-                    value={draft.refereeModel}
-                    onChange={(refereeModel) =>
-                      setDraft({ ...draft, refereeModel })
-                    }
-                  />
-                </fieldset>
-
-                <fieldset className="game-ai-block">
-                  <legend>书记 AI</legend>
-                  <label>
-                    上帝视角提示词（空=默认）
-                    <textarea
-                      rows={2}
-                      value={draft.chroniclerGodPrompt ?? ""}
-                      placeholder={chroniclerSystemPrompt("god").slice(0, 60) + "…"}
-                      onChange={(e) =>
-                        setDraft({
-                          ...draft,
-                          chroniclerGodPrompt: e.target.value,
-                        })
-                      }
-                    />
-                  </label>
-                  <label>
-                    玩家视角提示词（空=默认）
-                    <textarea
-                      rows={2}
-                      value={draft.chroniclerPlayerPrompt ?? ""}
-                      placeholder={chroniclerSystemPrompt("player").slice(0, 60) + "…"}
-                      onChange={(e) =>
-                        setDraft({
-                          ...draft,
-                          chroniclerPlayerPrompt: e.target.value,
-                        })
-                      }
-                    />
-                  </label>
-                  <ModelOverrideEditor
-                    value={draft.chroniclerModel}
-                    onChange={(chroniclerModel) =>
-                      setDraft({ ...draft, chroniclerModel })
-                    }
-                  />
-                </fieldset>
-
-                {draft.characters.map((ch, idx) => (
-                  <CharDraftEditor
-                    key={idx}
-                    index={idx}
-                    value={ch}
-                    onChange={(next) => {
-                      const characters = [...draft.characters];
-                      characters[idx] = next;
-                      setDraft({ ...draft, characters });
-                    }}
-                  />
-                ))}
-                <button
-                  type="button"
-                  className="link-btn"
-                  onClick={() => {
-                    const n = draft.characters.length;
-                    const base = defaultTemplateDraft(n);
-                    setDraft({
-                      ...base,
-                      playMode: draft.playMode,
-                      playerCharacterIndex: draft.playerCharacterIndex,
-                    });
-                    setCharCountInput(String(n));
-                  }}
-                >
-                  恢复默认
-                </button>
-              </div>
-            ) : null}
-            <div className="game-create-actions">
-              <p>创建后可以随时暂停推进，但开局视角不可更改。</p>
-              <button
-                type="button"
-                className="primary-btn game-create-button"
-                onClick={() => void handleCreate()}
-              >
-                创建游戏
-              </button>
-            </div>
-          </section>
-          <section className="game-card game-saves-card">
-            <h3>存档</h3>
-            {!games.length ? (
-              <p className="settings-hint">尚无存档</p>
-            ) : (
-              <ul className="game-list">
-                {games.map((g) => (
-                  <li key={g.id}>
-                    <button
-                      type="button"
-                      className="game-list-main"
-                      onClick={() => void openGame(g.id)}
-                    >
-                      <strong>{g.title}</strong>
-                      <span>
-                        时段 {g.tick} · {new Date(g.updatedAt).toLocaleString()}
-                        {isGameRunning(g.id) ? " · 推进中…" : ""}
-                      </span>
-                    </button>
-                    <button
-                      type="button"
-                      className="link-btn"
-                      onClick={() => void handleDelete(g.id)}
-                    >
-                      删
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </section>
-        </div>
-      </div>
-    );
-  }
 
   const chars = game.agents.filter((a) => a.kind === "character");
   const playMode = game.playMode === "play" ? "play" : "spectate";
@@ -1450,6 +1223,11 @@ export function GameScreen({
               {chars.map((ch) => {
                 const sheet = game.sheets.find((s) => s.id === ch.sheetId);
                 if (!sheet) return null;
+                const mapCell = sheet.position
+                  ? game.worldMap?.cells[
+                      `${sheet.position.x},${sheet.position.y}`
+                    ]
+                  : undefined;
                 const isSelf = playMode === "play" && ch.id === playerId;
                 return (
                   <details
@@ -1465,7 +1243,11 @@ export function GameScreen({
                       </strong>
                       <span className="info-muted">
                         {" "}
-                        {String(sheet.attrs.location ?? "")} ·{" "}
+                        {mapCell?.zoneName ||
+                          (sheet.position
+                            ? `坐标 ${sheet.position.x},${sheet.position.y}`
+                            : "未定位")}{" "}
+                        ·{" "}
                         {String(sheet.attrs.mood ?? "")}
                       </span>
                     </summary>
@@ -1775,280 +1557,98 @@ function TemplateChoiceScreen({
   topActions,
   onBack,
   onSelectPreset,
-  onOpenCustom,
+  onEditPreset,
+  onNewPreset,
+  savedPresets,
+  onDeleteSavedPreset,
 }: {
   selectedPresetId: string;
   topActions: ReactNode;
   onBack: () => void;
-  onSelectPreset: (preset: GameTemplatePreset) => void;
-  onOpenCustom: () => void;
+  onSelectPreset: (preset: GameTemplatePreset | SavedWorldPreset) => void;
+  onEditPreset: (preset: GameTemplatePreset | SavedWorldPreset) => void;
+  onNewPreset: () => void;
+  savedPresets: SavedWorldPreset[];
+  onDeleteSavedPreset: (id: string) => void;
 }) {
+  const presets: Array<{
+    preset: GameTemplatePreset | SavedWorldPreset;
+    custom: boolean;
+  }> = [
+    ...GAME_TEMPLATE_PRESETS.map((preset) => ({ preset, custom: false })),
+    ...savedPresets.map((preset) => ({ preset, custom: true })),
+  ];
   return (
     <div className="game-screen game-editor-screen">
       <EditorHeader
         title="选择世界模板"
-        subtitle="选择内置世界后直接进入人物选择，也可以从零自定义"
+        subtitle="选择、编辑或新建世界预设后进入人物选择"
         topActions={topActions}
         onBack={onBack}
       />
       <div className="game-body game-editor-body">
         <section className="game-editor-section game-card">
           <div className="game-section-title">
-            <h3>内置世界</h3>
-            <span>选中后下一页选择人物</span>
+            <h3>世界预设</h3>
+            <span>内置预设和本地预设都可以使用或编辑</span>
           </div>
           <div className="game-preset-grid">
-            {GAME_TEMPLATE_PRESETS.map((preset) => (
-              <button
-                type="button"
+            {presets.map(({ preset, custom }) => (
+              <article
                 key={preset.id}
                 className={
                   selectedPresetId === preset.id
                     ? "game-preset-card active"
                     : "game-preset-card"
                 }
-                onClick={() => onSelectPreset(preset)}
               >
-                <span className="game-preset-genre">{preset.genre}</span>
+                <span className="game-preset-genre">
+                  {custom ? "我的预设" : preset.genre}
+                </span>
                 <strong>{preset.title}</strong>
                 <span>{preset.description}</span>
-                <small>选择并进入人物</small>
-              </button>
+                <div className="game-preset-card-actions">
+                  <button
+                    type="button"
+                    className="secondary-btn"
+                    onClick={() => onSelectPreset(preset)}
+                  >
+                    使用
+                  </button>
+                  <button
+                    type="button"
+                    className="link-btn"
+                    onClick={() => onEditPreset(preset)}
+                  >
+                    编辑
+                  </button>
+                  {custom ? (
+                    <button
+                      type="button"
+                      className="link-btn"
+                      onClick={() => onDeleteSavedPreset(preset.id)}
+                    >
+                      删除
+                    </button>
+                  ) : null}
+                </div>
+              </article>
             ))}
-          </div>
-        </section>
-        <section
-          className={
-            selectedPresetId === "custom"
-              ? "game-card game-custom-world-card active"
-              : "game-card game-custom-world-card"
-          }
-        >
-          <div className="game-section-title">
-            <h3>自定义世界</h3>
-            <span>世界设置完成后再选人物</span>
-          </div>
-          <p className="settings-hint">
-            自己设定世界观、时刻、属性集合、AI 人设和运行流水线。
-          </p>
-          <button type="button" className="secondary-btn" onClick={onOpenCustom}>
-            进入自定义设置
-          </button>
-        </section>
-      </div>
-    </div>
-  );
-}
-
-type LobbyScreenProps = {
-  draft: GameTemplateDraft;
-  games: Array<{ id: string; title: string; updatedAt: string; tick: number }>;
-  charCountInput: string;
-  selectedPresetId: string;
-  topActions: ReactNode;
-  onBack: () => void;
-  onChangeDraft: (draft: GameTemplateDraft) => void;
-  onSelectPreset: (preset: GameTemplatePreset) => void;
-  onCharCountChange: (value: string) => void;
-  onCharCountBlur: () => void;
-  onOpenTemplate: () => void;
-  onOpenCharacters: () => void;
-  onCreate: () => void;
-  onOpenGame: (id: string) => void;
-  onDelete: (id: string) => void;
-  isGameRunning: (id: string) => boolean;
-};
-
-function LobbyScreen({
-  draft,
-  games,
-  charCountInput,
-  selectedPresetId,
-  topActions,
-  onBack,
-  onChangeDraft,
-  onSelectPreset,
-  onCharCountChange,
-  onCharCountBlur,
-  onOpenTemplate,
-  onOpenCharacters,
-  onCreate,
-  onOpenGame,
-  onDelete,
-  isGameRunning,
-}: LobbyScreenProps) {
-  const playMode = draft.playMode === "play" ? "play" : "spectate";
-  return (
-    <div className="game-screen">
-      <header className="game-topbar">
-        <button type="button" className="icon-btn" onClick={onBack}>
-          ←
-        </button>
-        <div className="game-topbar-title">
-          <div>游戏</div>
-          <div className="game-subtitle">选择题材，分层编辑后开始故事。</div>
-        </div>
-        {topActions}
-      </header>
-      <div className="game-body game-lobby game-lobby-layered">
-        <section className="game-card">
-          <div className="game-card-heading">
-            <div>
-              <h3>选择世界观</h3>
-              <p>内置五种题材，也可以在模板编辑页继续改写。</p>
-            </div>
-            <span className="game-card-badge">预设</span>
-          </div>
-          <div className="game-preset-grid">
-            {GAME_TEMPLATE_PRESETS.map((preset) => (
-              <button
-                type="button"
-                key={preset.id}
-                className={
-                  selectedPresetId === preset.id
-                    ? "game-preset-card active"
-                    : "game-preset-card"
-                }
-                onClick={() => onSelectPreset(preset)}
-              >
-                <span className="game-preset-genre">{preset.genre}</span>
-                <strong>{preset.title}</strong>
-                <span>{preset.description}</span>
-              </button>
-            ))}
-          </div>
-        </section>
-
-        <section className="game-card game-create-card">
-          <div className="game-card-heading">
-            <div>
-              <h3>新建游戏</h3>
-              <p>建局页只保留开始游戏所需的选项。</p>
-            </div>
-            <span className="game-card-badge">建局</span>
-          </div>
-          <div className="game-form-grid">
-            <label className="game-field">
-              标题
-              <input
-                value={draft.title}
-                placeholder="例如：青石镇的晨雾"
-                onChange={(e) => onChangeDraft({ ...draft, title: e.target.value })}
-              />
-            </label>
-          </div>
-          <TimePickerEditor draft={draft} onChange={onChangeDraft} />
-          <fieldset className="settings-fieldset game-view-fieldset">
-            <legend>开局视角（创建后不可改）</legend>
-            <label className="radio-row">
-              <input
-                type="radio"
-                name="draftPlayMode"
-                checked={playMode === "spectate"}
-                onChange={() => onChangeDraft({ ...draft, playMode: "spectate" })}
-              />
-              上帝视角
-            </label>
-            <label className="radio-row">
-              <input
-                type="radio"
-                name="draftPlayMode"
-                checked={playMode === "play"}
-                onChange={() =>
-                  onChangeDraft({
-                    ...draft,
-                    playMode: "play",
-                    playerCharacterIndex: draft.playerCharacterIndex ?? 0,
-                  })
-                }
-              />
-              扮演角色
-            </label>
-            {playMode === "play" ? (
-              <label>
-                扮演谁
-                <select
-                  value={String(draft.playerCharacterIndex ?? 0)}
-                  onChange={(e) =>
-                    onChangeDraft({
-                      ...draft,
-                      playerCharacterIndex: Number(e.target.value) || 0,
-                    })
-                  }
-                >
-                  {draft.characters.map((character, index) => (
-                    <option key={index} value={index}>
-                      {character.name || `角色 ${index + 1}`}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            ) : null}
-            <p className="settings-hint">
-              上帝视角可查看完整时间线与剧情；扮演角色默认只看自己的经历。
-            </p>
-          </fieldset>
-          <div className="game-create-controls">
-            <label className="game-field game-count-field">
-              角色数量
-              <span className="game-field-hint">2–6 名角色</span>
-              <input
-                type="number"
-                min={2}
-                max={6}
-                value={charCountInput}
-                onChange={(e) => onCharCountChange(e.target.value)}
-                onBlur={onCharCountBlur}
-              />
-            </label>
-            <div className="game-lobby-edit-actions">
-              <button type="button" className="secondary-btn" onClick={onOpenTemplate}>
-                编辑模板
-              </button>
-              <button type="button" className="secondary-btn" onClick={onOpenCharacters}>
-                编辑角色
-              </button>
-            </div>
-          </div>
-          <div className="game-create-actions">
-            <p>模板与角色会在创建时写入本局存档，之后仍可在游戏内调整状态。</p>
-            <button type="button" className="primary-btn game-create-button" onClick={onCreate}>
-              创建游戏
+            <button
+              type="button"
+              className="game-preset-card game-preset-new-card"
+              onClick={onNewPreset}
+            >
+              <strong>+ 新建世界预设</strong>
+              <span>从默认世界开始编辑并保存为本地预设</span>
             </button>
           </div>
         </section>
-
-        <section className="game-card game-saves-card">
-          <h3>存档</h3>
-          {!games.length ? (
-            <p className="settings-hint">尚无存档</p>
-          ) : (
-            <ul className="game-list">
-              {games.map((saved) => (
-                <li key={saved.id}>
-                  <button
-                    type="button"
-                    className="game-list-main"
-                    onClick={() => onOpenGame(saved.id)}
-                  >
-                    <strong>{saved.title}</strong>
-                    <span>
-                      时段 {saved.tick} · {new Date(saved.updatedAt).toLocaleString()}
-                      {isGameRunning(saved.id) ? " · 推进中…" : ""}
-                    </span>
-                  </button>
-                  <button type="button" className="link-btn" onClick={() => onDelete(saved.id)}>
-                    删
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </section>
       </div>
     </div>
   );
 }
+
 
 type EditorHeaderProps = {
   title: string;
@@ -2077,14 +1677,27 @@ function AiChoiceScreen({
   topActions,
   onBack,
   onSelectPreset,
-  onOpenCustom,
+  onEditPreset,
+  onNewPreset,
+  savedPresets,
+  onDeleteSavedPreset,
 }: {
   selectedAiPresetId: string;
   topActions: ReactNode;
   onBack: () => void;
-  onSelectPreset: (preset: GameAiPreset) => void;
-  onOpenCustom: () => void;
+  onSelectPreset: (preset: GameAiPreset | SavedAiPreset) => void;
+  onEditPreset: (preset: GameAiPreset | SavedAiPreset) => void;
+  onNewPreset: () => void;
+  savedPresets: SavedAiPreset[];
+  onDeleteSavedPreset: (id: string) => void;
 }) {
+  const presets: Array<{
+    preset: GameAiPreset | SavedAiPreset;
+    custom: boolean;
+  }> = [
+    ...AI_RUNTIME_PRESETS.map((preset) => ({ preset, custom: false })),
+    ...savedPresets.map((preset) => ({ preset, custom: true })),
+  ];
   return (
     <div className="game-screen game-editor-screen">
       <EditorHeader
@@ -2096,46 +1709,60 @@ function AiChoiceScreen({
       <div className="game-body game-editor-body">
         <section className="game-editor-section game-card">
           <div className="game-section-title">
-            <h3>预设 AI 逻辑</h3>
-            <span>选择后直接进入人物页</span>
+            <h3>AI 逻辑预设</h3>
+            <span>内置预设和本地预设都可以使用或编辑</span>
           </div>
           <div className="game-ai-preset-grid">
-            {AI_RUNTIME_PRESETS.map((preset) => (
-              <button
-                type="button"
+            {presets.map(({ preset, custom }) => (
+              <article
                 key={preset.id}
                 className={
                   selectedAiPresetId === preset.id
                     ? "game-ai-preset-card active"
                     : "game-ai-preset-card"
                 }
-                onClick={() => onSelectPreset(preset)}
               >
-                <span className="game-preset-genre">{preset.genre}</span>
+                <span className="game-preset-genre">
+                  {custom ? "我的预设" : preset.genre}
+                </span>
                 <strong>{preset.title}</strong>
                 <span>{preset.description}</span>
-                <small>选择并进入人物</small>
-              </button>
+                <div className="game-preset-card-actions">
+                  <button
+                    type="button"
+                    className="secondary-btn"
+                    onClick={() => onSelectPreset(preset)}
+                  >
+                    使用
+                  </button>
+                  <button
+                    type="button"
+                    className="link-btn"
+                    onClick={() => onEditPreset(preset)}
+                  >
+                    编辑
+                  </button>
+                  {custom ? (
+                    <button
+                      type="button"
+                      className="link-btn"
+                      onClick={() => onDeleteSavedPreset(preset.id)}
+                    >
+                      删除
+                    </button>
+                  ) : null}
+                </div>
+              </article>
             ))}
+            <button
+              type="button"
+              className="game-ai-preset-card game-preset-new-card"
+              onClick={onNewPreset}
+            >
+              <strong>+ 新建 AI 逻辑预设</strong>
+              <span>从默认 AI 配置开始编辑并保存</span>
+            </button>
           </div>
-        </section>
-        <section
-          className={
-            selectedAiPresetId === "custom"
-              ? "game-card game-custom-world-card active"
-              : "game-card game-custom-world-card"
-          }
-        >
-          <div className="game-section-title">
-            <h3>自定义 AI 运行逻辑</h3>
-            <span>自己定义 AI 与思考链</span>
-          </div>
-          <p className="settings-hint">
-            分两步设置 AI 提示词、统一配置与自由流水线节点。
-          </p>
-          <button type="button" className="secondary-btn" onClick={onOpenCustom}>
-            进入自定义 AI 设置
-          </button>
         </section>
       </div>
     </div>
@@ -2155,6 +1782,9 @@ function AiSetupScreen({
   onChange,
   onStepChange,
   onConfirm,
+  presetName,
+  onPresetNameChange,
+  onSavePreset,
 }: {
   draft: GameTemplateDraft;
   step: AiSetupStep;
@@ -2163,6 +1793,9 @@ function AiSetupScreen({
   onChange: (draft: GameTemplateDraft) => void;
   onStepChange: (step: AiSetupStep) => void;
   onConfirm: () => void;
+  presetName: string;
+  onPresetNameChange: (value: string) => void;
+  onSavePreset: () => void;
 }) {
   const stepIndex = AI_SETUP_STEPS.findIndex((item) => item.id === step);
   const currentIndex = stepIndex < 0 ? 0 : stepIndex;
@@ -2189,6 +1822,18 @@ function AiSetupScreen({
         onBack={onBack}
       />
       <div className="game-body game-editor-body game-world-setup-body">
+        <div className="game-preset-save-bar">
+          <label className="game-field">
+            AI 逻辑预设名称
+            <input
+              value={presetName}
+              onChange={(event) => onPresetNameChange(event.target.value)}
+            />
+          </label>
+          <button type="button" className="primary-btn" onClick={onSavePreset}>
+            保存为本地预设
+          </button>
+        </div>
         <nav className="game-world-step-nav" aria-label="AI 设置步骤">
           {AI_SETUP_STEPS.map((item, index) => (
             <button
@@ -2231,6 +1876,7 @@ function AiSetupScreen({
 const WORLD_SETUP_STEPS: Array<{ id: WorldSetupStep; label: string }> = [
   { id: "basic", label: "基本信息" },
   { id: "attributes", label: "属性集合" },
+  { id: "map", label: "世界地图" },
 ];
 
 function WorldSetupScreen({
@@ -2241,6 +1887,9 @@ function WorldSetupScreen({
   onChange,
   onStepChange,
   onConfirm,
+  presetName,
+  onPresetNameChange,
+  onSavePreset,
 }: {
   draft: GameTemplateDraft;
   step: WorldSetupStep;
@@ -2249,6 +1898,9 @@ function WorldSetupScreen({
   onChange: (draft: GameTemplateDraft) => void;
   onStepChange: (step: WorldSetupStep) => void;
   onConfirm: () => void;
+  presetName: string;
+  onPresetNameChange: (value: string) => void;
+  onSavePreset: () => void;
 }) {
   const stepIndex = WORLD_SETUP_STEPS.findIndex((item) => item.id === step);
   const currentIndex = stepIndex < 0 ? 0 : stepIndex;
@@ -2276,6 +1928,18 @@ function WorldSetupScreen({
         onBack={onBack}
       />
       <div className="game-body game-editor-body game-world-setup-body">
+        <div className="game-preset-save-bar">
+          <label className="game-field">
+            世界预设名称
+            <input
+              value={presetName}
+              onChange={(event) => onPresetNameChange(event.target.value)}
+            />
+          </label>
+          <button type="button" className="primary-btn" onClick={onSavePreset}>
+            保存为本地预设
+          </button>
+        </div>
         <nav className="game-world-step-nav" aria-label="世界设置步骤">
           {WORLD_SETUP_STEPS.map((item, index) => (
             <button
@@ -2301,6 +1965,9 @@ function WorldSetupScreen({
         ) : null}
         {step === "attributes" ? (
           <WorldAttributesStep draft={draft} onChange={onChange} />
+        ) : null}
+        {step === "map" ? (
+          <WorldMapStep draft={draft} onChange={onChange} />
         ) : null}
         <div className="game-world-step-actions">
           <button type="button" className="secondary-btn" onClick={goPrevious}>
@@ -2352,6 +2019,829 @@ function WorldBasicStep({
   );
 }
 
+function WorldMapStep({
+  draft,
+  onChange,
+}: {
+  draft: GameTemplateDraft;
+  onChange: (draft: GameTemplateDraft) => void;
+}) {
+  const map = draft.worldMap ?? {
+    terrainTypes: [],
+    cells: {},
+  };
+  const cells = Object.entries(map.cells)
+    .map(([key, cell]) => ({ key, cell }))
+    .sort((a, b) => a.cell.y - b.cell.y || a.cell.x - b.cell.x);
+  const terrainTypes = Array.from(
+    new Set(
+      (map.terrainTypes ?? [])
+        .map((terrain) => terrain.trim())
+        .filter(Boolean),
+    ),
+  );
+  const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const [editingKey, setEditingKey] = useState<string | null>(null);
+  const [hoveredKey, setHoveredKey] = useState<string | null>(null);
+  const [collapsed, setCollapsed] = useState(false);
+  const [zoom, setZoom] = useState(1);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [newX, setNewX] = useState("0");
+  const [newY, setNewY] = useState("0");
+  const [newTerrain, setNewTerrain] = useState("");
+  const [terrainRenameDrafts, setTerrainRenameDrafts] = useState<
+    Record<string, string>
+  >({});
+  const [mapNotice, setMapNotice] = useState("");
+  const dragRef = useRef<{
+    pointerId: number;
+    clientX: number;
+    clientY: number;
+    panX: number;
+    panY: number;
+  } | null>(null);
+  const hoverCloseTimer = useRef<number | undefined>(undefined);
+
+  const GRID_SIZE = 76;
+  const VIEWBOX_WIDTH = 800;
+  const VIEWBOX_HEIGHT = 420;
+  const TERRAIN_COLORS = [
+    "#38bdf8",
+    "#a78bfa",
+    "#34d399",
+    "#fbbf24",
+    "#fb7185",
+    "#f97316",
+    "#2dd4bf",
+  ];
+  const clampZoom = (value: number) => Math.min(2.5, Math.max(0.45, value));
+  const updateMap = (nextMap: typeof map) => onChange({ ...draft, worldMap: nextMap });
+  const updateCells = (cellsByKey: Record<string, GameMapCell>) =>
+    updateMap({ terrainTypes: [...terrainTypes], cells: cellsByKey });
+  const parseProperties = (value: string): Record<string, string> =>
+    Object.fromEntries(
+      value
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .map((line) => {
+          const index = line.indexOf("=");
+          return index < 0
+            ? [line, ""]
+            : [line.slice(0, index).trim(), line.slice(index + 1).trim()];
+        }),
+    );
+  const propertiesText = (cell: GameMapCell) =>
+    Object.entries(cell.properties ?? {})
+      .map(([key, value]) => `${key}=${value}`)
+      .join("\n");
+  const updateCell = (oldKey: string, patch: Partial<GameMapCell>) => {
+    const current = map.cells[oldKey];
+    if (!current) return;
+    const cellsByKey = { ...map.cells };
+    cellsByKey[oldKey] = {
+      ...current,
+      ...patch,
+      properties: patch.properties
+        ? { ...patch.properties }
+        : { ...(current.properties ?? {}) },
+      objects: patch.objects ? [...patch.objects] : [...current.objects],
+    };
+    updateCells(cellsByKey);
+  };
+  const selectedCell = selectedKey ? map.cells[selectedKey] : undefined;
+  const popoverKey =
+    hoveredKey && map.cells[hoveredKey] ? hoveredKey : null;
+  const popoverCell = popoverKey ? map.cells[popoverKey] : undefined;
+  const showPopover = (key: string) => {
+    if (hoverCloseTimer.current !== undefined) {
+      window.clearTimeout(hoverCloseTimer.current);
+      hoverCloseTimer.current = undefined;
+    }
+    setHoveredKey(key);
+  };
+  const hidePopoverLater = (key: string) => {
+    if (hoverCloseTimer.current !== undefined) {
+      window.clearTimeout(hoverCloseTimer.current);
+    }
+    hoverCloseTimer.current = window.setTimeout(() => {
+      setHoveredKey((current) => (current === key ? null : current));
+    }, 220);
+  };
+  const selectCell = (key: string) => {
+    setSelectedKey(key);
+    setEditingKey(null);
+    setMapNotice("");
+  };
+  const editCell = (key: string) => {
+    setSelectedKey(key);
+    setEditingKey(key);
+    setMapNotice("");
+  };
+  const updateSelectedCell = (patch: Partial<GameMapCell>) => {
+    if (selectedKey) updateCell(selectedKey, patch);
+  };
+  const removeSelectedCell = () => {
+    if (!selectedKey) return;
+    const cellsByKey = { ...map.cells };
+    delete cellsByKey[selectedKey];
+    updateCells(cellsByKey);
+    setSelectedKey(null);
+    setEditingKey(null);
+    setHoveredKey(null);
+  };
+  const addEmptyCell = () => {
+    const parsedX = Number(newX);
+    const parsedY = Number(newY);
+    if (!Number.isFinite(parsedX) || !Number.isFinite(parsedY)) {
+      setMapNotice("请输入有效的整数坐标。");
+      return;
+    }
+    const x = Math.round(parsedX);
+    const y = Math.round(parsedY);
+    const key = `${x},${y}`;
+    if (map.cells[key]) {
+      editCell(key);
+      setMapNotice(`坐标（${x}, ${y}）已经存在，已选中它。`);
+      return;
+    }
+    const cell: GameMapCell = {
+      x,
+      y,
+      zoneName: "",
+      terrain: "",
+      properties: {},
+      objects: [],
+      passable: true,
+    };
+    updateCells({ ...map.cells, [key]: cell });
+    setSelectedKey(key);
+    setEditingKey(key);
+    setMapNotice("");
+  };
+  const addTerrainType = () => {
+    const terrain = newTerrain.trim();
+    if (!terrain) {
+      setMapNotice("请输入地形名称。");
+      return;
+    }
+    if (terrainTypes.includes(terrain)) {
+      setMapNotice(`地形「${terrain}」已经存在。`);
+      return;
+    }
+    updateMap({
+      terrainTypes: [...terrainTypes, terrain],
+      cells: { ...map.cells },
+    });
+    setNewTerrain("");
+    setMapNotice("");
+  };
+  const renameTerrain = (terrain: string) => {
+    const nextTerrain = (terrainRenameDrafts[terrain] ?? terrain).trim();
+    if (!nextTerrain) {
+      setMapNotice("地形名称不能为空。");
+      return;
+    }
+    if (nextTerrain === terrain) return;
+    if (terrainTypes.some((item) => item !== terrain && item === nextTerrain)) {
+      setMapNotice(`地形「${nextTerrain}」已经存在，不能重名。`);
+      return;
+    }
+    const usageCount = cells.filter(
+      ({ cell }) => cell.terrain === terrain,
+    ).length;
+    if (
+      usageCount > 0 &&
+      !window.confirm(
+        `有 ${usageCount} 个坐标使用「${terrain}」。重命名后将同步替换这些坐标，继续吗？`,
+      )
+    ) {
+      return;
+    }
+    const cellsByKey = { ...map.cells };
+    Object.entries(cellsByKey).forEach(([key, cell]) => {
+      if (cell.terrain === terrain) {
+        cellsByKey[key] = { ...cell, terrain: nextTerrain };
+      }
+    });
+    updateMap({
+      terrainTypes: terrainTypes.map((item) =>
+        item === terrain ? nextTerrain : item,
+      ),
+      cells: cellsByKey,
+    });
+    setTerrainRenameDrafts((current) => {
+      const next = { ...current };
+      delete next[terrain];
+      next[nextTerrain] = nextTerrain;
+      return next;
+    });
+    setMapNotice("");
+  };
+  const deleteTerrain = (terrain: string) => {
+    const usageCount = cells.filter(
+      ({ cell }) => cell.terrain === terrain,
+    ).length;
+    const replacement = terrainTypes.find((item) => item !== terrain);
+    const warning =
+      usageCount > 0
+        ? replacement
+          ? `有 ${usageCount} 个坐标使用「${terrain}」。删除后将替换为「${replacement}」，继续吗？`
+          : `有 ${usageCount} 个坐标使用「${terrain}」。删除后这些坐标的地形会清空，继续吗？`
+        : `确定删除地形「${terrain}」吗？`;
+    if (!window.confirm(warning)) return;
+    const cellsByKey = { ...map.cells };
+    if (usageCount > 0) {
+      Object.entries(cellsByKey).forEach(([key, cell]) => {
+        if (cell.terrain === terrain) {
+          cellsByKey[key] = { ...cell, terrain: replacement ?? "" };
+        }
+      });
+    }
+    updateMap({
+      terrainTypes: terrainTypes.filter((item) => item !== terrain),
+      cells: cellsByKey,
+    });
+    setTerrainRenameDrafts((current) => {
+      const next = { ...current };
+      delete next[terrain];
+      return next;
+    });
+    setMapNotice("");
+  };
+  const mapBounds = cells.length
+    ? cells.reduce(
+        (bounds, { cell }) => ({
+          minX: Math.min(bounds.minX, cell.x),
+          maxX: Math.max(bounds.maxX, cell.x),
+          minY: Math.min(bounds.minY, cell.y),
+          maxY: Math.max(bounds.maxY, cell.y),
+        }),
+        {
+          minX: cells[0].cell.x,
+          maxX: cells[0].cell.x,
+          minY: cells[0].cell.y,
+          maxY: cells[0].cell.y,
+        },
+      )
+    : { minX: 0, maxX: 0, minY: 0, maxY: 0 };
+  const mapCenterX = (mapBounds.minX + mapBounds.maxX) / 2;
+  const mapCenterY = (mapBounds.minY + mapBounds.maxY) / 2;
+  const viewTransform = `translate(${VIEWBOX_WIDTH / 2 + pan.x} ${
+    VIEWBOX_HEIGHT / 2 + pan.y
+  }) scale(${zoom}) translate(${-mapCenterX * GRID_SIZE} ${
+    -mapCenterY * GRID_SIZE
+  })`;
+  const terrainColor = (terrain: string | undefined) => {
+    const index = terrain ? terrainTypes.indexOf(terrain) : -1;
+    return index >= 0
+      ? TERRAIN_COLORS[index % TERRAIN_COLORS.length]
+      : "#94a3b8";
+  };
+  const handleMapPointerDown = (event: ReactPointerEvent<SVGSVGElement>) => {
+    if (event.button !== 0) return;
+    dragRef.current = {
+      pointerId: event.pointerId,
+      clientX: event.clientX,
+      clientY: event.clientY,
+      panX: pan.x,
+      panY: pan.y,
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+  const handleMapPointerMove = (event: ReactPointerEvent<SVGSVGElement>) => {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const xScale = VIEWBOX_WIDTH / Math.max(bounds.width, 1);
+    const yScale = VIEWBOX_HEIGHT / Math.max(bounds.height, 1);
+    setPan({
+      x: drag.panX + (event.clientX - drag.clientX) * xScale,
+      y: drag.panY + (event.clientY - drag.clientY) * yScale,
+    });
+  };
+  const handleMapPointerUp = (event: ReactPointerEvent<SVGSVGElement>) => {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    dragRef.current = null;
+  };
+  const handleMapWheel = (event: ReactWheelEvent<SVGSVGElement>) => {
+    event.preventDefault();
+    setZoom((current) =>
+      clampZoom(current * (event.deltaY < 0 ? 1.12 : 0.88)),
+    );
+  };
+  const selectedTerrainOptions =
+    selectedCell?.terrain && !terrainTypes.includes(selectedCell.terrain)
+      ? [selectedCell.terrain, ...terrainTypes]
+      : terrainTypes;
+  return (
+    <section className="game-editor-section game-card game-map-editor-card">
+      <div className="game-map-editor-header">
+        <div className="game-section-title">
+          <h3>世界地图</h3>
+          <span>只保存有内容的坐标格，拖动空白处浏览稀疏地图</span>
+        </div>
+        <button
+          type="button"
+          className="game-map-collapse-btn"
+          aria-expanded={!collapsed}
+          onClick={() => setCollapsed((current) => !current)}
+        >
+          {collapsed ? "展开" : "收起"}
+        </button>
+      </div>
+      {!collapsed ? (
+        <div className="game-map-editor-body">
+          <div className="game-map-toolbar">
+            <div className="game-map-zoom-controls" aria-label="地图缩放">
+              <button
+                type="button"
+                className="game-map-control-btn"
+                aria-label="缩小地图"
+                onClick={() => setZoom((current) => clampZoom(current * 0.82))}
+              >
+                −
+              </button>
+              <span className="game-map-zoom-label">
+                {Math.round(zoom * 100)}%
+              </span>
+              <button
+                type="button"
+                className="game-map-control-btn"
+                aria-label="放大地图"
+                onClick={() => setZoom((current) => clampZoom(current * 1.22))}
+              >
+                +
+              </button>
+              <button
+                type="button"
+                className="game-map-reset-btn"
+                onClick={() => {
+                  setZoom(1);
+                  setPan({ x: 0, y: 0 });
+                }}
+              >
+                重置视图
+              </button>
+            </div>
+            <span className="game-map-toolbar-meta">
+              {cells.length} 个坐标 · {terrainTypes.length} 种地形
+            </span>
+          </div>
+
+          <div className="game-map-viewport">
+            <svg
+              className="game-map-svg"
+              viewBox={`0 0 ${VIEWBOX_WIDTH} ${VIEWBOX_HEIGHT}`}
+              role="img"
+              aria-label="可缩放、可平移的世界地图"
+              onPointerDown={handleMapPointerDown}
+              onPointerMove={handleMapPointerMove}
+              onPointerUp={handleMapPointerUp}
+              onPointerCancel={handleMapPointerUp}
+              onWheel={handleMapWheel}
+            >
+              <defs>
+                <pattern
+                  id="game-map-grid-pattern"
+                  width={GRID_SIZE}
+                  height={GRID_SIZE}
+                  patternUnits="userSpaceOnUse"
+                >
+                  <path
+                    d={`M ${GRID_SIZE} 0 L 0 0 0 ${GRID_SIZE}`}
+                    fill="none"
+                    className="game-map-grid-line"
+                  />
+                </pattern>
+              </defs>
+              <g transform={viewTransform}>
+                <rect
+                  x={-10000}
+                  y={-10000}
+                  width={20000}
+                  height={20000}
+                  className="game-map-canvas-backdrop"
+                  fill="url(#game-map-grid-pattern)"
+                />
+                <line
+                  x1={-10000}
+                  y1={0}
+                  x2={10000}
+                  y2={0}
+                  className="game-map-axis"
+                />
+                <line
+                  x1={0}
+                  y1={-10000}
+                  x2={0}
+                  y2={10000}
+                  className="game-map-axis"
+                />
+                {cells.map(({ key, cell }) => {
+                  const nodeTitle =
+                    cell.zoneName?.trim() || `坐标（${cell.x}, ${cell.y}）`;
+                  const isSelected = selectedKey === key;
+                  return (
+                    <g
+                      key={key}
+                      className={
+                        isSelected
+                          ? "game-map-node selected"
+                          : "game-map-node"
+                      }
+                      data-map-node="true"
+                      role="button"
+                      tabIndex={0}
+                      aria-label={`${nodeTitle}，坐标 ${cell.x}, ${cell.y}`}
+                      transform={`translate(${cell.x * GRID_SIZE} ${
+                        cell.y * GRID_SIZE
+                      })`}
+                      onPointerDown={(event) => {
+                        event.stopPropagation();
+                        selectCell(key);
+                      }}
+                      onClick={() => selectCell(key)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
+                          selectCell(key);
+                        }
+                      }}
+                      onMouseEnter={() => showPopover(key)}
+                      onMouseLeave={() => hidePopoverLater(key)}
+                      onFocus={() => showPopover(key)}
+                      onBlur={() => hidePopoverLater(key)}
+                    >
+                      <title>
+                        {nodeTitle} · （{cell.x}, {cell.y}） ·{" "}
+                        {cell.terrain || "未设置地形"}
+                      </title>
+                      <rect
+                        x={-31}
+                        y={-25}
+                        width={62}
+                        height={50}
+                        rx={14}
+                        className="game-map-node-card"
+                        fill={terrainColor(cell.terrain)}
+                      />
+                      <circle
+                        cx={-20}
+                        cy={-14}
+                        r={4}
+                        className={
+                          cell.passable === false
+                            ? "game-map-node-status blocked"
+                            : "game-map-node-status"
+                        }
+                      />
+                      <text
+                        x={0}
+                        y={1}
+                        textAnchor="middle"
+                        className="game-map-node-label"
+                        pointerEvents="none"
+                      >
+                        {nodeTitle.slice(0, 10)}
+                      </text>
+                      <text
+                        x={0}
+                        y={15}
+                        textAnchor="middle"
+                        className="game-map-node-terrain"
+                        pointerEvents="none"
+                      >
+                        {(cell.terrain || "未设地形").slice(0, 9)}
+                      </text>
+                      <text
+                        x={0}
+                        y={42}
+                        textAnchor="middle"
+                        className="game-map-node-coordinate"
+                        pointerEvents="none"
+                      >
+                        {cell.x}, {cell.y}
+                      </text>
+                    </g>
+                  );
+                })}
+              </g>
+            </svg>
+            {cells.length === 0 ? (
+              <div className="game-map-empty">
+                <strong>还没有地图坐标</strong>
+                <span>在下方添加一个空坐标，再为它填写区域资料。</span>
+              </div>
+            ) : null}
+            {popoverCell && popoverKey ? (
+              <div
+                className="game-map-popover"
+                role="dialog"
+                aria-label="地图坐标信息"
+                onMouseEnter={() => showPopover(popoverKey)}
+                onMouseLeave={() => hidePopoverLater(popoverKey)}
+                onFocus={() => showPopover(popoverKey)}
+                onBlur={() => hidePopoverLater(popoverKey)}
+              >
+                <div className="game-map-popover-heading">
+                  <strong>
+                    {popoverCell.zoneName?.trim() ||
+                      `坐标（${popoverCell.x}, ${popoverCell.y}）`}
+                  </strong>
+                  <span>
+                    {popoverCell.x}, {popoverCell.y}
+                  </span>
+                </div>
+                <p>
+                  {popoverCell.terrain || "未设置地形"} ·{" "}
+                  {popoverCell.passable === false ? "不可通行" : "可通行"}
+                </p>
+                <p>
+                  {popoverCell.objects.length} 个物件 ·{" "}
+                  {Object.keys(popoverCell.properties).length} 项属性
+                </p>
+                <div className="game-map-popover-actions">
+                  <button
+                    type="button"
+                    className="secondary-btn"
+                    onClick={() => selectCell(popoverKey)}
+                  >
+                    查看
+                  </button>
+                  <button
+                    type="button"
+                    className="primary-btn"
+                    onClick={() => {
+                      editCell(popoverKey);
+                      setHoveredKey(null);
+                    }}
+                  >
+                    编辑
+                  </button>
+                </div>
+              </div>
+            ) : null}
+          </div>
+          <p className="game-map-help">
+            拖动空白处平移 · 滚轮或「− / +」缩放 · 点击或触摸节点选中 ·
+            Tab 后可用 Enter 查看
+          </p>
+
+          <form
+            className="game-map-add-coordinate"
+            onSubmit={(event) => {
+              event.preventDefault();
+              addEmptyCell();
+            }}
+          >
+            <label className="game-field">
+              X
+              <input
+                type="number"
+                step={1}
+                value={newX}
+                onChange={(event) => setNewX(event.target.value)}
+              />
+            </label>
+            <label className="game-field">
+              Y
+              <input
+                type="number"
+                step={1}
+                value={newY}
+                onChange={(event) => setNewY(event.target.value)}
+              />
+            </label>
+            <button type="submit" className="secondary-btn">
+              添加空坐标
+            </button>
+          </form>
+
+          {selectedCell && selectedKey ? (
+            <div className="game-map-selection-card">
+              <div className="game-map-selection-header">
+                <div>
+                  <h4>
+                    {selectedCell.zoneName?.trim() || "未命名区域"}
+                  </h4>
+                  <span>
+                    坐标（{selectedCell.x}, {selectedCell.y}）
+                  </span>
+                </div>
+                <span
+                  className={
+                    selectedCell.passable === false
+                      ? "game-map-passability blocked"
+                      : "game-map-passability"
+                  }
+                >
+                  {selectedCell.passable === false ? "不可通行" : "可通行"}
+                </span>
+              </div>
+              {editingKey === selectedKey ? (
+                <div className="game-map-selected-editor">
+                  <div className="game-map-editor-fields">
+                    <label className="game-field">
+                      区域名称
+                      <input
+                        value={selectedCell.zoneName ?? ""}
+                        placeholder="例如：北门集市"
+                        onChange={(event) =>
+                          updateSelectedCell({ zoneName: event.target.value })
+                        }
+                      />
+                    </label>
+                    <label className="game-field">
+                      地形
+                      <select
+                        value={selectedCell.terrain ?? ""}
+                        onChange={(event) =>
+                          updateSelectedCell({ terrain: event.target.value })
+                        }
+                      >
+                        <option value="">未设置地形</option>
+                        {selectedTerrainOptions.map((terrain) => (
+                          <option value={terrain} key={terrain}>
+                            {terrainTypes.includes(terrain)
+                              ? terrain
+                              : `遗留地形：${terrain}`}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="game-field game-map-editor-wide">
+                      区域属性（每行一个 key=value）
+                      <textarea
+                        rows={3}
+                        value={propertiesText(selectedCell)}
+                        placeholder={"危险等级=2\n所属势力=北境"}
+                        onChange={(event) =>
+                          updateSelectedCell({
+                            properties: parseProperties(event.target.value),
+                          })
+                        }
+                      />
+                    </label>
+                    <label className="game-field game-map-editor-wide">
+                      存在物件（逗号分隔）
+                      <input
+                        value={selectedCell.objects.join("、")}
+                        placeholder="例如：水井、告示牌"
+                        onChange={(event) =>
+                          updateSelectedCell({
+                            objects: event.target.value
+                              .split(/[,，、]/)
+                              .map((item) => item.trim())
+                              .filter(Boolean),
+                          })
+                        }
+                      />
+                    </label>
+                  </div>
+                  <label className="checkbox game-map-passable-toggle">
+                    <input
+                      type="checkbox"
+                      checked={selectedCell.passable !== false}
+                      onChange={(event) =>
+                        updateSelectedCell({
+                          passable: event.target.checked,
+                        })
+                      }
+                    />
+                    可通行
+                  </label>
+                  <div className="game-map-selection-actions">
+                    <button
+                      type="button"
+                      className="secondary-btn"
+                      onClick={() => setEditingKey(null)}
+                    >
+                      完成编辑
+                    </button>
+                    <button
+                      type="button"
+                      className="link-btn game-map-delete-btn"
+                      onClick={removeSelectedCell}
+                    >
+                      删除此坐标
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="game-map-selection-summary">
+                  <p>
+                    {selectedCell.terrain || "未设置地形"} ·{" "}
+                    {selectedCell.objects.length} 个物件 ·{" "}
+                    {Object.keys(selectedCell.properties).length} 项属性
+                  </p>
+                  <button
+                    type="button"
+                    className="secondary-btn"
+                    onClick={() => setEditingKey(selectedKey)}
+                  >
+                    编辑所选坐标
+                  </button>
+                </div>
+              )}
+            </div>
+          ) : (
+            <p className="game-map-no-selection">
+              选择一个地图节点后，可查看详情或编辑区域资料。
+            </p>
+          )}
+
+          <div className="game-map-terrain-manager">
+            <div className="game-map-subsection-heading">
+              <div>
+                <h4>地形类型</h4>
+                <span>节点颜色来自这里；删除使用中的地形前会要求替换或清空。</span>
+              </div>
+              <span>{terrainTypes.length} 种</span>
+            </div>
+            {terrainTypes.length > 0 ? (
+              <div className="game-map-terrain-list">
+                {terrainTypes.map((terrain) => {
+                  const usageCount = cells.filter(
+                    ({ cell }) => cell.terrain === terrain,
+                  ).length;
+                  return (
+                    <div className="game-map-terrain-row" key={terrain}>
+                      <input
+                        aria-label={`地形${terrain}的新名称`}
+                        value={terrainRenameDrafts[terrain] ?? terrain}
+                        onChange={(event) =>
+                          setTerrainRenameDrafts((current) => ({
+                            ...current,
+                            [terrain]: event.target.value,
+                          }))
+                        }
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") {
+                            event.preventDefault();
+                            renameTerrain(terrain);
+                          }
+                        }}
+                      />
+                      <span className="game-map-terrain-usage">
+                        {usageCount} 格
+                      </span>
+                      <div className="game-map-terrain-actions">
+                        <button
+                          type="button"
+                          className="link-btn"
+                          onClick={() => renameTerrain(terrain)}
+                        >
+                          重命名
+                        </button>
+                        <button
+                          type="button"
+                          className="link-btn game-map-delete-btn"
+                          onClick={() => deleteTerrain(terrain)}
+                        >
+                          删除
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <p className="game-map-no-selection">还没有地形类型。</p>
+            )}
+            <form
+              className="game-map-terrain-add"
+              onSubmit={(event) => {
+                event.preventDefault();
+                addTerrainType();
+              }}
+            >
+              <input
+                value={newTerrain}
+                placeholder="新增地形，例如：林地"
+                aria-label="新增地形名称"
+                onChange={(event) => setNewTerrain(event.target.value)}
+              />
+              <button type="submit" className="secondary-btn">
+                添加地形
+              </button>
+            </form>
+          </div>
+          {mapNotice ? (
+            <p className="game-map-notice" role="status">
+              {mapNotice}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
 function TimePickerEditor({
   draft,
   onChange,
@@ -2362,6 +2852,7 @@ function TimePickerEditor({
   const current = normalizeGameDateTime(
     draft.initialTimeParts,
   );
+  const weekCycleEnabled = Boolean(draft.weekCycleEnabled);
   const update = (patch: Partial<GameDateTime>) => {
     const next = normalizeGameDateTime({ ...current, ...patch });
     onChange({
@@ -2387,6 +2878,41 @@ function TimePickerEditor({
           onChange={(e) => update({ description: e.target.value })}
         />
       </label>
+      <label className="checkbox">
+        <input
+          type="checkbox"
+          checked={weekCycleEnabled}
+          onChange={(event) =>
+            onChange({
+              ...draft,
+              weekCycleEnabled: event.target.checked,
+              initialTimeParts: {
+                ...current,
+                weekday: current.weekday ?? 1,
+              },
+              initialTime: formatGameDateTime(current),
+            })
+          }
+        />
+        启用 7 日循环计时表
+      </label>
+      {weekCycleEnabled ? (
+        <label className="game-field">
+          星期
+          <select
+            value={current.weekday ?? 1}
+            onChange={(event) =>
+              update({ weekday: Number(event.target.value) as GameDateTime["weekday"] })
+            }
+          >
+            {options(1, 7).map((value) => (
+              <option key={value} value={value}>
+                {WEEKDAY_LABELS[value as keyof typeof WEEKDAY_LABELS]}
+              </option>
+            ))}
+          </select>
+        </label>
+      ) : null}
       <div className="game-time-select-grid">
         <label className="game-field">
           纪元
@@ -2444,7 +2970,9 @@ function TimePickerEditor({
           </select>
         </label>
       </div>
-      <p className="settings-hint">最终保存为：{formatGameDateTime(current)}</p>
+      <p className="settings-hint">
+        最终保存为：{formatGameClock(current, weekCycleEnabled)}
+      </p>
     </div>
   );
 }
@@ -2795,6 +3323,9 @@ function UnifiedAgentsStep({
   draft: GameTemplateDraft;
   onChange: (draft: GameTemplateDraft) => void;
 }) {
+  const [openAgentIds, setOpenAgentIds] = useState<Set<string>>(
+    () => new Set(draft.agents.slice(0, 1).map((agent) => agent.id)),
+  );
   const files = (draft.contextFiles ?? defaultContextFiles(draft.worldview, draft.initialTime))
     .map(({ id, title }) => ({ id, title }));
   const definitions = attributeDefinitionsForDraft(draft);
@@ -2859,14 +3390,58 @@ function UnifiedAgentsStep({
       <div className="game-agent-card-list">
         {draft.agents.map((agent, index) => {
           const disabled = allFeatures.filter((feature) => !agent.capabilities.includes(feature));
+          const applyInformationPreset = (preset: AgentInformationPreset) => {
+            updateAgent(
+              index,
+              informationAccessForAgent(
+                preset,
+                files.map((file) => file.id),
+                definitions.map((definition) => definition.key),
+                agent.characterId,
+              ),
+            );
+          };
           return (
-            <article className="game-agent-card" key={agent.id}>
-              <div className="game-agent-card-heading">
+            <details
+              className="game-agent-card"
+              key={agent.id}
+              open={openAgentIds.has(agent.id)}
+              onToggle={(event) => {
+                const open = event.currentTarget.open;
+                setOpenAgentIds((previous) => {
+                  const next = new Set(previous);
+                  if (open) next.add(agent.id);
+                  else next.delete(agent.id);
+                  return next;
+                });
+              }}
+            >
+              <summary className="game-agent-card-summary">
+                <div className="game-agent-card-heading">
+                <button
+                  type="button"
+                  className="game-collapse-toggle"
+                  aria-label={openAgentIds.has(agent.id) ? "收起 AI" : "展开 AI"}
+                  aria-expanded={openAgentIds.has(agent.id)}
+                  onClick={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    setOpenAgentIds((previous) => {
+                      const next = new Set(previous);
+                      if (next.has(agent.id)) next.delete(agent.id);
+                      else next.add(agent.id);
+                      return next;
+                    });
+                  }}
+                >
+                  {openAgentIds.has(agent.id) ? "⌄" : "›"}
+                </button>
                 <input
                   className="game-agent-card-title"
                   value={agent.name}
                   placeholder={`AI ${index + 1}`}
                   aria-label={`AI ${index + 1} 名称`}
+                  onClick={(event) => event.stopPropagation()}
                   onChange={(event) =>
                     updateAgent(index, { name: event.target.value })
                   }
@@ -2874,16 +3449,22 @@ function UnifiedAgentsStep({
                 <button
                   type="button"
                   className="link-btn"
-                  onClick={() =>
+                  onClick={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
                     onChange({
                       ...draft,
-                      agents: draft.agents.filter((_, itemIndex) => itemIndex !== index),
-                    })
-                  }
+                      agents: draft.agents.filter(
+                        (_, itemIndex) => itemIndex !== index,
+                      ),
+                    });
+                  }}
                 >
                   删除
                 </button>
-              </div>
+                </div>
+              </summary>
+              <div className="game-agent-card-body">
               <label className="game-field">
                 人设
                 <textarea
@@ -2900,6 +3481,39 @@ function UnifiedAgentsStep({
                   onChange={(e) => updateAgent(index, { systemPrompt: e.target.value })}
                 />
               </label>
+              <div className="game-information-preset-row">
+                <label className="game-field">
+                  信息差预设
+                  <select
+                    defaultValue=""
+                    onChange={(event) => {
+                      if (!event.target.value) return;
+                      applyInformationPreset(
+                        event.target.value as AgentInformationPreset,
+                      );
+                      event.currentTarget.value = "";
+                    }}
+                  >
+                    <option value="">选择预设并应用</option>
+                    {Object.entries(AGENT_INFORMATION_PRESET_LABELS).map(
+                      ([preset, label]) => (
+                        <option key={preset} value={preset}>
+                          {label}
+                        </option>
+                      ),
+                    )}
+                  </select>
+                </label>
+                <button
+                  type="button"
+                  className="secondary-btn"
+                  onClick={() =>
+                    applyInformationPreset(informationPresetForAgent(agent))
+                  }
+                >
+                  恢复角色默认权限
+                </button>
+              </div>
               <AgentConfigEditor
                 model={agent.model}
                 onModelChange={(model) => updateAgent(index, { model })}
@@ -2921,7 +3535,8 @@ function UnifiedAgentsStep({
                 }
                 files={files}
               />
-            </article>
+              </div>
+            </details>
           );
         })}
       </div>
@@ -2929,135 +3544,6 @@ function UnifiedAgentsStep({
         添加 AI
       </button>
     </section>
-  );
-}
-
-export function WorldAgentsStep({
-  draft,
-  onChange,
-}: {
-  draft: GameTemplateDraft;
-  onChange: (draft: GameTemplateDraft) => void;
-}) {
-  const files = (draft.contextFiles ?? defaultContextFiles(draft.worldview, draft.initialTime))
-    .map(({ id, title }) => ({ id, title }));
-  return (
-    <div className="game-world-step-stack">
-      <section className="game-editor-section game-card">
-        <div className="game-section-title">
-          <h3>世界 AI</h3>
-          <span>描述世界如何回应</span>
-        </div>
-        <label className="game-field">
-          System 提示词（空=默认）
-          <textarea
-            rows={5}
-            value={draft.worldSystemPrompt ?? ""}
-            placeholder={`${worldSystemPrompt(draft.worldview).slice(0, 100)}…`}
-            onChange={(e) =>
-              onChange({ ...draft, worldSystemPrompt: e.target.value })
-            }
-          />
-        </label>
-        <AgentConfigEditor
-          model={draft.worldModel}
-          onModelChange={(worldModel) => onChange({ ...draft, worldModel })}
-          readableFileIds={draft.worldReadableFileIds}
-          editableFileIds={draft.worldEditableFileIds}
-          onAccessChange={(worldReadableFileIds, worldEditableFileIds) =>
-            onChange({ ...draft, worldReadableFileIds, worldEditableFileIds })
-          }
-          disabledFeatures={draft.worldDisabledFeatures}
-          onDisabledFeaturesChange={(worldDisabledFeatures) =>
-            onChange({ ...draft, worldDisabledFeatures })
-          }
-          files={files}
-        />
-      </section>
-      <section className="game-editor-section game-card">
-        <div className="game-section-title">
-          <h3>裁判 AI</h3>
-          <span>判定行动是否成立</span>
-        </div>
-        <label className="game-field">
-          人设
-          <input
-            value={draft.refereePersona ?? ""}
-            onChange={(e) =>
-              onChange({ ...draft, refereePersona: e.target.value })
-            }
-          />
-        </label>
-        <label className="game-field">
-          System 提示词（空=默认）
-          <textarea
-            rows={4}
-            value={draft.refereeSystemPrompt ?? ""}
-            onChange={(e) =>
-              onChange({ ...draft, refereeSystemPrompt: e.target.value })
-            }
-          />
-        </label>
-        <AgentConfigEditor
-          model={draft.refereeModel}
-          onModelChange={(refereeModel) => onChange({ ...draft, refereeModel })}
-          readableFileIds={draft.refereeReadableFileIds}
-          editableFileIds={draft.refereeEditableFileIds}
-          onAccessChange={(refereeReadableFileIds, refereeEditableFileIds) =>
-            onChange({ ...draft, refereeReadableFileIds, refereeEditableFileIds })
-          }
-          disabledFeatures={draft.refereeDisabledFeatures}
-          onDisabledFeaturesChange={(refereeDisabledFeatures) =>
-            onChange({ ...draft, refereeDisabledFeatures })
-          }
-          files={files}
-        />
-      </section>
-      <section className="game-editor-section game-card">
-        <div className="game-section-title">
-          <h3>书记 AI</h3>
-          <span>整理两种视角的剧情</span>
-        </div>
-        <label className="game-field">
-          上帝视角提示词（空=默认）
-          <textarea
-            rows={3}
-            value={draft.chroniclerGodPrompt ?? ""}
-            placeholder={`${chroniclerSystemPrompt("god").slice(0, 80)}…`}
-            onChange={(e) =>
-              onChange({ ...draft, chroniclerGodPrompt: e.target.value })
-            }
-          />
-        </label>
-        <label className="game-field">
-          玩家视角提示词（空=默认）
-          <textarea
-            rows={3}
-            value={draft.chroniclerPlayerPrompt ?? ""}
-            placeholder={`${chroniclerSystemPrompt("player").slice(0, 80)}…`}
-            onChange={(e) =>
-              onChange({ ...draft, chroniclerPlayerPrompt: e.target.value })
-            }
-          />
-        </label>
-        <AgentConfigEditor
-          model={draft.chroniclerModel}
-          onModelChange={(chroniclerModel) =>
-            onChange({ ...draft, chroniclerModel })
-          }
-          readableFileIds={draft.chroniclerReadableFileIds}
-          editableFileIds={draft.chroniclerEditableFileIds}
-          onAccessChange={(chroniclerReadableFileIds, chroniclerEditableFileIds) =>
-            onChange({ ...draft, chroniclerReadableFileIds, chroniclerEditableFileIds })
-          }
-          disabledFeatures={draft.chroniclerDisabledFeatures}
-          onDisabledFeaturesChange={(chroniclerDisabledFeatures) =>
-            onChange({ ...draft, chroniclerDisabledFeatures })
-          }
-          files={files}
-        />
-      </section>
-    </div>
   );
 }
 
@@ -3091,290 +3577,6 @@ function WorldPipelineStep({
         ]}
       />
     </section>
-  );
-}
-
-export function TemplateEditorScreen({
-  draft,
-  topActions,
-  title,
-  subtitle,
-  onBack,
-  onChange,
-  onConfirm,
-}: {
-  draft: GameTemplateDraft;
-  topActions: ReactNode;
-  title: string;
-  subtitle: string;
-  onBack: () => void;
-  onChange: (draft: GameTemplateDraft) => void;
-  onConfirm: () => void;
-}) {
-  const definitions = attributeDefinitionsForDraft(draft);
-  const setDefinitions = (next: GameAttributeDefinition[]) =>
-    onChange({ ...draft, attributeDefinitions: next });
-  const files = (draft.contextFiles ?? defaultContextFiles(draft.worldview, draft.initialTime))
-    .map(({ id, title }) => ({ id, title }));
-  return (
-    <div className="game-screen game-editor-screen">
-      <EditorHeader
-        title={title}
-        subtitle={subtitle}
-        topActions={topActions}
-        onBack={onBack}
-      />
-      <div className="game-body game-editor-body">
-        <section className="game-editor-section game-card">
-          <div className="game-section-title">
-            <h3>世界观</h3>
-            <span>决定世界如何回应角色</span>
-          </div>
-          <div className="game-form-grid">
-            <label className="game-field">
-              游戏标题
-              <input
-                value={draft.title}
-                placeholder="例如：雾都档案"
-                onChange={(e) => onChange({ ...draft, title: e.target.value })}
-              />
-            </label>
-          </div>
-          <TimePickerEditor draft={draft} onChange={onChange} />
-          <label className="game-field">
-            世界观描述
-            <textarea
-              rows={7}
-              value={draft.worldview}
-              onChange={(e) => onChange({ ...draft, worldview: e.target.value })}
-            />
-          </label>
-          <label className="game-field">
-            世界 AI System 提示词（空=默认）
-            <textarea
-              rows={4}
-              value={draft.worldSystemPrompt ?? ""}
-              placeholder={`${worldSystemPrompt(draft.worldview).slice(0, 100)}…`}
-              onChange={(e) => onChange({ ...draft, worldSystemPrompt: e.target.value })}
-            />
-          </label>
-          <AgentConfigEditor
-            model={draft.worldModel}
-            onModelChange={(worldModel) => onChange({ ...draft, worldModel })}
-            readableFileIds={draft.worldReadableFileIds}
-            editableFileIds={draft.worldEditableFileIds}
-            onAccessChange={(worldReadableFileIds, worldEditableFileIds) =>
-              onChange({ ...draft, worldReadableFileIds, worldEditableFileIds })
-            }
-            disabledFeatures={draft.worldDisabledFeatures}
-            onDisabledFeaturesChange={(worldDisabledFeatures) =>
-              onChange({ ...draft, worldDisabledFeatures })
-            }
-            files={files}
-          />
-        </section>
-
-        <section className="game-editor-section game-card">
-          <div className="game-section-title">
-            <h3>属性集合</h3>
-            <span>统一定义，角色分别填写数值</span>
-          </div>
-          <div className="game-attribute-definitions">
-            {definitions.map((definition, index) => (
-              <div className="game-attribute-definition" key={`${definition.key}-${index}`}>
-                <input
-                  value={definition.label}
-                  aria-label="属性名称"
-                  placeholder="显示名"
-                  onChange={(e) => {
-                    const next = definitions.map((item, itemIndex) =>
-                      itemIndex === index ? { ...item, label: e.target.value } : item,
-                    );
-                    setDefinitions(next);
-                  }}
-                />
-                <select
-                  value={definition.valueType}
-                  aria-label="属性类型"
-                  onChange={(e) => {
-                    const next: GameAttributeDefinition[] = definitions.map(
-                      (item, itemIndex) =>
-                      itemIndex === index
-                        ? {
-                            ...item,
-                            valueType:
-                              e.target.value === "text" ? "text" : "number",
-                          }
-                        : item,
-                    );
-                    setDefinitions(next);
-                  }}
-                >
-                  <option value="number">数字</option>
-                  <option value="text">文字</option>
-                </select>
-                {definition.valueType === "text" ? (
-                  <AttributeOptionsEditor
-                    valueType="text"
-                    options={definition.textOptions ?? []}
-                    onChange={(options) =>
-                      setDefinitions(
-                        definitions.map((item, itemIndex) =>
-                          itemIndex === index
-                            ? { ...item, textOptions: options as string[] }
-                            : item,
-                        ),
-                      )
-                    }
-                  />
-                ) : (
-                  <p className="game-attribute-number-hint">
-                    数值在人物编辑和游戏中填写，可输入任意安全范围内的数字
-                  </p>
-                )}
-                <button
-                  type="button"
-                  className="link-btn"
-                  disabled={definitions.length <= 1}
-                  onClick={() => setDefinitions(definitions.filter((_, i) => i !== index))}
-                >
-                  删除
-                </button>
-              </div>
-            ))}
-          </div>
-          <button
-            type="button"
-            className="secondary-btn"
-            onClick={() =>
-              setDefinitions([
-                ...definitions,
-                {
-                  key: `attribute_${definitions.length + 1}`,
-                  label: `新属性 ${definitions.length + 1}`,
-                  valueType: "number",
-                  numberOptions: undefined,
-                },
-              ])
-            }
-          >
-            添加属性
-          </button>
-          <p className="settings-hint">
-            删除只影响之后创建的模板，不会破坏已有存档里的自由属性。
-          </p>
-        </section>
-
-        <section className="game-editor-section game-card">
-          <div className="game-section-title">
-            <h3>裁判 AI</h3>
-            <span>负责判定行动是否成立</span>
-          </div>
-          <label className="game-field">
-            人设
-            <input
-              value={draft.refereePersona ?? ""}
-              onChange={(e) => onChange({ ...draft, refereePersona: e.target.value })}
-            />
-          </label>
-          <label className="game-field">
-            System 提示词（空=默认）
-            <textarea
-              rows={4}
-              value={draft.refereeSystemPrompt ?? ""}
-              onChange={(e) => onChange({ ...draft, refereeSystemPrompt: e.target.value })}
-            />
-          </label>
-          <AgentConfigEditor
-            model={draft.refereeModel}
-            onModelChange={(refereeModel) => onChange({ ...draft, refereeModel })}
-            readableFileIds={draft.refereeReadableFileIds}
-            editableFileIds={draft.refereeEditableFileIds}
-            onAccessChange={(refereeReadableFileIds, refereeEditableFileIds) =>
-              onChange({ ...draft, refereeReadableFileIds, refereeEditableFileIds })
-            }
-            disabledFeatures={draft.refereeDisabledFeatures}
-            onDisabledFeaturesChange={(refereeDisabledFeatures) =>
-              onChange({ ...draft, refereeDisabledFeatures })
-            }
-            files={files}
-          />
-        </section>
-
-        <section className="game-editor-section game-card">
-          <div className="game-section-title">
-            <h3>书记 AI</h3>
-            <span>整理上帝视角与玩家视角剧情</span>
-          </div>
-          <label className="game-field">
-            上帝视角提示词（空=默认）
-            <textarea
-              rows={3}
-              value={draft.chroniclerGodPrompt ?? ""}
-              placeholder={`${chroniclerSystemPrompt("god").slice(0, 80)}…`}
-              onChange={(e) => onChange({ ...draft, chroniclerGodPrompt: e.target.value })}
-            />
-          </label>
-          <label className="game-field">
-            玩家视角提示词（空=默认）
-            <textarea
-              rows={3}
-              value={draft.chroniclerPlayerPrompt ?? ""}
-              placeholder={`${chroniclerSystemPrompt("player").slice(0, 80)}…`}
-              onChange={(e) =>
-                onChange({ ...draft, chroniclerPlayerPrompt: e.target.value })
-              }
-            />
-          </label>
-          <AgentConfigEditor
-            model={draft.chroniclerModel}
-            onModelChange={(chroniclerModel) => onChange({ ...draft, chroniclerModel })}
-            readableFileIds={draft.chroniclerReadableFileIds}
-            editableFileIds={draft.chroniclerEditableFileIds}
-            onAccessChange={(chroniclerReadableFileIds, chroniclerEditableFileIds) =>
-              onChange({ ...draft, chroniclerReadableFileIds, chroniclerEditableFileIds })
-            }
-            disabledFeatures={draft.chroniclerDisabledFeatures}
-            onDisabledFeaturesChange={(chroniclerDisabledFeatures) =>
-              onChange({ ...draft, chroniclerDisabledFeatures })
-            }
-            files={files}
-          />
-        </section>
-
-        <section className="game-editor-section game-card">
-          <div className="game-section-title">
-            <h3>运行逻辑</h3>
-            <span>配置自由 AI 节点和条件跳转</span>
-          </div>
-          <PipelineEditor
-            value={draft.pipeline ?? defaultPipeline()}
-            onChange={(pipeline) => onChange({ ...draft, pipeline })}
-          />
-        </section>
-        <div className="game-editor-bottom-note">
-          <span>当前使用：{getProvider().defaultModel}（可为各 AI 单独覆盖）</span>
-          <button
-            type="button"
-            className="link-btn"
-            onClick={() =>
-              onChange({
-                ...defaultTemplateDraft(draft.characters.length),
-                title: draft.title,
-                playMode: draft.playMode,
-                playerCharacterIndex: draft.playerCharacterIndex,
-                characters: draft.characters,
-              })
-            }
-          >
-            恢复模板默认
-          </button>
-        </div>
-        <button type="button" className="primary-btn game-editor-confirm-btn" onClick={onConfirm}>
-          确认世界设置，选择人物
-        </button>
-      </div>
-    </div>
   );
 }
 
@@ -3586,6 +3788,9 @@ function CharacterEditorScreen({
   const definitions = attributeDefinitionsForDraft(draft);
   const files = (draft.contextFiles ?? defaultContextFiles(draft.worldview, draft.initialTime))
     .map(({ id, title }) => ({ id, title }));
+  const mapCells = Object.values(draft.worldMap?.cells ?? {}).sort(
+    (a, b) => a.y - b.y || a.x - b.x,
+  );
   const characterFeatures: AgentFeatureKey[] = ["propose", "respond"];
   const setAttr = (definition: GameAttributeDefinition, raw: string) => {
     const value =
@@ -3610,6 +3815,30 @@ function CharacterEditorScreen({
               value={character.name}
               onChange={(e) => onChange({ ...character, name: e.target.value })}
             />
+          </label>
+          <label className="game-field">
+            初始地图位置
+            <select
+              value={
+                character.position
+                  ? `${character.position.x},${character.position.y}`
+                  : ""
+              }
+              onChange={(event) => {
+                const [x, y] = event.target.value.split(",").map(Number);
+                onChange({
+                  ...character,
+                  position: Number.isFinite(x) && Number.isFinite(y) ? { x, y } : undefined,
+                });
+              }}
+            >
+              <option value="">未定位</option>
+              {mapCells.map((cell) => (
+                <option key={`${cell.x},${cell.y}`} value={`${cell.x},${cell.y}`}>
+                  [{cell.x},{cell.y}] {cell.zoneName || "未命名区域"}
+                </option>
+              ))}
+            </select>
           </label>
           <label className="game-field">
             人设
@@ -3721,6 +3950,9 @@ function PipelineEditor({
   }>;
 }) {
   const validation = validatePipeline(value);
+  const [openNodeIds, setOpenNodeIds] = useState<Set<string>>(
+    () => new Set(),
+  );
   const setNodes = (nodes: PipelineNode[]) => onChange({ ...value, nodes });
   const setEdges = (edges: PipelineEdge[]) => onChange({ ...value, edges });
   const capabilityLabels: Array<{ id: AgentFeatureKey; label: string }> = [
@@ -3741,14 +3973,45 @@ function PipelineEditor({
           .map((id) => agents.find((agent) => agent.id === id)?.name ?? id)
           .join("、") || "未绑定"}
       </p>
-      {value.nodes.map((node, idx) => {
+      {value.nodes.map((node) => {
         const eligibleAgents = agents;
         const outs = value.edges
           .map((e, ei) => ({ e, ei }))
           .filter(({ e }) => e.from === node.id);
         return (
-          <details key={node.id} className="game-pipeline-node" open={idx < 2}>
-            <summary onClick={(event) => event.stopPropagation()}>
+          <details
+            key={node.id}
+            className="game-pipeline-node"
+            open={openNodeIds.has(node.id)}
+            onToggle={(event) => {
+              const open = event.currentTarget.open;
+              setOpenNodeIds((previous) => {
+                const next = new Set(previous);
+                if (open) next.add(node.id);
+                else next.delete(node.id);
+                return next;
+              });
+            }}
+          >
+            <summary>
+              <button
+                type="button"
+                className="game-collapse-toggle"
+                aria-label={openNodeIds.has(node.id) ? "收起节点" : "展开节点"}
+                aria-expanded={openNodeIds.has(node.id)}
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  setOpenNodeIds((previous) => {
+                    const next = new Set(previous);
+                    if (next.has(node.id)) next.delete(node.id);
+                    else next.add(node.id);
+                    return next;
+                  });
+                }}
+              >
+                {openNodeIds.has(node.id) ? "⌄" : "›"}
+              </button>
               <input
                 className="game-pipeline-node-title"
                 value={node.name}
@@ -4084,83 +4347,6 @@ function ModelOverrideEditor({
         </>
       ) : null}
     </div>
-  );
-}
-
-function CharDraftEditor({
-  index,
-  value,
-  onChange,
-}: {
-  index: number;
-  value: CharTemplateDraft;
-  onChange: (next: CharTemplateDraft) => void;
-}) {
-  return (
-    <details className="game-char-draft" open={index < 3}>
-      <summary>
-        角色 {index + 1}：{value.name || "未命名"}
-      </summary>
-      <label>
-        姓名
-        <input
-          value={value.name}
-          onChange={(e) => onChange({ ...value, name: e.target.value })}
-        />
-      </label>
-      <label>
-        人设
-        <textarea
-          rows={2}
-          value={value.persona}
-          onChange={(e) => onChange({ ...value, persona: e.target.value })}
-        />
-      </label>
-      <label>
-        System 提示词（空=默认）
-        <textarea
-          rows={2}
-          value={value.systemPrompt ?? ""}
-          onChange={(e) =>
-            onChange({ ...value, systemPrompt: e.target.value })
-          }
-        />
-      </label>
-      <ModelOverrideEditor
-        value={value.model}
-        onChange={(model) => onChange({ ...value, model })}
-      />
-      {EDIT_ATTR_KEYS.map((key) => (
-        <label key={key} className="game-attr-row">
-          {ATTR_LABELS[key] ?? key}
-          <input
-            value={String(value.attrs[key] ?? "")}
-            onChange={(e) => {
-              const raw = e.target.value;
-              const num = Number(raw);
-              const nextVal =
-                raw !== "" &&
-                !Number.isNaN(num) &&
-                key !== "location" &&
-                key !== "mood"
-                  ? num
-                  : raw;
-              onChange({
-                ...value,
-                attrs: { ...value.attrs, [key]: nextVal },
-              });
-            }}
-          />
-        </label>
-      ))}
-      <label>
-        物品
-        <input
-          value={value.inventory}
-          onChange={(e) => onChange({ ...value, inventory: e.target.value })}
-        />
-      </label>
-    </details>
   );
 }
 

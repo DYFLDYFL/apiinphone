@@ -8,10 +8,8 @@ import type {
 } from "../types";
 import { getProvider, modelSupportsThinking, normalizeReasoningEffort, providerSupportsVision, resolveModel } from "./apiProviders";
 import { normalizeMessagesForApi } from "./attachments";
-import { completeViaDeepseekWeb, DeepseekWebError } from "./deepseekWeb/client";
-import { withRequestGate } from "./requestGate";
 import { renumberSearchOutput } from "./searchSources";
-import { effectiveMaxToolRounds, effectiveModel, isWebTransport } from "./settings";
+import { effectiveMaxToolRounds, effectiveModel } from "./settings";
 import {
   buildTools,
   executeTool,
@@ -115,9 +113,6 @@ function friendlyApiError(err: unknown): ApiError {
     return new ApiError("无法连接 API 服务器，请检查网络或 API 地址。");
   }
   if (err instanceof ApiError) return err;
-  if (err instanceof DeepseekWebError) {
-    return new ApiError(err.message, err.status);
-  }
   if (err instanceof ToolError) return new ApiError(err.message);
   return new ApiError(String(err));
 }
@@ -220,7 +215,6 @@ async function sleep(ms: number, control?: StreamControl): Promise<void> {
 
 function errorStatus(err: unknown): number | undefined {
   if (err instanceof ApiError) return err.status;
-  if (err instanceof DeepseekWebError) return err.status;
   return (err as { status?: number }).status;
 }
 
@@ -250,11 +244,8 @@ function retryDelayMs(
   err: unknown,
 ): number {
   const rateLimited = isRateLimitError(err);
-  const webGap = isWebTransport(settings)
-    ? Math.max(0, Number(settings.webMinIntervalMs) || 3000)
-    : 0;
   const base = rateLimited
-    ? Math.max(settings.retryBackoffMs || 1000, webGap, 4000)
+    ? Math.max(settings.retryBackoffMs || 1000, 4000)
     : Math.max(settings.retryBackoffMs || 1000, 500);
   const cap = rateLimited ? 60000 : 30000;
   return Math.min(cap, base * 2 ** attempt);
@@ -615,23 +606,6 @@ async function runSingleCompletion(
     control?: StreamControl;
   },
 ): Promise<CompletionResult> {
-  if (isWebTransport(settings)) {
-    const web = await withRequestGate(settings, () =>
-      completeViaDeepseekWeb(settings, convo, {
-        onDelta: options?.onDelta,
-        onReasoningDelta: options?.onReasoningDelta,
-        signal: options?.control?.signal,
-      }),
-    );
-    return {
-      content: web.content,
-      reasoning: web.reasoning,
-      toolCalls: [],
-      finishReason: "stop",
-      usage: null,
-    };
-  }
-
   const body = buildChatBody(settings, convo);
   if (!includeTools) {
     delete body.tools;
@@ -653,7 +627,7 @@ async function runSingleCompletion(
           options?.onReasoningDelta,
           options?.control,
         );
-  return withRequestGate(settings, action);
+  return action();
 }
 
 function summarizeFromToolMessages(
@@ -755,13 +729,7 @@ export async function chatStream(
     control?: StreamControl;
   },
 ): Promise<ChatResponse> {
-  if (isWebTransport(settings)) {
-    if (!settings.webSessionToken.trim()) {
-      throw new ApiError(
-        "请先在设置中粘贴 chat.deepseek.com 的网页会话 Token",
-      );
-    }
-  } else if (!settings.apiKey.trim()) {
+  if (!settings.apiKey.trim()) {
     const provider = getProvider(settings.apiProvider);
     throw new ApiError(`请先在设置中填写 API Key（${provider.apiKeyHint}）`);
   }
@@ -777,10 +745,7 @@ export async function chatStream(
   let lastStreamedContent = "";
   let searchCitationNext = 1;
 
-  // Web session has no OpenAI tool-calling; single completion only.
-  const maxRounds = isWebTransport(settings)
-    ? 1
-    : effectiveMaxToolRounds(settings);
+  const maxRounds = effectiveMaxToolRounds(settings);
 
   try {
     for (let round = 0; round < maxRounds; round++) {
@@ -936,9 +901,6 @@ export async function chatStream(
 export async function fetchDeepseekBalance(
   settings: AppSettings,
 ): Promise<DeepSeekBalance> {
-  if (isWebTransport(settings)) {
-    throw new ApiError("网页会话模式无余额接口，请改用官方 API 查看余额。");
-  }
   if (!settings.apiKey.trim()) {
     throw new ApiError("请先在设置中填写 API Key");
   }
