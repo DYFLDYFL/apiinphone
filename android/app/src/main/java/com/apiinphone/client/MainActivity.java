@@ -8,6 +8,7 @@ public class MainActivity extends BridgeActivity {
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(ChatKeepAlivePlugin.class);
         registerPlugin(PythonSandboxPlugin.class);
+        registerPlugin(ChatGptWebViewPlugin.class);
         super.onCreate(savedInstanceState);
     }
 }
