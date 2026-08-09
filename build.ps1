@@ -109,8 +109,17 @@ try {
     Pop-Location
 }
 
-if ($Variant -eq "release") {
-    Write-Host "APK: android\app\build\outputs\apk\release\app-release.apk"
+$apkRelativePath = if ($Variant -eq "release") {
+    "android\app\build\outputs\apk\release\app-release.apk"
 } else {
-    Write-Host "APK: android\app\build\outputs\apk\debug\app-debug.apk"
+    "android\app\build\outputs\apk\debug\app-debug.apk"
 }
+$apkPath = Join-Path $PSScriptRoot $apkRelativePath
+$package = Get-Content (Join-Path $PSScriptRoot "package.json") -Raw | ConvertFrom-Json
+$desktopPath = [Environment]::GetFolderPath("Desktop")
+$desktopApkName = "apiinphone-v$($package.version)-$Variant.apk"
+$desktopApkPath = Join-Path $desktopPath $desktopApkName
+Copy-Item -LiteralPath $apkPath -Destination $desktopApkPath -Force
+
+Write-Host "APK: $apkRelativePath"
+Write-Host "Desktop APK: $desktopApkPath"
