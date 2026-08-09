@@ -252,10 +252,10 @@ export function GameScreen({
     useState("新 AI 逻辑预设");
   const [editingCharacterIndex, setEditingCharacterIndex] = useState(0);
   const [characterEntryView, setCharacterEntryView] = useState<
-    "ai-choice" | "ai-editor"
-  >("ai-choice");
-  const [aiChoiceBackView, setAiChoiceBackView] = useState<
     "template-choice" | "world-editor"
+  >("template-choice");
+  const [aiChoiceBackView, setAiChoiceBackView] = useState<
+    "template-choice" | "world-editor" | "characters"
   >("template-choice");
   const [aiSetupStep, setAiSetupStep] = useState<AiSetupStep>("agents");
   const [selectedAiPresetId, setSelectedAiPresetId] = useState("");
@@ -405,16 +405,17 @@ export function GameScreen({
     return clamped;
   };
 
-  const handleCreate = async () => {
+  const handleCreate = async (overrideDraft?: GameTemplateDraft) => {
     if (!settings.apiKey.trim()) {
       alert("请先在设置中填写 API Key");
       return;
     }
+    const baseDraft = overrideDraft ?? draft;
     const n = Math.min(
       6,
-      Math.max(2, Math.round(Number(charCountInput) || draft.characters.length || 3)),
+      Math.max(2, Math.round(Number(charCountInput) || baseDraft.characters.length || 3)),
     );
-    const nextDraft = resizeDraftCharacters(draft, n, 2);
+    const nextDraft = resizeDraftCharacters(baseDraft, n, 2);
     setDraft(nextDraft);
     setCharCountInput(String(n));
     const playMode = nextDraft.playMode === "play" ? "play" : "spectate";
@@ -610,7 +611,7 @@ export function GameScreen({
     setSelectedPresetId("");
     setSelectedAiPresetId("");
     setCharCountInput("3");
-    setCharacterEntryView("ai-choice");
+    setCharacterEntryView("template-choice");
     setAiChoiceBackView("template-choice");
     setView("template-choice");
   };
@@ -799,25 +800,27 @@ export function GameScreen({
     setSelectedPresetId(preset.id);
     setSelectedAiPresetId("");
     setCharCountInput(String(next.characters.length));
+    setCharacterEntryView("template-choice");
     setAiChoiceBackView("template-choice");
-    setView("ai-choice");
+    setView("characters");
   };
 
   const confirmWorld = () => {
+    setCharacterEntryView("world-editor");
     setAiChoiceBackView("world-editor");
-    setView("ai-choice");
+    setView("characters");
   };
 
   const selectAiPreset = (preset: GameAiPreset | SavedAiPreset) => {
     setDraft((prev) => syncDraftCharacterAgents(applyAiPreset(prev, preset)));
     setSelectedAiPresetId(preset.id);
-    setCharacterEntryView("ai-choice");
-    setView("characters");
+    void handleCreate(
+      syncDraftCharacterAgents(applyAiPreset(draft, preset)),
+    );
   };
 
   const confirmAi = () => {
-    setCharacterEntryView("ai-editor");
-    setView("characters");
+    void handleCreate();
   };
 
   const addCharacterPreset = (template: CharTemplateDraft) => {
@@ -953,7 +956,10 @@ export function GameScreen({
           )
         }
         onChangeDraft={setDraft}
-        onCreate={() => void handleCreate()}
+        onCreate={() => {
+          setAiChoiceBackView("characters");
+          setView("ai-choice");
+        }}
       />
     );
   }
@@ -1871,7 +1877,7 @@ function AiSetupScreen({
           </button>
           <button type="button" className="primary-btn" onClick={goNext}>
             {currentIndex === AI_SETUP_STEPS.length - 1
-              ? "确认 AI 逻辑，选择人物"
+              ? "确认 AI 逻辑，创建游戏"
               : "下一步"}
           </button>
         </div>
@@ -2891,14 +2897,6 @@ function TimePickerEditor({
         <h3>初始时间</h3>
         <span>只能从固定年月日时分中选择</span>
       </div>
-      <label className="game-field">
-        时间描述
-        <input
-          value={current.description}
-          placeholder="例如：春日清晨"
-          onChange={(e) => update({ description: e.target.value })}
-        />
-      </label>
       <label className="checkbox">
         <input
           type="checkbox"
@@ -3633,7 +3631,7 @@ function CharacterChoiceScreen({
     <div className="game-screen game-editor-screen">
       <EditorHeader
         title="选择人物"
-        subtitle="选择预设或自己编辑，确认后创建游戏"
+        subtitle="选择预设或自己编辑，确认后设置 AI 逻辑"
         topActions={topActions}
         onBack={onBack}
       />
@@ -3781,7 +3779,7 @@ function CharacterChoiceScreen({
             disabled={draft.characters.length < 2}
             onClick={onCreate}
           >
-            确认人物并创建游戏
+            确认人物，选择 AI 逻辑
           </button>
           {draft.characters.length < 2 ? (
             <p className="settings-hint warn-hint">至少添加 2 名角色后才能创建游戏。</p>

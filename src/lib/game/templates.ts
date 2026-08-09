@@ -143,7 +143,7 @@ function normalizeAttributeDefinitions(
 }
 
 export const DEFAULT_WORLDVIEW =
-  "青石镇：边陲小镇，晨雾常在。有药房、铁匠铺、杂货铺与广场。民风朴实却暗流涌动，江湖传闻与邻里琐事交织。物理与人情须自洽；银钱、伤势、距离不可空口捏造。";
+  "青石镇坐落于青河下游与官道交会的边陲，四面环山，晨雾常锁街巷。镇上有药房、铁匠铺、杂货铺与广场，往来客商与江湖散人常在此落脚歇息。民风朴实却暗流涌动，三年前的一桩旧案尚未了结，如今邻里琐事之间又起了新的风波。镇上以银钱铜板为通货，伤药、马匹与消息各有行情，谎言终会留下破绽。行走江湖须守世间规矩：距离、银钱、伤势、时节皆须自洽，不可凭空捏造；律法、官府与江湖道义并行，明面有衙门的规矩，暗处有帮派的盘算。";
 
 export type CharTemplateDraft = {
   id?: string;
@@ -307,14 +307,14 @@ export type GameAiPreset = {
 };
 
 export const DEFAULT_INITIAL_TIME_PARTS: GameDateTime = {
-  description: "开场",
+  description: "",
   era: "CE",
-  year: 1,
+  year: 3,
   month: 3,
-  day: 2,
-  weekday: 1,
-  hour: 5,
-  minute: 30,
+  day: 5,
+  weekday: 2,
+  hour: 9,
+  minute: 0,
 };
 
 export const WEEKDAY_LABELS: Record<GameWeekday, string> = {
@@ -366,7 +366,7 @@ export function normalizeGameDateTime(
   const hour = Number(value?.hour);
   const minute = Number(value?.minute);
   return {
-    description: String(value?.description ?? fallback.description).trim() || fallback.description,
+    description: String(value?.description ?? fallback.description).trim(),
     era,
     year: safeYear,
     month: safeMonth,
@@ -480,6 +480,21 @@ function region(
   };
 }
 
+/** 生成一批"空点"：只有地形、没有名称，作为地图上的位置参考。 */
+function emptyPoints(
+  coordinates: Array<[number, number]>,
+  terrainId: string,
+  objects: string[] = [],
+): GameMapCell[] {
+  return coordinates.map(([x, y]) => ({
+    x,
+    y,
+    terrainId,
+    properties: {},
+    objects,
+  }));
+}
+
 const ANCIENT_TERRAINS: GameTerrainType[] = [
   terrain("town", "城镇", "#c08457", true, { movementCost: 1 }),
   terrain("road", "道路", "#facc15", true, { movementCost: 0.75 }),
@@ -537,97 +552,168 @@ export function defaultWorldMapForGenre(genre: string): GameWorldMap {
   if (genre.includes("科幻")) {
     return createWorldMap([
       { x: 0, y: 0, zoneName: "空间站中枢", terrainId: "habitat", properties: {}, objects: ["控制台"] },
-      { x: 3, y: 0, zoneName: "生活区", terrainId: "habitat", properties: {}, objects: ["居住舱"] },
-      { x: -3, y: 0, zoneName: "停泊区", terrainId: "dock", properties: {}, objects: ["飞船接口"] },
-      { x: 0, y: 3, zoneName: "维修环廊", terrainId: "maintenance", properties: {}, objects: ["工具柜"] },
-      { x: 0, y: -3, zoneName: "能源区", terrainId: "engine", properties: {}, objects: ["反应堆"], passable: false },
-      { x: 5, y: 3, zoneName: "外环观测点", terrainId: "corridor", properties: {}, objects: [] },
+      { x: 7, y: 0, zoneName: "生活区", terrainId: "habitat", properties: {}, objects: ["居住舱"] },
+      { x: -7, y: 0, zoneName: "停泊区", terrainId: "dock", properties: {}, objects: ["飞船接口"] },
+      { x: 0, y: 7, zoneName: "维修环廊", terrainId: "maintenance", properties: {}, objects: ["工具柜"] },
+      { x: 0, y: -7, zoneName: "能源区", terrainId: "engine", properties: {}, objects: ["反应堆"], passable: false },
+      { x: 10, y: 8, zoneName: "外环观测点", terrainId: "corridor", properties: {}, objects: [] },
+      { x: -10, y: -8, zoneName: "外环货舱", terrainId: "colony", properties: {}, objects: [] },
+      ...emptyPoints(
+        [
+          [3, 0], [5, 0], [-3, 0], [-5, 0],
+          [0, 3], [0, 5], [0, -3], [0, -5],
+          [7, 3], [5, 5], [7, -3], [5, -5],
+          [-7, 3], [-5, 5], [-7, -3], [-5, -5],
+          [10, 4], [9, 6], [-10, 4], [-9, -5],
+          [3, 7], [-3, 7], [3, -7], [-3, -7],
+        ],
+        "corridor",
+      ),
     ], SCI_FI_TERRAINS, [
-      region("station", "habitat", [{ x: -5, y: -4, width: 11, height: 9 }]),
-      region("corridor-east", "corridor", [{ x: 5, y: -1, width: 5, height: 2 }]),
-      region("corridor-south", "corridor", [{ x: -1, y: 5, width: 2, height: 5 }]),
-      region("maintenance-ring", "maintenance", [{ x: -8, y: 5, width: 6, height: 4 }]),
-      region("vacuum-north", "vacuum", [{ x: -8, y: -8, width: 20, height: 3 }]),
-      region("vacuum-east", "vacuum", [{ x: 8, y: -5, width: 4, height: 14 }]),
-      region("dock-west", "dock", [{ x: -11, y: -2, width: 4, height: 5 }]),
+      region("station", "habitat", [{ x: -6, y: -6, width: 13, height: 13 }]),
+      region("corridor-east", "corridor", [{ x: 7, y: -1, width: 8, height: 2 }]),
+      region("corridor-west", "corridor", [{ x: -11, y: -1, width: 4, height: 2 }]),
+      region("corridor-south", "corridor", [{ x: -1, y: 7, width: 2, height: 8 }]),
+      region("corridor-north", "corridor", [{ x: -1, y: -11, width: 2, height: 4 }]),
+      region("maintenance-ring", "maintenance", [{ x: -4, y: 8, width: 8, height: 3 }]),
+      region("vacuum-north", "vacuum", [{ x: -12, y: -12, width: 26, height: 3 }]),
+      region("vacuum-east", "vacuum", [{ x: 12, y: -8, width: 5, height: 19 }]),
+      region("vacuum-west", "vacuum", [{ x: -16, y: -8, width: 4, height: 19 }]),
+      region("dock-west", "dock", [{ x: -13, y: -3, width: 5, height: 6 }]),
     ]);
   }
   if (genre.includes("现代")) {
     return createWorldMap([
       { x: 0, y: 0, zoneName: "市中心", terrainId: "downtown", properties: {}, objects: ["地铁站", "商场"] },
-      { x: 3, y: 0, zoneName: "旧城区", terrainId: "old-street", properties: {}, objects: ["老楼"] },
-      { x: 0, y: 3, zoneName: "江岸", terrainId: "waterfront", properties: {}, objects: ["步道"] },
-      { x: -3, y: 0, zoneName: "工业区", terrainId: "industrial", properties: {}, objects: ["仓库"] },
-      { x: 0, y: -3, zoneName: "大学城", terrainId: "public", properties: {}, objects: ["图书馆"] },
-      { x: 6, y: 4, zoneName: "公交终点", terrainId: "waterfront", properties: {}, objects: [] },
+      { x: 7, y: 0, zoneName: "旧城区", terrainId: "old-street", properties: {}, objects: ["老楼"] },
+      { x: -7, y: 0, zoneName: "工业区", terrainId: "industrial", properties: {}, objects: ["仓库"] },
+      { x: 0, y: 7, zoneName: "江岸", terrainId: "waterfront", properties: {}, objects: ["步道"] },
+      { x: 0, y: -7, zoneName: "大学城", terrainId: "public", properties: {}, objects: ["图书馆"] },
+      { x: 10, y: -8, zoneName: "公交终点", terrainId: "downtown", properties: {}, objects: [] },
+      ...emptyPoints(
+        [
+          [3, 0], [5, 0], [-3, 0], [-5, 0],
+          [0, 3], [0, 5], [0, -3], [0, -5],
+          [3, 3], [5, 5], [-3, 3], [-5, 5],
+          [3, -3], [5, -5], [-3, -3], [-5, -5],
+          [7, 3], [7, -3], [-7, 3], [-7, -3],
+          [3, 7], [-3, 7], [10, 4], [-10, 4],
+        ],
+        "old-street",
+      ),
+      ...emptyPoints([[6, 6], [8, 7]], "waterfront"),
     ], MODERN_TERRAINS, [
-      region("city-grid", "downtown", [{ x: -5, y: -5, width: 11, height: 11 }]),
-      region("east-avenue", "downtown", [{ x: 5, y: -1, width: 8, height: 2 }]),
-      region("south-avenue", "downtown", [{ x: -1, y: 5, width: 2, height: 7 }]),
-      region("old-town", "old-street", [{ x: 2, y: -4, width: 5, height: 4 }]),
-      region("riverfront", "waterfront", [{ x: 5, y: 3, width: 7, height: 3 }]),
-      region("river", "river", [{ x: 12, y: -6, width: 3, height: 16 }]),
-      region("industrial-west", "industrial", [{ x: -10, y: -3, width: 5, height: 8 }]),
-      region("parks-north", "park", [{ x: -8, y: -10, width: 6, height: 4 }]),
-      region("outskirts", "outskirts", [{ x: -14, y: -12, width: 29, height: 25 }]),
+      region("city-grid", "downtown", [{ x: -6, y: -6, width: 13, height: 13 }]),
+      region("east-avenue", "downtown", [{ x: 7, y: -1, width: 8, height: 2 }]),
+      region("west-avenue", "downtown", [{ x: -12, y: -1, width: 5, height: 2 }]),
+      region("south-avenue", "downtown", [{ x: -1, y: 7, width: 2, height: 8 }]),
+      region("north-avenue", "downtown", [{ x: -1, y: -12, width: 2, height: 5 }]),
+      region("old-town", "old-street", [{ x: 5, y: -4, width: 7, height: 6 }]),
+      region("riverfront", "waterfront", [{ x: 4, y: 7, width: 8, height: 3 }]),
+      region("river", "river", [{ x: 14, y: -8, width: 3, height: 19 }]),
+      region("industrial-west", "industrial", [{ x: -12, y: -4, width: 5, height: 8 }]),
+      region("parks-north", "park", [{ x: -3, y: -12, width: 7, height: 4 }]),
+      region("outskirts", "outskirts", [{ x: -17, y: -14, width: 35, height: 28 }]),
     ]);
   }
   if (genre.includes("末日")) {
     return createWorldMap([
       { x: 0, y: 0, zoneName: "聚落", terrainId: "settlement", properties: {}, objects: ["净水器"] },
-      { x: 3, y: 0, zoneName: "旧公路", terrainId: "highway", properties: {}, objects: ["废弃车辆"] },
-      { x: 0, y: 3, zoneName: "水源地", terrainId: "wetland", properties: {}, objects: ["蓄水池"] },
-      { x: -3, y: 0, zoneName: "感染区", terrainId: "danger", properties: {}, objects: ["警示牌"], passable: false },
-      { x: 0, y: -3, zoneName: "农场遗址", terrainId: "farmland", properties: {}, objects: ["破旧温室"] },
-      { x: 6, y: -4, zoneName: "瞭望塔", terrainId: "ruins", properties: {}, objects: [] },
+      { x: 7, y: 0, zoneName: "旧公路", terrainId: "highway", properties: {}, objects: ["废弃车辆"] },
+      { x: -7, y: 0, zoneName: "感染区", terrainId: "danger", properties: {}, objects: ["警示牌"], passable: false },
+      { x: 0, y: 7, zoneName: "水源地", terrainId: "wetland", properties: {}, objects: ["蓄水池"] },
+      { x: 0, y: -7, zoneName: "农场遗址", terrainId: "farmland", properties: {}, objects: ["破旧温室"] },
+      { x: 11, y: -8, zoneName: "瞭望塔", terrainId: "ruins", properties: {}, objects: [] },
+      ...emptyPoints(
+        [
+          [3, 0], [5, 0], [-3, 0], [-5, 0],
+          [0, 3], [0, 5], [0, -3], [0, -5],
+          [3, 3], [5, 5], [-3, 3], [-5, 5],
+          [3, -3], [5, -5], [-3, -3], [-5, -5],
+          [7, 3], [7, -3], [-7, 3], [-7, -3],
+          [8, 5], [9, 6], [10, -5], [8, -6],
+        ],
+        "wasteland",
+      ),
+      ...emptyPoints([[6, 6], [4, 8], [5, 7]], "wetland"),
     ], APOCALYPSE_TERRAINS, [
-      region("settlement-zone", "settlement", [{ x: -4, y: -4, width: 9, height: 8 }]),
-      region("old-highway", "highway", [{ x: -12, y: 0, width: 25, height: 2 }]),
-      region("farm-east", "farmland", [{ x: 5, y: 2, width: 7, height: 5 }]),
-      region("wetland-south", "wetland", [{ x: -5, y: 6, width: 9, height: 4 }]),
-      region("danger-west", "danger", [{ x: -11, y: -6, width: 5, height: 7 }]),
-      region("water-north", "water", [{ x: 4, y: -9, width: 6, height: 4 }]),
-      region("ruins-north", "ruins", [{ x: -3, y: -10, width: 6, height: 4 }]),
-      region("wasteland", "wasteland", [{ x: -14, y: -12, width: 29, height: 24 }]),
+      region("settlement-zone", "settlement", [{ x: -5, y: -5, width: 11, height: 11 }]),
+      region("old-highway", "highway", [{ x: 7, y: -1, width: 10, height: 2 }]),
+      region("west-road", "highway", [{ x: -12, y: -1, width: 5, height: 2 }]),
+      region("south-road", "highway", [{ x: -1, y: 7, width: 2, height: 7 }]),
+      region("farm-east", "farmland", [{ x: 4, y: -6, width: 8, height: 5 }]),
+      region("wetland-south", "wetland", [{ x: -5, y: 7, width: 10, height: 5 }]),
+      region("danger-west", "danger", [{ x: -12, y: -4, width: 5, height: 8 }]),
+      region("water-north", "water", [{ x: -4, y: -13, width: 9, height: 5 }]),
+      region("ruins-north", "ruins", [{ x: 6, y: -11, width: 7, height: 5 }]),
+      region("wasteland", "wasteland", [{ x: -16, y: -14, width: 34, height: 27 }]),
     ]);
   }
   if (genre.includes("奇幻")) {
     return createWorldMap([
       { x: 0, y: 0, zoneName: "王都", terrainId: "city", properties: {}, objects: ["城门", "集市"] },
-      { x: 4, y: 0, zoneName: "月林", terrainId: "forest", properties: {}, objects: ["古树"] },
-      { x: 0, y: 4, zoneName: "边境路", terrainId: "road", properties: {}, objects: ["路碑"] },
-      { x: -4, y: 0, zoneName: "矿谷", terrainId: "mountain", properties: {}, objects: ["矿井"], passable: false },
-      { x: 0, y: -4, zoneName: "湖畔村", terrainId: "water", properties: {}, objects: ["码头"] },
-      { x: 7, y: 5, zoneName: "旧石桥", terrainId: "road", properties: {}, objects: [] },
+      { x: 8, y: 0, zoneName: "月林", terrainId: "forest", properties: {}, objects: ["古树"] },
+      { x: -8, y: 0, zoneName: "矿谷", terrainId: "mountain", properties: {}, objects: ["矿井"], passable: false },
+      { x: 0, y: 8, zoneName: "边境路", terrainId: "road", properties: {}, objects: ["路碑"] },
+      { x: 0, y: -8, zoneName: "湖畔村", terrainId: "water", properties: {}, objects: ["码头"] },
+      { x: 10, y: 7, zoneName: "旧石桥", terrainId: "road", properties: {}, objects: [] },
+      ...emptyPoints(
+        [
+          [3, 0], [6, 0], [-3, 0], [-6, 0],
+          [0, 3], [0, 6], [0, -3], [0, -6],
+          [3, 3], [5, 5], [-3, 3], [-5, 5],
+          [3, -3], [5, -5], [-3, -3], [-5, -5],
+          [8, 3], [8, -3], [-8, 3], [-8, -3],
+          [6, 6], [9, 4], [-6, 6], [-9, 4],
+        ],
+        "wilderness",
+      ),
+      ...emptyPoints([[7, 6], [8, 5]], "road"),
     ], FANTASY_TERRAINS, [
-      region("capital", "city", [{ x: -4, y: -4, width: 9, height: 9 }]),
-      region("north-road", "road", [{ x: -1, y: -12, width: 2, height: 10 }]),
-      region("south-road", "road", [{ x: -1, y: 4, width: 2, height: 10 }]),
-      region("east-road", "road", [{ x: 4, y: -1, width: 10, height: 2 }]),
-      region("moon-forest", "forest", [{ x: 7, y: -8, width: 7, height: 7 }]),
-      region("mountain-west", "mountain", [{ x: -13, y: -6, width: 6, height: 12 }]),
-      region("lake-north", "water", [{ x: -5, y: -12, width: 7, height: 4 }]),
-      region("farmland-south", "farmland", [{ x: 5, y: 5, width: 8, height: 5 }]),
-      region("wilderness", "wilderness", [{ x: -16, y: -14, width: 31, height: 29 }]),
+      region("capital", "city", [{ x: -5, y: -5, width: 11, height: 11 }]),
+      region("east-road", "road", [{ x: 8, y: -1, width: 9, height: 2 }]),
+      region("west-road", "road", [{ x: -13, y: -1, width: 5, height: 2 }]),
+      region("south-road", "road", [{ x: -1, y: 8, width: 2, height: 8 }]),
+      region("north-road", "road", [{ x: -1, y: -13, width: 2, height: 5 }]),
+      region("moon-forest", "forest", [{ x: 8, y: -7, width: 8, height: 8 }]),
+      region("mountain-west", "mountain", [{ x: -14, y: -5, width: 6, height: 11 }]),
+      region("lake-north", "water", [{ x: -5, y: -13, width: 8, height: 5 }]),
+      region("farmland-south", "farmland", [{ x: 3, y: 9, width: 9, height: 6 }]),
+      region("wilderness", "wilderness", [{ x: -18, y: -15, width: 37, height: 30 }]),
     ]);
   }
   return createWorldMap([
     { x: 0, y: 0, zoneName: "青石镇广场", terrainId: "town", properties: {}, objects: ["告示牌"] },
-    { x: 3, y: 0, zoneName: "药房街", terrainId: "street", properties: {}, objects: ["药房"] },
-    { x: -3, y: 0, zoneName: "铁匠街", terrainId: "street", properties: {}, objects: ["铁匠铺"] },
-    { x: 0, y: 3, zoneName: "东门外", terrainId: "road", properties: {}, objects: ["城门"] },
-    { x: 0, y: -3, zoneName: "杂货街", terrainId: "street", properties: {}, objects: ["杂货铺"] },
-    { x: 5, y: 4, zoneName: "河堤", terrainId: "riverbank", properties: {}, objects: ["渡口"] },
-    { x: -5, y: 4, zoneName: "北郊茶棚", terrainId: "wilderness", properties: {}, objects: [] },
+    { x: 7, y: 0, zoneName: "药房街", terrainId: "street", properties: {}, objects: ["药房"] },
+    { x: -7, y: 0, zoneName: "铁匠街", terrainId: "street", properties: {}, objects: ["铁匠铺"] },
+    { x: 0, y: 7, zoneName: "东门外", terrainId: "road", properties: {}, objects: ["城门"] },
+    { x: 0, y: -7, zoneName: "杂货街", terrainId: "street", properties: {}, objects: ["杂货铺"] },
+    { x: 9, y: 8, zoneName: "河堤", terrainId: "riverbank", properties: {}, objects: ["渡口"] },
+    { x: -9, y: 8, zoneName: "北郊茶棚", terrainId: "wilderness", properties: {}, objects: [] },
+    ...emptyPoints(
+      [
+        [3, 0], [5, 0], [-3, 0], [-5, 0],
+        [0, 3], [0, 5], [0, -3], [0, -5],
+        [3, 3], [5, 5], [-3, 3], [-5, 5],
+        [3, -3], [5, -5], [-3, -3], [-5, -5],
+        [7, 3], [7, -3], [-7, 3], [-7, -3],
+        [3, 7], [-3, 7], [6, 7], [-6, 7],
+        [3, -7], [-3, -7], [6, -7], [-6, -7],
+      ],
+      "street",
+    ),
+    ...emptyPoints([[8, 6], [9, 7], [10, 8], [7, 8], [8, 9]], "riverbank"),
   ], ANCIENT_TERRAINS, [
-    region("town", "town", [{ x: -4, y: -4, width: 9, height: 9 }]),
-    region("east-road", "road", [{ x: 4, y: -1, width: 11, height: 2 }]),
-    region("south-road", "road", [{ x: -1, y: 4, width: 2, height: 10 }]),
-    region("riverbank-east", "riverbank", [{ x: 5, y: 3, width: 8, height: 3 }]),
-    region("river", "water", [{ x: 13, y: -8, width: 3, height: 25 }]),
-    region("farmland-south", "farmland", [{ x: 3, y: 7, width: 8, height: 5 }]),
-    region("forest-west", "forest", [{ x: -12, y: -7, width: 6, height: 8 }]),
-    region("wilderness", "wilderness", [{ x: -15, y: -12, width: 32, height: 29 }]),
+    region("town", "town", [{ x: -6, y: -6, width: 13, height: 13 }]),
+    region("east-road", "road", [{ x: 7, y: -1, width: 9, height: 2 }]),
+    region("west-road", "road", [{ x: -12, y: -1, width: 5, height: 2 }]),
+    region("south-road", "road", [{ x: -1, y: 7, width: 2, height: 9 }]),
+    region("north-road", "road", [{ x: -1, y: -12, width: 2, height: 5 }]),
+    region("riverbank-east", "riverbank", [{ x: 9, y: 6, width: 5, height: 4 }]),
+    region("river", "water", [{ x: 16, y: -10, width: 3, height: 27 }]),
+    region("farmland-south", "farmland", [{ x: 3, y: 10, width: 9, height: 5 }]),
+    region("forest-west", "forest", [{ x: -15, y: -9, width: 7, height: 9 }]),
+    region("wilderness", "wilderness", [{ x: -18, y: -14, width: 37, height: 30 }]),
   ]);
 }
 
@@ -1061,8 +1147,8 @@ export const GAME_TEMPLATE_PRESETS: GameTemplatePreset[] = [
     "雾都档案",
     "现代都市",
     "一座被暴雨笼罩的城市，线索藏在监控、街巷与人心之间。",
-    "临江市：高楼、旧城与地下交通交错。案件必须遵循现代社会常识，证据、舆论与时间都不可凭空跳过。",
-    { ...DEFAULT_INITIAL_TIME_PARTS, description: "早晨", weekday: 1, hour: 8, minute: 30 },
+    "临江市坐落于入海口，高楼、旧城与地下交通交错成网。持续一周的暴雨让整座城市笼罩在灰雾里，旧城区棚户与新区写字楼只隔一条江。证据、监控、舆论与时间线必须遵循现代社会常识；警察办案讲程序，记者抢稿讲时效，证人会撒谎也会被威胁。城市里人人都随身带着手机，但信号、电力与水位随时可能切断一条线。",
+    { ...DEFAULT_INITIAL_TIME_PARTS, era: "CE", year: 2026, month: 11, day: 7, weekday: 6, hour: 9, minute: 30 },
     [{ key: "evidence", label: "证据掌握", valueType: "number" }],
   ),
   genrePreset(
@@ -1070,8 +1156,8 @@ export const GAME_TEMPLATE_PRESETS: GameTemplatePreset[] = [
     "灰烬纪元",
     "末日生存",
     "文明崩塌后的第七年，水源、燃料和信任都很稀缺。",
-    "灰烬纪元：废墟聚落依靠净水器与旧时代物资生存。感染、辐射、天气和资源必须保持连续。",
-    { ...DEFAULT_INITIAL_TIME_PARTS, description: "灰烬纪元第七年·清晨" },
+    "灰烬纪元第七年：旧世界在一场大灾变中焚毁，幸存者靠废墟中的净水器与旧时代物资维生。聚落之间隔着辐射废土与废弃公路，野外游荡着感染体与拾荒者。水源、燃料、药品和弹药都是硬通货，人与人之间的信任比物资更稀缺。感染、辐射、天气与资源消耗必须保持连续；每走一步路都要计较脚下与嘴边的消耗。",
+    { ...DEFAULT_INITIAL_TIME_PARTS, era: "CE", year: 7, month: 6, day: 15, weekday: 1, hour: 10, minute: 0 },
     [{ key: "supplies", label: "物资", valueType: "number" }],
   ),
   genrePreset(
@@ -1079,8 +1165,8 @@ export const GAME_TEMPLATE_PRESETS: GameTemplatePreset[] = [
     "星环边境",
     "科幻星际",
     "边境空间站接收到一段不该存在的求救信号。",
-    "星环边境：空间站、跃迁航道与殖民地组成脆弱网络。氧气、能源、通讯延迟和船体损伤必须自洽。",
-    { description: "星环边境", era: "CE", year: 2187, month: 4, day: 12, hour: 6, minute: 0 },
+    "星环边境：人类殖民早已越过小行星带，空间站、跃迁航道与殖民地组成一张脆弱的网络。氧气、能源、通讯延迟和船体损伤都必须自洽，任何一次舱外作业都可能是单程。边境站远离中枢，规章在此打折，走私与情报贩子才是真正的统治者。近期各站陆续接收到同一段来源不明的求救信号，坐标指向一条已废弃的跃迁航道。",
+    { description: "", era: "CE", year: 2187, month: 4, day: 12, weekday: 3, hour: 8, minute: 0 },
     [
       { key: "oxygen", label: "氧气", valueType: "number" },
       { key: "energy", label: "能源", valueType: "number" },
@@ -1091,8 +1177,8 @@ export const GAME_TEMPLATE_PRESETS: GameTemplatePreset[] = [
     "月影王国",
     "奇幻冒险",
     "王国边境的月光会改变魔法，古老契约正在苏醒。",
-    "月影王国：精灵、工匠、骑士与术士共同生活。魔法有代价，誓约、血统与传说会影响现实。",
-    { description: "月影历·月升前", era: "CE", year: 302, month: 1, day: 1, hour: 18, minute: 0 },
+    "月影王国：精灵、工匠、骑士与术士共同生活在这片被月光眷顾的土地。魔法有代价，每一次施法都会留下痕迹；誓约、血统与传说不是空谈，而是会切切实实影响现实的力量。边境小镇坐落在王都大道与银月森林之间，王国古老的契约正在苏醒，镇上的占卜师说这个月圆夜会出大事。物理规则依然牢固，但魔法是真实的变量——距离、伤势、银钱与时节同样须自洽。",
+    { description: "", era: "CE", year: 302, month: 2, day: 15, weekday: 1, hour: 9, minute: 0 },
     [{ key: "mana", label: "魔力", valueType: "number" }],
   ),
 ];

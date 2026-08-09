@@ -231,7 +231,7 @@ export function worldMapText(game: GameState): string {
       const properties = effectiveMapProperties(map, position);
       const passable = effectivePassableAt(map, position);
       return `[${cell.x},${cell.y}] ${
-        cell.zoneName || "未命名重点"
+        cell.zoneName || "位置点"
       } · 地形：${terrainNameAt(map, position)} · ${
         passable === false ? "不可通行" : "可通行"
       } · 属性：${

@@ -20,13 +20,14 @@ import {
 import type {
   GameMapCell,
   GameMapPropertyValue,
+  GameTerrainRange,
   GameTerrainRegion,
   GameTerrainType,
   GameWorldMap,
 } from "../../lib/game/types";
 import type { GameTemplateDraft } from "../../lib/game/templates";
 
-type DrawMode = "pan" | "region";
+type DrawMode = "pan" | "region" | "paint";
 type RegionShape = "range" | "coordinates";
 
 interface WorldMapStepEditorProps {
@@ -160,6 +161,7 @@ export function WorldMapStepEditor({
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [editingKey, setEditingKey] = useState<string | null>(null);
   const [hoveredKey, setHoveredKey] = useState<string | null>(null);
+  const [selectedRegionId, setSelectedRegionId] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState(false);
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
@@ -501,6 +503,11 @@ export function WorldMapStepEditor({
       event.currentTarget.setPointerCapture(event.pointerId);
       return;
     }
+    if (drawMode === "paint") {
+      const coordinate = coordinateAtPointer(event);
+      paintRegionCell(coordinate[0], coordinate[1]);
+      return;
+    }
     dragRef.current = {
       mode: "pan",
       pointerId: event.pointerId,
@@ -563,6 +570,106 @@ export function WorldMapStepEditor({
         ),
       }),
     );
+  };
+  const updateRegionRange = (
+    regionId: string,
+    rangeIndex: number,
+    patch: Partial<GameTerrainRange>,
+  ) => {
+    updateMap(
+      mapWith(map, {
+        terrainRegions: map.terrainRegions.map((region) =>
+          region.id === regionId
+            ? {
+                ...region,
+                ranges: (region.ranges ?? []).map((range, index) =>
+                  index === rangeIndex ? { ...range, ...patch } : range,
+                ),
+              }
+            : region,
+        ),
+      }),
+    );
+  };
+  const removeRegionRange = (regionId: string, rangeIndex: number) => {
+    updateMap(
+      mapWith(map, {
+        terrainRegions: map.terrainRegions.map((region) => {
+          if (region.id !== regionId) return region;
+          const ranges = (region.ranges ?? []).filter(
+            (_, index) => index !== rangeIndex,
+          );
+          return { ...region, ...(ranges.length ? { ranges } : {}) };
+        }),
+      }),
+    );
+  };
+  const addRegionCoordinate = (regionId: string, x: number, y: number) => {
+    const region = map.terrainRegions.find((item) => item.id === regionId);
+    if (!region) return;
+    const coordinates = region.coordinates ?? [];
+    const key = (px: number, py: number) => `${px},${py}`;
+    if (coordinates.some(([px, py]) => key(px, py) === key(x, y))) return;
+    updateMap(
+      mapWith(map, {
+        terrainRegions: map.terrainRegions.map((item) =>
+          item.id === regionId
+            ? { ...item, coordinates: [...coordinates, [x, y] as [number, number]] }
+            : item,
+        ),
+      }),
+    );
+  };
+  const removeRegionCoordinate = (regionId: string, index: number) => {
+    updateMap(
+      mapWith(map, {
+        terrainRegions: map.terrainRegions.map((region) => {
+          if (region.id !== regionId) return region;
+          const coordinates = (region.coordinates ?? []).filter(
+            (_, itemIndex) => itemIndex !== index,
+          );
+          return { ...region, ...(coordinates.length ? { coordinates } : {}) };
+        }),
+      }),
+    );
+  };
+  /** 点选模式：给目标区域增删一个格子（若已存在则移除）。 */
+  const paintRegionCell = (x: number, y: number) => {
+    if (!activeTerrainId) {
+      setMapNotice("请先在地形注册表中添加并选择一种地形。");
+      return;
+    }
+    const key = (px: number, py: number) => `${px},${py}`;
+    const existing = map.terrainRegions.find(
+      (region) =>
+        region.terrainId === activeTerrainId &&
+        (region.coordinates ?? []).some(([px, py]) => key(px, py) === key(x, y)),
+    );
+    if (existing) {
+      removeRegionCoordinate(
+        existing.id,
+        (existing.coordinates ?? []).findIndex(
+          ([px, py]) => key(px, py) === key(x, y),
+        ),
+      );
+      return;
+    }
+    const targetId = selectedRegionId;
+    if (targetId) {
+      addRegionCoordinate(targetId, x, y);
+      return;
+    }
+    const id = `region_${Date.now().toString(36)}_${map.terrainRegions.length}`;
+    updateMap(
+      mapWith(map, {
+        terrainRegions: [
+          { id, terrainId: activeTerrainId, coordinates: [[x, y] as [number, number]] },
+          ...map.terrainRegions,
+        ],
+      }),
+    );
+    setSelectedRegionId(id);
+    setMapNotice("已创建点选地形区，可继续点击格子加入或移出。");
   };
 
   const selectedPassability =
@@ -644,6 +751,7 @@ export function WorldMapStepEditor({
               >
                 <option value="pan">平移 / 选点</option>
                 <option value="region">拖拽创建地形区</option>
+                <option value="paint">点选地形格子</option>
               </select>
             </label>
             <label className="game-field">
@@ -677,7 +785,9 @@ export function WorldMapStepEditor({
             <p>
               {drawMode === "region"
                 ? "在地图上拖拽，松开后创建一块稀疏地形区。"
-                : "拖动空白处平移；点击重点坐标查看或编辑。"}
+                : drawMode === "paint"
+                  ? "点击格子加入当前地形区（有选中区域则并入它，否则新建）；再点一次移出。"
+                  : "拖动空白处平移；点击重点坐标查看或编辑；空点是位置参考。"}
             </p>
           </div>
 
@@ -731,7 +841,14 @@ export function WorldMapStepEditor({
                   className="game-map-axis"
                 />
                 {map.terrainRegions.map((region) => (
-                  <g key={region.id} className="game-map-terrain-region">
+                  <g
+                    key={region.id}
+                    className={
+                      region.id === selectedRegionId
+                        ? "game-map-terrain-region selected"
+                        : "game-map-terrain-region"
+                    }
+                  >
                     {(region.ranges ?? []).map((range, index) => (
                       <rect
                         key={`${region.id}-range-${index}`}
@@ -776,11 +893,34 @@ export function WorldMapStepEditor({
                   />
                 ) : null}
                 {cells.map(({ key, cell }) => {
+                  const isNamed = Boolean(cell.zoneName?.trim());
                   const nodeTitle =
-                    cell.zoneName?.trim() || `坐标（${cell.x}, ${cell.y}）`;
+                    cell.zoneName?.trim() || `位置点（${cell.x}, ${cell.y}）`;
                   const isSelected = selectedKey === key;
                   const effectiveTerrain = terrainAt(map, cell);
                   const passable = effectivePassableAt(map, cell);
+                  if (!isNamed) {
+                    return (
+                      <g
+                        key={key}
+                        className="game-map-empty-point"
+                        data-map-node="true"
+                        transform={`translate(${cell.x * GRID_SIZE} ${
+                          cell.y * GRID_SIZE
+                        })`}
+                        pointerEvents="none"
+                      >
+                        <title>
+                          {nodeTitle} · 地形：{" "}
+                          {effectiveTerrain?.displayName || "未设置地形"}
+                        </title>
+                        <circle
+                          r={5}
+                          fill={effectiveTerrain?.color ?? "#94a3b8"}
+                        />
+                      </g>
+                    );
+                  }
                   return (
                     <g
                       key={key}
@@ -795,15 +935,21 @@ export function WorldMapStepEditor({
                         cell.y * GRID_SIZE
                       })`}
                       onPointerDown={(event) => {
-                        if (drawMode === "region") return;
+                        if (drawMode === "region" || drawMode === "paint") return;
                         event.stopPropagation();
                       }}
                       onClick={() => {
-                        if (drawMode !== "region") selectCell(key);
+                        if (drawMode === "region") return;
+                        if (drawMode === "paint") {
+                          paintRegionCell(cell.x, cell.y);
+                          return;
+                        }
+                        selectCell(key);
                       }}
                       onKeyDown={(event) => {
                         if (
                           drawMode !== "region" &&
+                          drawMode !== "paint" &&
                           (event.key === "Enter" || event.key === " ")
                         ) {
                           event.preventDefault();
@@ -1116,28 +1262,168 @@ export function WorldMapStepEditor({
             {map.terrainRegions.length ? (
               <div className="game-map-region-list">
                 {map.terrainRegions.map((region) => (
-                  <div className="game-map-region-row" key={region.id}>
-                    <code>{region.id}</code>
-                    <select
-                      value={region.terrainId}
-                      onChange={(event) =>
-                        updateRegionTerrain(region.id, event.target.value)
+                  <div key={region.id} className="game-map-region-item">
+                    <div
+                      className={
+                        region.id === selectedRegionId
+                          ? "game-map-region-row selected"
+                          : "game-map-region-row"
                       }
+                      role="button"
+                      tabIndex={0}
+                      onClick={() =>
+                        setSelectedRegionId((current) =>
+                          current === region.id ? null : region.id,
+                        )
+                      }
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
+                          setSelectedRegionId((current) =>
+                            current === region.id ? null : region.id,
+                          );
+                        }
+                      }}
                     >
-                      {terrainTypes.map((terrain) => (
-                        <option value={terrain.id} key={terrain.id}>
-                          {terrain.displayName}
-                        </option>
-                      ))}
-                    </select>
-                    <span>{regionCoordinateCount(region)} 格</span>
-                    <button
-                      type="button"
-                      className="link-btn game-map-delete-btn"
-                      onClick={() => removeRegion(region.id)}
-                    >
-                      删除
-                    </button>
+                      <code>{region.id}</code>
+                      <select
+                        value={region.terrainId}
+                        onClick={(event) => event.stopPropagation()}
+                        onChange={(event) =>
+                          updateRegionTerrain(region.id, event.target.value)
+                        }
+                      >
+                        {terrainTypes.map((terrain) => (
+                          <option value={terrain.id} key={terrain.id}>
+                            {terrain.displayName}
+                          </option>
+                        ))}
+                      </select>
+                      <span>{regionCoordinateCount(region)} 格</span>
+                      <button
+                        type="button"
+                        className="link-btn game-map-delete-btn"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          removeRegion(region.id);
+                          if (selectedRegionId === region.id) {
+                            setSelectedRegionId(null);
+                          }
+                        }}
+                      >
+                        删除
+                      </button>
+                    </div>
+                    {region.id === selectedRegionId ? (
+                      <div className="game-map-region-edit">
+                        {(region.ranges ?? []).length ? (
+                          <div className="game-map-region-ranges">
+                            <strong>矩形范围</strong>
+                            {(region.ranges ?? []).map((range, index) => (
+                              <div
+                                className="game-map-region-range-row"
+                                key={`${region.id}-range-${index}`}
+                              >
+                                <label className="game-field">
+                                  x
+                                  <input
+                                    type="number"
+                                    value={range.x}
+                                    onChange={(event) =>
+                                      updateRegionRange(
+                                        region.id,
+                                        index,
+                                        { x: Number(event.target.value) },
+                                      )
+                                    }
+                                  />
+                                </label>
+                                <label className="game-field">
+                                  y
+                                  <input
+                                    type="number"
+                                    value={range.y}
+                                    onChange={(event) =>
+                                      updateRegionRange(
+                                        region.id,
+                                        index,
+                                        { y: Number(event.target.value) },
+                                      )
+                                    }
+                                  />
+                                </label>
+                                <label className="game-field">
+                                  宽
+                                  <input
+                                    type="number"
+                                    min={1}
+                                    value={range.width}
+                                    onChange={(event) =>
+                                      updateRegionRange(
+                                        region.id,
+                                        index,
+                                        { width: Math.max(1, Number(event.target.value)) },
+                                      )
+                                    }
+                                  />
+                                </label>
+                                <label className="game-field">
+                                  高
+                                  <input
+                                    type="number"
+                                    min={1}
+                                    value={range.height}
+                                    onChange={(event) =>
+                                      updateRegionRange(
+                                        region.id,
+                                        index,
+                                        { height: Math.max(1, Number(event.target.value)) },
+                                      )
+                                    }
+                                  />
+                                </label>
+                                <button
+                                  type="button"
+                                  className="link-btn game-map-delete-btn"
+                                  onClick={() => removeRegionRange(region.id, index)}
+                                >
+                                  删矩形
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        ) : null}
+                        {(region.coordinates ?? []).length ? (
+                          <div className="game-map-region-coords">
+                            <strong>坐标点</strong>
+                            <div className="game-map-region-coords-list">
+                              {(region.coordinates ?? []).map(
+                                ([x, y], index) => (
+                                  <span
+                                    className="game-map-region-coord"
+                                    key={`${region.id}-coord-${index}`}
+                                  >
+                                    ({x}, {y})
+                                    <button
+                                      type="button"
+                                      className="link-btn game-map-delete-btn"
+                                      onClick={() =>
+                                        removeRegionCoordinate(region.id, index)
+                                      }
+                                    >
+                                      删
+                                    </button>
+                                  </span>
+                                ),
+                              )}
+                            </div>
+                          </div>
+                        ) : null}
+                        <p className="settings-hint">
+                          切换到"点选地形"模式，可在地图上点击格子加入或移出本区域。
+                        </p>
+                      </div>
+                    ) : null}
                   </div>
                 ))}
               </div>
