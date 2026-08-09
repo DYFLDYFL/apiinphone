@@ -61,6 +61,7 @@ import {
   formatAttrLines,
   formatEventSummary,
 } from "../../lib/game/mutations";
+import { normalizeWorldMap, terrainNameAt } from "../../lib/game/map";
 import {
   deleteSavedAiPreset,
   deleteSavedWorldPreset,
@@ -82,6 +83,7 @@ import type {
   GameEvent,
   GamePipeline,
   GameState,
+  GameWorldMap,
   PipelineEdge,
   PipelineEdgeWhen,
   PipelineNode,
@@ -104,6 +106,7 @@ import {
   type ReasoningEffort,
 } from "../../lib/apiProviders";
 import { ModelSwitcher } from "../ModelSwitcher";
+import { WorldMapStepEditor } from "./WorldMapStep";
 
 interface GameScreenProps {
   settings: AppSettings;
@@ -626,7 +629,7 @@ export function GameScreen({
         initialTimeParts: { ...source.initialTimeParts },
         weekCycleEnabled: Boolean(source.weekCycleEnabled),
         worldMap: source.worldMap
-          ? JSON.parse(JSON.stringify(source.worldMap))
+          ? normalizeWorldMap(source.worldMap)
           : undefined,
         contextFiles: source.contextFiles?.map((file) => ({ ...file })),
         attributeDefinitions: source.attributeDefinitions?.map((item) => ({
@@ -776,7 +779,7 @@ export function GameScreen({
       initialTimeParts: { ...world.initialTimeParts },
       weekCycleEnabled: Boolean(world.weekCycleEnabled),
       worldMap: world.worldMap
-        ? JSON.parse(JSON.stringify(world.worldMap))
+        ? normalizeWorldMap(world.worldMap)
         : undefined,
       contextFiles: world.contextFiles?.map((file) => ({ ...file })),
       attributeDefinitions: world.attributeDefinitions?.map((item) => ({
@@ -1228,6 +1231,9 @@ export function GameScreen({
                       `${sheet.position.x},${sheet.position.y}`
                     ]
                   : undefined;
+                const mapTerrain = sheet.position
+                  ? terrainNameAt(game.worldMap, sheet.position)
+                  : "";
                 const isSelf = playMode === "play" && ch.id === playerId;
                 return (
                   <details
@@ -1244,6 +1250,7 @@ export function GameScreen({
                       <span className="info-muted">
                         {" "}
                         {mapCell?.zoneName ||
+                          (mapTerrain !== "未标注地形" ? mapTerrain : "") ||
                           (sheet.position
                             ? `坐标 ${sheet.position.x},${sheet.position.y}`
                             : "未定位")}{" "}
@@ -1967,7 +1974,7 @@ function WorldSetupScreen({
           <WorldAttributesStep draft={draft} onChange={onChange} />
         ) : null}
         {step === "map" ? (
-          <WorldMapStep draft={draft} onChange={onChange} />
+          <WorldMapStepEditor draft={draft} onChange={onChange} />
         ) : null}
         <div className="game-world-step-actions">
           <button type="button" className="secondary-btn" onClick={goPrevious}>
@@ -2019,7 +2026,11 @@ function WorldBasicStep({
   );
 }
 
-function WorldMapStep({
+/**
+ * Kept as a source-compatible fallback for older integrations.
+ * The active editor is WorldMapStepEditor.
+ */
+export function LegacyWorldMapStep({
   draft,
   onChange,
 }: {
@@ -2028,6 +2039,7 @@ function WorldMapStep({
 }) {
   const map = draft.worldMap ?? {
     terrainTypes: [],
+    terrainRegions: [],
     cells: {},
   };
   const cells = Object.entries(map.cells)
@@ -2036,7 +2048,11 @@ function WorldMapStep({
   const terrainTypes = Array.from(
     new Set(
       (map.terrainTypes ?? [])
-        .map((terrain) => terrain.trim())
+        .map((terrain) =>
+          typeof (terrain as unknown) === "string"
+            ? String(terrain).trim()
+            : terrain.displayName.trim(),
+        )
         .filter(Boolean),
     ),
   );
@@ -2075,9 +2091,14 @@ function WorldMapStep({
     "#2dd4bf",
   ];
   const clampZoom = (value: number) => Math.min(2.5, Math.max(0.45, value));
-  const updateMap = (nextMap: typeof map) => onChange({ ...draft, worldMap: nextMap });
+  const updateMap = (nextMap: unknown) =>
+    onChange({ ...draft, worldMap: nextMap as GameWorldMap });
   const updateCells = (cellsByKey: Record<string, GameMapCell>) =>
-    updateMap({ terrainTypes: [...terrainTypes], cells: cellsByKey });
+    updateMap({
+      terrainTypes: [...terrainTypes],
+      terrainRegions: [...map.terrainRegions],
+      cells: cellsByKey,
+    });
   const parseProperties = (value: string): Record<string, string> =>
     Object.fromEntries(
       value

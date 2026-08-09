@@ -6,8 +6,8 @@ import {
   agentDirectory,
   agentDisplayName,
   applySheetPatches,
+  mapMovementReference,
   notifySummary,
-  mapDistance,
   plainTextFromModel,
   pushEvent,
   recentEventsText,
@@ -1145,10 +1145,11 @@ export async function advanceOneRound(
         const fromSheet = from ? sheetFor(game, from) : undefined;
         const toSheet = to ? sheetFor(game, to) : undefined;
         if (!from || !to || !fromSheet?.position || !toSheet?.position) return "";
-        return `${from.name} 到 ${to.name} 的地图距离为 ${mapDistance(
+        return `${from.name} 到 ${to.name}：${mapMovementReference(
+          game.worldMap,
           fromSheet.position,
           toSheet.position,
-        )} 格`;
+        )}`;
       })
       .filter(Boolean)
       .join("\n");

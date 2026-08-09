@@ -8,7 +8,14 @@ import type {
   GameSheet,
   GameState,
   JudgeResult,
+  GameWorldMap,
 } from "./types";
+import {
+  effectiveMapProperties,
+  effectivePassableAt,
+  terrainDefinitions,
+  terrainNameAt,
+} from "./map";
 
 function evtId(): string {
   return `evt_${Math.random().toString(36).slice(2, 10)}`;
@@ -178,19 +185,73 @@ export function syncContextFiles(game: GameState): void {
 }
 
 export function worldMapText(game: GameState): string {
-  const cells = Object.values(game.worldMap?.cells ?? {});
-  if (!cells.length) return "（地图暂无已记录区域）";
-  return cells
-    .sort((a, b) => a.y - b.y || a.x - b.x)
-    .map(
-      (cell) =>
-        `[${cell.x},${cell.y}] ${cell.zoneName || "未命名区域"} · 地形：${
-          cell.terrain || "未标注"
-        } · 属性：${Object.entries(cell.properties)
-          .map(([key, value]) => `${key}=${value}`)
-          .join("，") || "无"} · 物件：${cell.objects.join("、") || "无"}`,
-    )
+  const map = game.worldMap;
+  const cells = Object.values(map?.cells ?? {}).sort(
+    (a, b) => a.y - b.y || a.x - b.x,
+  );
+  const terrains = terrainDefinitions(map);
+  const terrainText = terrains.length
+    ? terrains
+        .map(
+          (terrain) =>
+            `${terrain.id}=${terrain.displayName}（${
+              terrain.passable ? "可通行" : "不可通行"
+            }；默认属性：${
+              Object.entries(terrain.defaultProperties)
+                .map(([key, value]) => `${key}=${value}`)
+                .join("，") || "无"
+            }）`,
+        )
+        .join("；")
+    : "无";
+  const regionText = (map?.terrainRegions ?? [])
+    .map((region) => {
+      const terrain = terrains.find((item) => item.id === region.terrainId);
+      const coordinates = region.coordinates?.length
+        ? `坐标 ${region.coordinates
+            .map(([x, y]) => `(${x},${y})`)
+            .join("、")}`
+        : "";
+      const ranges = region.ranges?.length
+        ? `范围 ${region.ranges
+            .map(
+              (range) =>
+                `(${range.x},${range.y}) ${range.width}×${range.height}`,
+            )
+            .join("、")}`
+        : "";
+      return `[地形区 ${region.id}] ${terrain?.displayName ?? region.terrainId} · ${
+        [coordinates, ranges].filter(Boolean).join("；") || "空"
+      }`;
+    })
     .join("\n");
+  const cellText = cells
+    .map((cell) => {
+      const position = { x: cell.x, y: cell.y };
+      const properties = effectiveMapProperties(map, position);
+      const passable = effectivePassableAt(map, position);
+      return `[${cell.x},${cell.y}] ${
+        cell.zoneName || "未命名重点"
+      } · 地形：${terrainNameAt(map, position)} · ${
+        passable === false ? "不可通行" : "可通行"
+      } · 属性：${
+        Object.entries(properties)
+          .map(([key, value]) => `${key}=${value}`)
+          .join("，") || "无"
+      } · 物件：${cell.objects.join("、") || "无"}`;
+    })
+    .join("\n");
+  if (!terrains.length && !regionText && !cellText) {
+    return "（地图暂无已记录区域）";
+  }
+  return [
+    `地形注册表：${terrainText}`,
+    regionText ? `稀疏地形区：\n${regionText}` : "",
+    cellText ? `重点坐标/覆盖：\n${cellText}` : "",
+    "空白背景为未持久化的虚拟区域，不代表已知地点。",
+  ]
+    .filter(Boolean)
+    .join("\n\n");
 }
 
 export function mapDistance(
@@ -199,6 +260,32 @@ export function mapDistance(
 ): number {
   return Math.abs(Math.round(from.x) - Math.round(to.x)) +
     Math.abs(Math.round(from.y) - Math.round(to.y));
+}
+
+export function mapMovementReference(
+  map: GameWorldMap,
+  from: { x: number; y: number },
+  to: { x: number; y: number },
+): string {
+  const fromPassable = effectivePassableAt(map, from);
+  const toPassable = effectivePassableAt(map, to);
+  const movementCosts = [from, to]
+    .map((position) => effectiveMapProperties(map, position).movementCost)
+    .filter((value): value is number => typeof value === "number");
+  const averageCost = movementCosts.length
+    ? `；端点平均地形成本约 ${(
+        movementCosts.reduce((sum, value) => sum + value, 0) /
+        movementCosts.length
+      ).toFixed(2)}`
+    : "";
+  return `距离 ${mapDistance(from, to)} 格；起点（${Math.round(
+    from.x,
+  )},${Math.round(from.y)}）${terrainNameAt(map, from)}${
+    fromPassable === false ? "·不可通行" : ""
+  }；终点（${Math.round(to.x)},${Math.round(to.y)}）${terrainNameAt(
+    map,
+    to,
+  )}${toPassable === false ? "·不可通行" : ""}${averageCost}`;
 }
 
 export function readableContextFiles(

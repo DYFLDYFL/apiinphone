@@ -22,16 +22,54 @@ export interface GameMapPosition {
   y: number;
 }
 
+export type GameMapPropertyValue = string | number | boolean;
+
+/** Stable terrain registry entry. The id is kept when displayName changes. */
+export interface GameTerrainType {
+  id: string;
+  displayName: string;
+  color: string;
+  passable: boolean;
+  defaultProperties: Record<string, GameMapPropertyValue>;
+}
+
+export interface GameTerrainRange {
+  /** Inclusive top-left coordinate of the rectangle. */
+  x: number;
+  y: number;
+  /** Number of map coordinates covered by the rectangle. */
+  width: number;
+  height: number;
+}
+
+/** A sparse terrain layer: either explicit coordinates, compact ranges, or both. */
+export interface GameTerrainRegion {
+  id: string;
+  terrainId: string;
+  coordinates?: Array<[number, number]>;
+  ranges?: GameTerrainRange[];
+}
+
 export interface GameMapCell extends GameMapPosition {
   zoneName?: string;
+  /** Stable terrain registry id for a point-specific override. */
+  terrainId?: string;
+  /** Legacy display-name field; normalized into terrainId when a game is loaded. */
   terrain?: string;
-  properties: Record<string, string | number | boolean>;
+  properties: Record<string, GameMapPropertyValue>;
   objects: string[];
   passable?: boolean;
 }
 
 export interface GameWorldMap {
-  terrainTypes: string[];
+  /**
+   * Terrain registry. Older saved data may still contain display-name strings;
+   * the game store normalizes those entries into GameTerrainType objects.
+   */
+  terrainTypes: GameTerrainType[];
+  terrainRegions: GameTerrainRegion[];
+  /** Optional id -> terrainTypes index for fast lookup; safe to rebuild. */
+  terrainIndex?: Record<string, number>;
   cells: Record<string, GameMapCell>;
 }
 

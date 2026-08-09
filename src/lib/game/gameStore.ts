@@ -21,6 +21,7 @@ import {
   inferAttributeDefinitions,
 } from "./templates";
 import { normalizePipeline } from "./pipeline";
+import { normalizeWorldMap } from "./map";
 
 function sanitizeStoryText(text: string): string {
   return text
@@ -208,6 +209,8 @@ function normalizeGame(game: GameState): GameState {
     !game.worldMap.cells
   ) {
     game.worldMap = defaultWorldMapForGenre(game.worldview);
+  } else {
+    game.worldMap = normalizeWorldMap(game.worldMap);
   }
   if (!game.worldClock) {
     const dateTime = normalizeGameDateTime(undefined);

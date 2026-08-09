@@ -19,9 +19,12 @@ import type {
   GameState,
   GameWeekday,
   GameMapCell,
+  GameTerrainRegion,
+  GameTerrainType,
   GameWorldMap,
 } from "./types";
 import { defaultPipeline, normalizePipeline } from "./pipeline";
+import { normalizeWorldMap } from "./map";
 
 function id(prefix: string): string {
   return `${prefix}_${Math.random().toString(36).slice(2, 10)}`;
@@ -443,73 +446,189 @@ export function mapCellKey(x: number, y: number): string {
 
 export function createWorldMap(
   cells: Array<GameMapCell> = [],
-  terrainTypes: string[] = [],
+  terrainTypes: Array<GameTerrainType | string> = [],
+  terrainRegions: GameTerrainRegion[] = [],
 ): GameWorldMap {
-  const inferredTerrainTypes = Array.from(
-    new Set(cells.map((cell) => cell.terrain?.trim()).filter(Boolean)),
-  ) as string[];
+  return normalizeWorldMap({
+    terrainTypes,
+    terrainRegions,
+    cells,
+  });
+}
+
+function terrain(
+  id: string,
+  displayName: string,
+  color: string,
+  passable = true,
+  defaultProperties: Record<string, string | number | boolean> = {},
+): GameTerrainType {
+  return { id, displayName, color, passable, defaultProperties };
+}
+
+function region(
+  id: string,
+  terrainId: string,
+  ranges: Array<{ x: number; y: number; width: number; height: number }>,
+  coordinates: Array<[number, number]> = [],
+): GameTerrainRegion {
   return {
-    terrainTypes: terrainTypes.length ? [...terrainTypes] : inferredTerrainTypes,
-    cells: Object.fromEntries(
-      cells.map((cell) => [
-        mapCellKey(cell.x, cell.y),
-        {
-          ...cell,
-          x: Math.round(cell.x),
-          y: Math.round(cell.y),
-          properties: { ...cell.properties },
-          objects: [...cell.objects],
-        },
-      ]),
-    ),
+    id,
+    terrainId,
+    ...(ranges.length ? { ranges } : {}),
+    ...(coordinates.length ? { coordinates } : {}),
   };
 }
+
+const ANCIENT_TERRAINS: GameTerrainType[] = [
+  terrain("town", "城镇", "#c08457", true, { movementCost: 1 }),
+  terrain("road", "道路", "#facc15", true, { movementCost: 0.75 }),
+  terrain("street", "街巷", "#fb923c", true, { movementCost: 0.9 }),
+  terrain("riverbank", "河岸", "#38bdf8", true, { movementCost: 1.2 }),
+  terrain("farmland", "农田", "#a3e635", true, { movementCost: 1.4 }),
+  terrain("forest", "林地", "#22c55e", true, { movementCost: 1.8 }),
+  terrain("water", "水域", "#0ea5e9", false, { movementCost: 4 }),
+  terrain("wilderness", "荒地", "#94a3b8", true, { movementCost: 1.6 }),
+];
+
+const MODERN_TERRAINS: GameTerrainType[] = [
+  terrain("downtown", "城市道路", "#facc15", true, { movementCost: 0.8 }),
+  terrain("old-street", "街巷", "#fb923c", true, { movementCost: 1 }),
+  terrain("waterfront", "滨水", "#38bdf8", true, { movementCost: 1.2 }),
+  terrain("industrial", "工业用地", "#a78bfa", true, { movementCost: 1.3 }),
+  terrain("public", "公共设施", "#4ade80", true, { movementCost: 1 }),
+  terrain("park", "公园", "#22c55e", true, { movementCost: 1.5 }),
+  terrain("river", "河道", "#0ea5e9", false, { movementCost: 4 }),
+  terrain("outskirts", "城市外围", "#94a3b8", true, { movementCost: 1.6 }),
+];
+
+const APOCALYPSE_TERRAINS: GameTerrainType[] = [
+  terrain("settlement", "废墟聚落", "#f97316", true, { movementCost: 1 }),
+  terrain("highway", "旧公路", "#facc15", true, { movementCost: 0.8 }),
+  terrain("wetland", "湿地", "#14b8a6", true, { movementCost: 2.2 }),
+  terrain("danger", "危险区", "#ef4444", false, { movementCost: 3 }),
+  terrain("farmland", "农场遗址", "#a3e635", true, { movementCost: 1.7 }),
+  terrain("ruins", "荒废城区", "#a78bfa", true, { movementCost: 1.5 }),
+  terrain("wasteland", "荒地", "#94a3b8", true, { movementCost: 2 }),
+  terrain("water", "水源", "#0ea5e9", false, { movementCost: 4 }),
+];
+
+const SCI_FI_TERRAINS: GameTerrainType[] = [
+  terrain("habitat", "舱室", "#38bdf8", true, { movementCost: 1 }),
+  terrain("maintenance", "维护区", "#f97316", true, { movementCost: 1.2 }),
+  terrain("engine", "机房", "#ef4444", false, { movementCost: 2.5 }),
+  terrain("corridor", "交通环廊", "#facc15", true, { movementCost: 0.7 }),
+  terrain("vacuum", "真空区", "#64748b", false, { movementCost: 5 }),
+  terrain("dock", "停泊区", "#a78bfa", true, { movementCost: 1.3 }),
+  terrain("colony", "殖民地外环", "#22c55e", true, { movementCost: 1.8 }),
+];
+
+const FANTASY_TERRAINS: GameTerrainType[] = [
+  terrain("city", "城镇", "#c08457", true, { movementCost: 1 }),
+  terrain("forest", "森林", "#22c55e", true, { movementCost: 1.8 }),
+  terrain("road", "道路", "#facc15", true, { movementCost: 0.75 }),
+  terrain("mountain", "山地", "#78716c", false, { movementCost: 3 }),
+  terrain("water", "水域", "#0ea5e9", false, { movementCost: 4 }),
+  terrain("farmland", "农野", "#a3e635", true, { movementCost: 1.4 }),
+  terrain("wilderness", "荒野", "#94a3b8", true, { movementCost: 1.8 }),
+];
 
 export function defaultWorldMapForGenre(genre: string): GameWorldMap {
   if (genre.includes("科幻")) {
     return createWorldMap([
-      { x: 0, y: 0, zoneName: "空间站中枢", terrain: "舱室", properties: {}, objects: ["控制台"] },
-      { x: 1, y: 0, zoneName: "生活区", terrain: "舱室", properties: {}, objects: ["居住舱"] },
-      { x: -1, y: 0, zoneName: "停泊区", terrain: "舱室", properties: {}, objects: ["飞船接口"] },
-      { x: 0, y: 1, zoneName: "维修环廊", terrain: "维护区", properties: {}, objects: ["工具柜"] },
-      { x: 0, y: -1, zoneName: "能源区", terrain: "机房", properties: {}, objects: ["反应堆"] },
-    ], ["舱室", "维护区", "机房", "真空区"]);
+      { x: 0, y: 0, zoneName: "空间站中枢", terrainId: "habitat", properties: {}, objects: ["控制台"] },
+      { x: 3, y: 0, zoneName: "生活区", terrainId: "habitat", properties: {}, objects: ["居住舱"] },
+      { x: -3, y: 0, zoneName: "停泊区", terrainId: "dock", properties: {}, objects: ["飞船接口"] },
+      { x: 0, y: 3, zoneName: "维修环廊", terrainId: "maintenance", properties: {}, objects: ["工具柜"] },
+      { x: 0, y: -3, zoneName: "能源区", terrainId: "engine", properties: {}, objects: ["反应堆"], passable: false },
+      { x: 5, y: 3, zoneName: "外环观测点", terrainId: "corridor", properties: {}, objects: [] },
+    ], SCI_FI_TERRAINS, [
+      region("station", "habitat", [{ x: -5, y: -4, width: 11, height: 9 }]),
+      region("corridor-east", "corridor", [{ x: 5, y: -1, width: 5, height: 2 }]),
+      region("corridor-south", "corridor", [{ x: -1, y: 5, width: 2, height: 5 }]),
+      region("maintenance-ring", "maintenance", [{ x: -8, y: 5, width: 6, height: 4 }]),
+      region("vacuum-north", "vacuum", [{ x: -8, y: -8, width: 20, height: 3 }]),
+      region("vacuum-east", "vacuum", [{ x: 8, y: -5, width: 4, height: 14 }]),
+      region("dock-west", "dock", [{ x: -11, y: -2, width: 4, height: 5 }]),
+    ]);
   }
   if (genre.includes("现代")) {
     return createWorldMap([
-      { x: 0, y: 0, zoneName: "市中心", terrain: "城市道路", properties: {}, objects: ["地铁站", "商场"] },
-      { x: 1, y: 0, zoneName: "旧城区", terrain: "街巷", properties: {}, objects: ["老楼"] },
-      { x: 0, y: 1, zoneName: "江岸", terrain: "滨水", properties: {}, objects: ["步道"] },
-      { x: -1, y: 0, zoneName: "工业区", terrain: "工业用地", properties: {}, objects: ["仓库"] },
-      { x: 0, y: -1, zoneName: "大学城", terrain: "公共设施", properties: {}, objects: ["图书馆"] },
-    ], ["城市道路", "街巷", "滨水", "工业用地", "公共设施"]);
+      { x: 0, y: 0, zoneName: "市中心", terrainId: "downtown", properties: {}, objects: ["地铁站", "商场"] },
+      { x: 3, y: 0, zoneName: "旧城区", terrainId: "old-street", properties: {}, objects: ["老楼"] },
+      { x: 0, y: 3, zoneName: "江岸", terrainId: "waterfront", properties: {}, objects: ["步道"] },
+      { x: -3, y: 0, zoneName: "工业区", terrainId: "industrial", properties: {}, objects: ["仓库"] },
+      { x: 0, y: -3, zoneName: "大学城", terrainId: "public", properties: {}, objects: ["图书馆"] },
+      { x: 6, y: 4, zoneName: "公交终点", terrainId: "waterfront", properties: {}, objects: [] },
+    ], MODERN_TERRAINS, [
+      region("city-grid", "downtown", [{ x: -5, y: -5, width: 11, height: 11 }]),
+      region("east-avenue", "downtown", [{ x: 5, y: -1, width: 8, height: 2 }]),
+      region("south-avenue", "downtown", [{ x: -1, y: 5, width: 2, height: 7 }]),
+      region("old-town", "old-street", [{ x: 2, y: -4, width: 5, height: 4 }]),
+      region("riverfront", "waterfront", [{ x: 5, y: 3, width: 7, height: 3 }]),
+      region("river", "river", [{ x: 12, y: -6, width: 3, height: 16 }]),
+      region("industrial-west", "industrial", [{ x: -10, y: -3, width: 5, height: 8 }]),
+      region("parks-north", "park", [{ x: -8, y: -10, width: 6, height: 4 }]),
+      region("outskirts", "outskirts", [{ x: -14, y: -12, width: 29, height: 25 }]),
+    ]);
   }
   if (genre.includes("末日")) {
     return createWorldMap([
-      { x: 0, y: 0, zoneName: "聚落", terrain: "废墟", properties: {}, objects: ["净水器"] },
-      { x: 1, y: 0, zoneName: "旧公路", terrain: "荒地", properties: {}, objects: ["废弃车辆"] },
-      { x: 0, y: 1, zoneName: "水源地", terrain: "湿地", properties: {}, objects: ["蓄水池"] },
-      { x: -1, y: 0, zoneName: "感染区", terrain: "危险区", properties: {}, objects: ["警示牌"] },
-      { x: 0, y: -1, zoneName: "农场遗址", terrain: "荒地", properties: {}, objects: ["破旧温室"] },
-    ], ["废墟", "荒地", "湿地", "危险区"]);
+      { x: 0, y: 0, zoneName: "聚落", terrainId: "settlement", properties: {}, objects: ["净水器"] },
+      { x: 3, y: 0, zoneName: "旧公路", terrainId: "highway", properties: {}, objects: ["废弃车辆"] },
+      { x: 0, y: 3, zoneName: "水源地", terrainId: "wetland", properties: {}, objects: ["蓄水池"] },
+      { x: -3, y: 0, zoneName: "感染区", terrainId: "danger", properties: {}, objects: ["警示牌"], passable: false },
+      { x: 0, y: -3, zoneName: "农场遗址", terrainId: "farmland", properties: {}, objects: ["破旧温室"] },
+      { x: 6, y: -4, zoneName: "瞭望塔", terrainId: "ruins", properties: {}, objects: [] },
+    ], APOCALYPSE_TERRAINS, [
+      region("settlement-zone", "settlement", [{ x: -4, y: -4, width: 9, height: 8 }]),
+      region("old-highway", "highway", [{ x: -12, y: 0, width: 25, height: 2 }]),
+      region("farm-east", "farmland", [{ x: 5, y: 2, width: 7, height: 5 }]),
+      region("wetland-south", "wetland", [{ x: -5, y: 6, width: 9, height: 4 }]),
+      region("danger-west", "danger", [{ x: -11, y: -6, width: 5, height: 7 }]),
+      region("water-north", "water", [{ x: 4, y: -9, width: 6, height: 4 }]),
+      region("ruins-north", "ruins", [{ x: -3, y: -10, width: 6, height: 4 }]),
+      region("wasteland", "wasteland", [{ x: -14, y: -12, width: 29, height: 24 }]),
+    ]);
   }
   if (genre.includes("奇幻")) {
     return createWorldMap([
-      { x: 0, y: 0, zoneName: "王都", terrain: "城镇", properties: {}, objects: ["城门", "集市"] },
-      { x: 1, y: 0, zoneName: "月林", terrain: "森林", properties: {}, objects: ["古树"] },
-      { x: 0, y: 1, zoneName: "边境路", terrain: "道路", properties: {}, objects: ["路碑"] },
-      { x: -1, y: 0, zoneName: "矿谷", terrain: "山地", properties: {}, objects: ["矿井"] },
-      { x: 0, y: -1, zoneName: "湖畔村", terrain: "水域", properties: {}, objects: ["码头"] },
-    ], ["城镇", "森林", "道路", "山地", "水域"]);
+      { x: 0, y: 0, zoneName: "王都", terrainId: "city", properties: {}, objects: ["城门", "集市"] },
+      { x: 4, y: 0, zoneName: "月林", terrainId: "forest", properties: {}, objects: ["古树"] },
+      { x: 0, y: 4, zoneName: "边境路", terrainId: "road", properties: {}, objects: ["路碑"] },
+      { x: -4, y: 0, zoneName: "矿谷", terrainId: "mountain", properties: {}, objects: ["矿井"], passable: false },
+      { x: 0, y: -4, zoneName: "湖畔村", terrainId: "water", properties: {}, objects: ["码头"] },
+      { x: 7, y: 5, zoneName: "旧石桥", terrainId: "road", properties: {}, objects: [] },
+    ], FANTASY_TERRAINS, [
+      region("capital", "city", [{ x: -4, y: -4, width: 9, height: 9 }]),
+      region("north-road", "road", [{ x: -1, y: -12, width: 2, height: 10 }]),
+      region("south-road", "road", [{ x: -1, y: 4, width: 2, height: 10 }]),
+      region("east-road", "road", [{ x: 4, y: -1, width: 10, height: 2 }]),
+      region("moon-forest", "forest", [{ x: 7, y: -8, width: 7, height: 7 }]),
+      region("mountain-west", "mountain", [{ x: -13, y: -6, width: 6, height: 12 }]),
+      region("lake-north", "water", [{ x: -5, y: -12, width: 7, height: 4 }]),
+      region("farmland-south", "farmland", [{ x: 5, y: 5, width: 8, height: 5 }]),
+      region("wilderness", "wilderness", [{ x: -16, y: -14, width: 31, height: 29 }]),
+    ]);
   }
   return createWorldMap([
-    { x: 0, y: 0, zoneName: "青石镇广场", terrain: "城镇", properties: {}, objects: ["告示牌"] },
-    { x: 1, y: 0, zoneName: "药房街", terrain: "街巷", properties: {}, objects: ["药房"] },
-    { x: -1, y: 0, zoneName: "铁匠街", terrain: "街巷", properties: {}, objects: ["铁匠铺"] },
-    { x: 0, y: 1, zoneName: "东门外", terrain: "道路", properties: {}, objects: ["城门"] },
-    { x: 0, y: -1, zoneName: "杂货街", terrain: "街巷", properties: {}, objects: ["杂货铺"] },
-    { x: 1, y: 1, zoneName: "河堤", terrain: "河岸", properties: {}, objects: ["渡口"] },
-  ], ["城镇", "街巷", "道路", "河岸", "荒地"]);
+    { x: 0, y: 0, zoneName: "青石镇广场", terrainId: "town", properties: {}, objects: ["告示牌"] },
+    { x: 3, y: 0, zoneName: "药房街", terrainId: "street", properties: {}, objects: ["药房"] },
+    { x: -3, y: 0, zoneName: "铁匠街", terrainId: "street", properties: {}, objects: ["铁匠铺"] },
+    { x: 0, y: 3, zoneName: "东门外", terrainId: "road", properties: {}, objects: ["城门"] },
+    { x: 0, y: -3, zoneName: "杂货街", terrainId: "street", properties: {}, objects: ["杂货铺"] },
+    { x: 5, y: 4, zoneName: "河堤", terrainId: "riverbank", properties: {}, objects: ["渡口"] },
+    { x: -5, y: 4, zoneName: "北郊茶棚", terrainId: "wilderness", properties: {}, objects: [] },
+  ], ANCIENT_TERRAINS, [
+    region("town", "town", [{ x: -4, y: -4, width: 9, height: 9 }]),
+    region("east-road", "road", [{ x: 4, y: -1, width: 11, height: 2 }]),
+    region("south-road", "road", [{ x: -1, y: 4, width: 2, height: 10 }]),
+    region("riverbank-east", "riverbank", [{ x: 5, y: 3, width: 8, height: 3 }]),
+    region("river", "water", [{ x: 13, y: -8, width: 3, height: 25 }]),
+    region("farmland-south", "farmland", [{ x: 3, y: 7, width: 8, height: 5 }]),
+    region("forest-west", "forest", [{ x: -12, y: -7, width: 6, height: 8 }]),
+    region("wilderness", "wilderness", [{ x: -15, y: -12, width: 32, height: 29 }]),
+  ]);
 }
 
 export type AgentInformationPreset =
@@ -1033,7 +1152,9 @@ export function createTemplateGame(
     tpl.attributeDefinitions,
     chars.map((character) => character.attrs),
   );
-  const worldMap = tpl.worldMap ?? defaultWorldMapForGenre("古代悬疑");
+  const worldMap = normalizeWorldMap(
+    tpl.worldMap ?? defaultWorldMapForGenre("古代悬疑"),
+  );
 
   const agentIdMap = new Map<string, string>();
   for (let index = 0; index < chars.length; index += 1) {

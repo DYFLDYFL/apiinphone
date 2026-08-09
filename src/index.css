@@ -2058,6 +2058,43 @@ body {
   stroke-dasharray: 5 5;
 }
 
+.game-map-region-fill {
+  fill-opacity: 0.16;
+  stroke: color-mix(in srgb, var(--text) 24%, transparent);
+  stroke-width: 1;
+  stroke-dasharray: 4 4;
+}
+
+.game-map-region-preview {
+  fill-opacity: 0.28;
+  stroke: var(--accent);
+  stroke-width: 2;
+  stroke-dasharray: 6 4;
+}
+
+.game-map-drawing-toolbar {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-items: end;
+  gap: 9px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--game-surface-soft);
+}
+
+.game-map-drawing-toolbar .game-field {
+  gap: 4px;
+  font-size: 12px;
+}
+
+.game-map-drawing-toolbar p {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+}
+
 .game-map-node {
   cursor: pointer;
   outline: none;
@@ -2358,6 +2395,73 @@ body {
   gap: 7px;
 }
 
+.game-map-terrain-row-rich {
+  grid-template-columns: minmax(120px, 1.2fr) 42px minmax(94px, auto) auto minmax(150px, 1fr) auto;
+  align-items: center;
+}
+
+.game-map-terrain-row-rich code {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.game-map-terrain-row-rich textarea {
+  min-height: 34px;
+  resize: vertical;
+  font-size: 11px;
+}
+
+.game-map-terrain-row-rich input[type="color"],
+.game-map-terrain-add-rich input[type="color"] {
+  width: 42px;
+  min-width: 42px;
+  height: 38px;
+  padding: 3px;
+}
+
+.game-map-region-manager {
+  display: grid;
+  gap: 9px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.game-map-region-list {
+  display: grid;
+  gap: 6px;
+}
+
+.game-map-region-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) minmax(100px, 0.9fr) auto auto;
+  align-items: center;
+  gap: 7px;
+}
+
+.game-map-region-row code {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.game-map-region-row span {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.game-map-terrain-add-rich {
+  display: grid;
+  grid-template-columns: minmax(130px, 1fr) 42px auto minmax(150px, 1fr) auto;
+  align-items: center;
+}
+
 .game-map-terrain-row input {
   min-width: 0;
   min-height: 38px;
@@ -2422,6 +2526,12 @@ body {
   white-space: nowrap;
 }
 
+.game-map-terrain-add.game-map-terrain-add-rich {
+  display: grid;
+  grid-template-columns: minmax(130px, 1fr) 42px auto minmax(150px, 1fr) auto;
+  align-items: center;
+}
+
 .game-map-notice {
   margin: 0;
   padding: 8px 10px;
@@ -2452,6 +2562,29 @@ body {
 
   .game-map-editor-fields {
     grid-template-columns: 1fr;
+  }
+
+  .game-map-drawing-toolbar {
+    grid-template-columns: 1fr;
+  }
+
+  .game-map-drawing-toolbar p {
+    grid-column: auto;
+  }
+
+  .game-map-terrain-row-rich,
+  .game-map-region-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .game-map-terrain-add.game-map-terrain-add-rich {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .game-map-terrain-row-rich code,
+  .game-map-terrain-row-rich textarea,
+  .game-map-region-row select {
+    grid-column: 1 / -1;
   }
 
   .game-map-editor-wide {
