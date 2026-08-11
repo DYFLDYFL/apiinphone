@@ -409,6 +409,99 @@ export function terrainRegionContains(
   );
 }
 
+/** 从矩形范围列表里挖掉一个格子：返回不含 (x,y) 的最多 4 个子矩形。 */
+export function removePointFromRanges(
+  ranges: GameTerrainRange[],
+  x: number,
+  y: number,
+): GameTerrainRange[] {
+  const result: GameTerrainRange[] = [];
+  for (const range of ranges) {
+    const right = range.x + range.width;
+    const bottom = range.y + range.height;
+    const contains =
+      x >= range.x && x < right && y >= range.y && y < bottom;
+    if (!contains) {
+      result.push(range);
+      continue;
+    }
+    if (range.y < y) {
+      result.push({
+        x: range.x,
+        y: range.y,
+        width: range.width,
+        height: y - range.y,
+      });
+    }
+    if (y + 1 < bottom) {
+      result.push({
+        x: range.x,
+        y: y + 1,
+        width: range.width,
+        height: bottom - y - 1,
+      });
+    }
+    if (range.x < x) {
+      result.push({ x: range.x, y, width: x - range.x, height: 1 });
+    }
+    if (x + 1 < right) {
+      result.push({ x: x + 1, y, width: right - x - 1, height: 1 });
+    }
+  }
+  return result.filter((range) => range.width > 0 && range.height > 0);
+}
+
+/** 枚举地形区覆盖的所有格子 key（"x,y" 格式）。 */
+export function cellsCoveredByRegion(
+  region: GameTerrainRegion,
+): Array<[number, number]> {
+  const result: Array<[number, number]> = [];
+  for (const [cx, cy] of region.coordinates ?? []) {
+    result.push([cx, cy]);
+  }
+  for (const range of region.ranges ?? []) {
+    for (let dx = 0; dx < range.width; dx += 1) {
+      for (let dy = 0; dy < range.height; dy += 1) {
+        result.push([range.x + dx, range.y + dy]);
+      }
+    }
+  }
+  return result;
+}
+
+/** 从坐标型区域中移除 (x,y)；移除后若为空则整个区域丢弃。 */
+export function regionWithoutPoint(
+  map: GameWorldMap,
+  region: GameTerrainRegion,
+  x: number,
+  y: number,
+): GameWorldMap {
+  if (region.ranges?.length) {
+    const ranges = removePointFromRanges(region.ranges, x, y);
+    const nextRegion =
+      ranges.length > 0 ? { ...region, ranges } : undefined;
+    return {
+      ...map,
+      terrainRegions: [
+        ...(nextRegion ? [nextRegion] : []),
+        ...map.terrainRegions.filter((item) => item.id !== region.id),
+      ],
+    };
+  }
+  const coordinates = (region.coordinates ?? []).filter(
+    ([cx, cy]) => !(cx === x && cy === y),
+  );
+  const nextRegion =
+    coordinates.length > 0 ? { ...region, coordinates } : undefined;
+  return {
+    ...map,
+    terrainRegions: [
+      ...(nextRegion ? [nextRegion] : []),
+      ...map.terrainRegions.filter((item) => item.id !== region.id),
+    ],
+  };
+}
+
 /** Resolves point overrides first, then the first matching region. */
 export function terrainAt(
   map: GameWorldMap,

@@ -278,6 +278,163 @@ export const CHAR_TEMPLATES: CharTemplateDraft[] = [
   },
 ];
 
+/** 各流派专属人物预设，贴合世界观；无流派时回退到 CHAR_TEMPLATES。 */
+export const CHAR_TEMPLATES_BY_GENRE: Record<string, CharTemplateDraft[]> = {
+  "古代悬疑": CHAR_TEMPLATES,
+  "现代都市": [
+    {
+      name: "韩峥",
+      persona: "临江市刑警队队长，办案果断、行事稳妥。对证据敏感，也会留意口供里的破绽。",
+      attrs: { hp: 12, stamina: 10, strength: 7, agility: 6, insight: 8, charm: 5, reputation: 6, mood: "警觉" },
+      inventory: "警官证、笔录本",
+    },
+    {
+      name: "沈栖",
+      persona: "暗访记者，为追真相不惜涉险。手机里存着不少监控截图与未发布的稿子。",
+      attrs: { hp: 9, stamina: 8, strength: 4, agility: 6, insight: 9, charm: 7, reputation: 5, mood: "专注" },
+      inventory: "录音笔、采访证",
+    },
+    {
+      name: "陈默",
+      persona: "自由黑客，话少手快。能翻数据库、调监控，也会黑进不被允许的系统。",
+      attrs: { hp: 8, stamina: 9, strength: 3, agility: 7, insight: 9, charm: 4, reputation: 3, mood: "冷静" },
+      inventory: "改装笔记本、加密U盘",
+    },
+    {
+      name: "乔安",
+      persona: "市局法医，严谨冷静，见惯了尸体也看透了人心。",
+      attrs: { hp: 10, stamina: 8, strength: 5, agility: 5, insight: 9, charm: 5, reputation: 5, mood: "平静" },
+      inventory: "检验手套、解剖刀",
+    },
+    {
+      name: "大刘",
+      persona: "交通协警，消息灵通，满城跑。爱抽烟，爱搭话，谁都认识。",
+      attrs: { hp: 11, stamina: 10, strength: 6, agility: 6, insight: 6, charm: 8, reputation: 4, mood: "轻松" },
+      inventory: "对讲机、烟盒",
+    },
+    {
+      name: "顾姨",
+      persona: "江边咖啡店老板娘，客人们的心事都爱跟她讲。笑容和气，账本比谁都清楚。",
+      attrs: { hp: 9, stamina: 7, strength: 4, agility: 5, insight: 7, charm: 9, reputation: 5, mood: "温和" },
+      inventory: "咖啡店账本、钥匙串",
+    },
+  ],
+  "末日生存": [
+    {
+      name: "老秦",
+      persona: "聚落拾荒首领，见过太多死人。说话不多，每句话都算数。",
+      attrs: { hp: 13, stamina: 11, strength: 8, agility: 6, insight: 8, mood: "警觉", reputation: 6 },
+      inventory: "撬棍、滤水壶",
+    },
+    {
+      name: "苏医生",
+      persona: "前军队军医，见惯了伤口与别离。手稳，心更稳。",
+      attrs: { hp: 11, stamina: 9, strength: 5, agility: 6, insight: 9, mood: "冷静", reputation: 5 },
+      inventory: "急救包、抗生素",
+    },
+    {
+      name: "阿水",
+      persona: "净水工程师，能修好几乎所有机器。话少，烟不离手，眼睛只盯着管路。",
+      attrs: { hp: 10, stamina: 9, strength: 6, agility: 5, insight: 8, mood: "专注", reputation: 4 },
+      inventory: "工具箱、净水器零件",
+    },
+    {
+      name: "幺妹",
+      persona: "流浪信使，跑得快，胆子大。靠替各聚落传话换口粮。",
+      attrs: { hp: 10, stamina: 12, strength: 5, agility: 9, insight: 7, mood: "机敏", reputation: 4 },
+      inventory: "信袋、短刀",
+    },
+    {
+      name: "豆豆",
+      persona: "聚落里的孩子，躲过了灾变。爱笑也爱哭，知道哪里有废弃物资。",
+      attrs: { hp: 8, stamina: 10, strength: 3, agility: 8, insight: 5, mood: "好奇", reputation: 2 },
+      inventory: "铁皮玩具、半包饼干",
+    },
+    {
+      name: "何叔",
+      persona: "老牧民，守着最后几头牲口。话多，倔，认死理。",
+      attrs: { hp: 12, stamina: 10, strength: 7, agility: 5, insight: 7, mood: "固执", reputation: 4 },
+      inventory: "牧鞭、盐袋",
+    },
+  ],
+  "科幻星际": [
+    {
+      name: "简站长",
+      persona: "星环边境站站长，肩上的责任比氧气都重。冷静、缜密，容不得半点疏漏。",
+      attrs: { hp: 11, stamina: 9, strength: 6, agility: 5, insight: 9, charm: 6, reputation: 7, mood: "沉稳" },
+      inventory: "通讯终端、权限卡",
+    },
+    {
+      name: "黎星",
+      persona: "通讯官，负责与外界保持联系。耳朵灵，谎话听得出来。",
+      attrs: { hp: 9, stamina: 8, strength: 4, agility: 6, insight: 8, charm: 7, reputation: 5, mood: "机敏" },
+      inventory: "耳机、加密密钥",
+    },
+    {
+      name: "老塔",
+      persona: "维修技师，最懂这艘站上的每一根管道。嘴上骂骂咧咧，手上从不含糊。",
+      attrs: { hp: 12, stamina: 11, strength: 8, agility: 6, insight: 7, charm: 4, reputation: 4, mood: "暴躁" },
+      inventory: "扳手、密封胶",
+    },
+    {
+      name: "白鸦",
+      persona: "情报贩子，活跃在边境站的灰色地带。消息是真，价钱也是真。",
+      attrs: { hp: 9, stamina: 8, strength: 4, agility: 8, insight: 8, charm: 8, reputation: 3, mood: "警觉" },
+      inventory: "数据芯片、信号干扰器",
+    },
+    {
+      name: "许航医",
+      persona: "站医，面对失重环境与有限药品，习惯了用最少的资源救最多的命。",
+      attrs: { hp: 10, stamina: 8, strength: 5, agility: 6, insight: 9, charm: 6, reputation: 5, mood: "平静" },
+      inventory: "医疗舱钥匙、镇静剂",
+    },
+    {
+      name: "小叶子",
+      persona: "殖民地实习生，聪明、话痨，什么都想问个明白。",
+      attrs: { hp: 9, stamina: 10, strength: 4, agility: 7, insight: 7, charm: 7, reputation: 2, mood: "兴奋" },
+      inventory: "学习终端、便携水袋",
+    },
+  ],
+  "奇幻冒险": [
+    {
+      name: "希兰",
+      persona: "精灵游侠，箭术精准，寡言。以银月为誓，对背信者毫不留情。",
+      attrs: { hp: 11, stamina: 11, strength: 6, agility: 10, insight: 8, charm: 6, reputation: 5, mood: "沉静" },
+      inventory: "长弓、精灵箭袋",
+    },
+    {
+      name: "梅露",
+      persona: "宫廷术士，天资卓绝但性子跳脱。相信魔法有代价，也相信代价可以讲价。",
+      attrs: { hp: 9, stamina: 8, strength: 4, agility: 6, insight: 10, charm: 8, reputation: 6, mood: "好奇" },
+      inventory: "法杖、咒文书",
+    },
+    {
+      name: "加文",
+      persona: "工匠骑士，一手铸剑一手持盾。重信守诺，把誓言看得比命重。",
+      attrs: { hp: 14, stamina: 12, strength: 9, agility: 5, insight: 6, charm: 5, reputation: 6, mood: "沉稳" },
+      inventory: "骑士剑、护符",
+    },
+    {
+      name: "塔拉",
+      persona: "占卜师，读得到月亮，也读得到人心。说话云里雾里，句句都有讲究。",
+      attrs: { hp: 9, stamina: 8, strength: 4, agility: 6, insight: 10, charm: 8, reputation: 4, mood: "神秘" },
+      inventory: "星图、水晶球",
+    },
+    {
+      name: "沃特",
+      persona: "酒馆老板，消息比酒还多。圆滑、热心，也精于算计。",
+      attrs: { hp: 10, stamina: 8, strength: 5, agility: 5, insight: 7, charm: 9, reputation: 5, mood: "和气" },
+      inventory: "酒馆钥匙、账本",
+    },
+    {
+      name: "莉娜",
+      persona: "见习信使，跑腿也跑命。年纪小，胆子不小，认得王都的每条巷子。",
+      attrs: { hp: 9, stamina: 11, strength: 4, agility: 9, insight: 6, charm: 7, reputation: 3, mood: "活泼" },
+      inventory: "信袋、护身符",
+    },
+  ],
+};
+
 export type GameTemplateDraft = {
   title: string;
   worldview: string;
@@ -285,6 +442,8 @@ export type GameTemplateDraft = {
   initialTime: string;
   initialTimeParts: GameDateTime;
   weekCycleEnabled?: boolean;
+  /** 当前世界预设的流派（用于人物预设选择，如"古代悬疑"/"现代都市"）。 */
+  genre?: string;
   agents: AgentTemplateDraft[];
   characters: CharTemplateDraft[];
   attributeDefinitions?: GameAttributeDefinition[];
@@ -495,6 +654,27 @@ function emptyPoints(
   }));
 }
 
+/**
+ * 生成矩形网格空点：x/y 从 -range 到 range、按 step 间隔的规则行列，
+ * 并排除已占用的格子（重点或已有空点）。
+ */
+function gridEmptyPoints(
+  range: number,
+  step: number,
+  terrainId: string,
+  occupied: Array<[number, number]> = [],
+): GameMapCell[] {
+  const occupiedKeys = new Set(occupied.map(([x, y]) => `${x},${y}`));
+  const coordinates: Array<[number, number]> = [];
+  for (let x = -range; x <= range; x += step) {
+    for (let y = -range; y <= range; y += step) {
+      if (occupiedKeys.has(`${x},${y}`)) continue;
+      coordinates.push([x, y]);
+    }
+  }
+  return emptyPoints(coordinates, terrainId);
+}
+
 const ANCIENT_TERRAINS: GameTerrainType[] = [
   terrain("town", "城镇", "#c08457", true, { movementCost: 1 }),
   terrain("road", "道路", "#facc15", true, { movementCost: 0.75 }),
@@ -550,31 +730,23 @@ const FANTASY_TERRAINS: GameTerrainType[] = [
 
 export function defaultWorldMapForGenre(genre: string): GameWorldMap {
   if (genre.includes("科幻")) {
+    const occupied: Array<[number, number]> = [
+      [0, 0], [6, 0], [-6, 0], [0, 6], [0, -6], [6, 6],
+    ];
     return createWorldMap([
       { x: 0, y: 0, zoneName: "空间站中枢", terrainId: "habitat", properties: {}, objects: ["控制台"] },
-      { x: 7, y: 0, zoneName: "生活区", terrainId: "habitat", properties: {}, objects: ["居住舱"] },
-      { x: -7, y: 0, zoneName: "停泊区", terrainId: "dock", properties: {}, objects: ["飞船接口"] },
-      { x: 0, y: 7, zoneName: "维修环廊", terrainId: "maintenance", properties: {}, objects: ["工具柜"] },
-      { x: 0, y: -7, zoneName: "能源区", terrainId: "engine", properties: {}, objects: ["反应堆"], passable: false },
-      { x: 10, y: 8, zoneName: "外环观测点", terrainId: "corridor", properties: {}, objects: [] },
-      { x: -10, y: -8, zoneName: "外环货舱", terrainId: "colony", properties: {}, objects: [] },
-      ...emptyPoints(
-        [
-          [3, 0], [5, 0], [-3, 0], [-5, 0],
-          [0, 3], [0, 5], [0, -3], [0, -5],
-          [7, 3], [5, 5], [7, -3], [5, -5],
-          [-7, 3], [-5, 5], [-7, -3], [-5, -5],
-          [10, 4], [9, 6], [-10, 4], [-9, -5],
-          [3, 7], [-3, 7], [3, -7], [-3, -7],
-        ],
-        "corridor",
-      ),
+      { x: 6, y: 0, zoneName: "生活区", terrainId: "habitat", properties: {}, objects: ["居住舱"] },
+      { x: -6, y: 0, zoneName: "停泊区", terrainId: "dock", properties: {}, objects: ["飞船接口"] },
+      { x: 0, y: 6, zoneName: "维修环廊", terrainId: "maintenance", properties: {}, objects: ["工具柜"] },
+      { x: 0, y: -6, zoneName: "能源区", terrainId: "engine", properties: {}, objects: ["反应堆"], passable: false },
+      { x: 6, y: 6, zoneName: "外环观测点", terrainId: "corridor", properties: {}, objects: [] },
+      ...gridEmptyPoints(9, 3, "corridor", occupied),
     ], SCI_FI_TERRAINS, [
       region("station", "habitat", [{ x: -6, y: -6, width: 13, height: 13 }]),
-      region("corridor-east", "corridor", [{ x: 7, y: -1, width: 8, height: 2 }]),
-      region("corridor-west", "corridor", [{ x: -11, y: -1, width: 4, height: 2 }]),
-      region("corridor-south", "corridor", [{ x: -1, y: 7, width: 2, height: 8 }]),
-      region("corridor-north", "corridor", [{ x: -1, y: -11, width: 2, height: 4 }]),
+      region("corridor-east", "corridor", [{ x: 6, y: -1, width: 8, height: 2 }]),
+      region("corridor-west", "corridor", [{ x: -12, y: -1, width: 4, height: 2 }]),
+      region("corridor-south", "corridor", [{ x: -1, y: 6, width: 2, height: 8 }]),
+      region("corridor-north", "corridor", [{ x: -1, y: -12, width: 2, height: 4 }]),
       region("maintenance-ring", "maintenance", [{ x: -4, y: 8, width: 8, height: 3 }]),
       region("vacuum-north", "vacuum", [{ x: -12, y: -12, width: 26, height: 3 }]),
       region("vacuum-east", "vacuum", [{ x: 12, y: -8, width: 5, height: 19 }]),
@@ -583,32 +755,24 @@ export function defaultWorldMapForGenre(genre: string): GameWorldMap {
     ]);
   }
   if (genre.includes("现代")) {
+    const occupied: Array<[number, number]> = [
+      [0, 0], [6, 0], [-6, 0], [0, 6], [0, -6], [6, 6],
+    ];
     return createWorldMap([
       { x: 0, y: 0, zoneName: "市中心", terrainId: "downtown", properties: {}, objects: ["地铁站", "商场"] },
-      { x: 7, y: 0, zoneName: "旧城区", terrainId: "old-street", properties: {}, objects: ["老楼"] },
-      { x: -7, y: 0, zoneName: "工业区", terrainId: "industrial", properties: {}, objects: ["仓库"] },
-      { x: 0, y: 7, zoneName: "江岸", terrainId: "waterfront", properties: {}, objects: ["步道"] },
-      { x: 0, y: -7, zoneName: "大学城", terrainId: "public", properties: {}, objects: ["图书馆"] },
-      { x: 10, y: -8, zoneName: "公交终点", terrainId: "downtown", properties: {}, objects: [] },
-      ...emptyPoints(
-        [
-          [3, 0], [5, 0], [-3, 0], [-5, 0],
-          [0, 3], [0, 5], [0, -3], [0, -5],
-          [3, 3], [5, 5], [-3, 3], [-5, 5],
-          [3, -3], [5, -5], [-3, -3], [-5, -5],
-          [7, 3], [7, -3], [-7, 3], [-7, -3],
-          [3, 7], [-3, 7], [10, 4], [-10, 4],
-        ],
-        "old-street",
-      ),
-      ...emptyPoints([[6, 6], [8, 7]], "waterfront"),
+      { x: 6, y: 0, zoneName: "旧城区", terrainId: "old-street", properties: {}, objects: ["老楼"] },
+      { x: -6, y: 0, zoneName: "工业区", terrainId: "industrial", properties: {}, objects: ["仓库"] },
+      { x: 0, y: 6, zoneName: "江岸", terrainId: "waterfront", properties: {}, objects: ["步道"] },
+      { x: 0, y: -6, zoneName: "大学城", terrainId: "public", properties: {}, objects: ["图书馆"] },
+      { x: 6, y: 6, zoneName: "公交终点", terrainId: "downtown", properties: {}, objects: [] },
+      ...gridEmptyPoints(9, 3, "old-street", occupied),
     ], MODERN_TERRAINS, [
       region("city-grid", "downtown", [{ x: -6, y: -6, width: 13, height: 13 }]),
-      region("east-avenue", "downtown", [{ x: 7, y: -1, width: 8, height: 2 }]),
+      region("east-avenue", "downtown", [{ x: 6, y: -1, width: 8, height: 2 }]),
       region("west-avenue", "downtown", [{ x: -12, y: -1, width: 5, height: 2 }]),
-      region("south-avenue", "downtown", [{ x: -1, y: 7, width: 2, height: 8 }]),
+      region("south-avenue", "downtown", [{ x: -1, y: 6, width: 2, height: 8 }]),
       region("north-avenue", "downtown", [{ x: -1, y: -12, width: 2, height: 5 }]),
-      region("old-town", "old-street", [{ x: 5, y: -4, width: 7, height: 6 }]),
+      region("old-town", "old-street", [{ x: 4, y: -4, width: 7, height: 6 }]),
       region("riverfront", "waterfront", [{ x: 4, y: 7, width: 8, height: 3 }]),
       region("river", "river", [{ x: 14, y: -8, width: 3, height: 19 }]),
       region("industrial-west", "industrial", [{ x: -12, y: -4, width: 5, height: 8 }]),
@@ -617,30 +781,22 @@ export function defaultWorldMapForGenre(genre: string): GameWorldMap {
     ]);
   }
   if (genre.includes("末日")) {
+    const occupied: Array<[number, number]> = [
+      [0, 0], [6, 0], [-6, 0], [0, 6], [0, -6], [6, -6],
+    ];
     return createWorldMap([
       { x: 0, y: 0, zoneName: "聚落", terrainId: "settlement", properties: {}, objects: ["净水器"] },
-      { x: 7, y: 0, zoneName: "旧公路", terrainId: "highway", properties: {}, objects: ["废弃车辆"] },
-      { x: -7, y: 0, zoneName: "感染区", terrainId: "danger", properties: {}, objects: ["警示牌"], passable: false },
-      { x: 0, y: 7, zoneName: "水源地", terrainId: "wetland", properties: {}, objects: ["蓄水池"] },
-      { x: 0, y: -7, zoneName: "农场遗址", terrainId: "farmland", properties: {}, objects: ["破旧温室"] },
-      { x: 11, y: -8, zoneName: "瞭望塔", terrainId: "ruins", properties: {}, objects: [] },
-      ...emptyPoints(
-        [
-          [3, 0], [5, 0], [-3, 0], [-5, 0],
-          [0, 3], [0, 5], [0, -3], [0, -5],
-          [3, 3], [5, 5], [-3, 3], [-5, 5],
-          [3, -3], [5, -5], [-3, -3], [-5, -5],
-          [7, 3], [7, -3], [-7, 3], [-7, -3],
-          [8, 5], [9, 6], [10, -5], [8, -6],
-        ],
-        "wasteland",
-      ),
-      ...emptyPoints([[6, 6], [4, 8], [5, 7]], "wetland"),
+      { x: 6, y: 0, zoneName: "旧公路", terrainId: "highway", properties: {}, objects: ["废弃车辆"] },
+      { x: -6, y: 0, zoneName: "感染区", terrainId: "danger", properties: {}, objects: ["警示牌"], passable: false },
+      { x: 0, y: 6, zoneName: "水源地", terrainId: "wetland", properties: {}, objects: ["蓄水池"] },
+      { x: 0, y: -6, zoneName: "农场遗址", terrainId: "farmland", properties: {}, objects: ["破旧温室"] },
+      { x: 6, y: -6, zoneName: "瞭望塔", terrainId: "ruins", properties: {}, objects: [] },
+      ...gridEmptyPoints(9, 3, "wasteland", occupied),
     ], APOCALYPSE_TERRAINS, [
       region("settlement-zone", "settlement", [{ x: -5, y: -5, width: 11, height: 11 }]),
-      region("old-highway", "highway", [{ x: 7, y: -1, width: 10, height: 2 }]),
+      region("old-highway", "highway", [{ x: 6, y: -1, width: 10, height: 2 }]),
       region("west-road", "highway", [{ x: -12, y: -1, width: 5, height: 2 }]),
-      region("south-road", "highway", [{ x: -1, y: 7, width: 2, height: 7 }]),
+      region("south-road", "highway", [{ x: -1, y: 6, width: 2, height: 7 }]),
       region("farm-east", "farmland", [{ x: 4, y: -6, width: 8, height: 5 }]),
       region("wetland-south", "wetland", [{ x: -5, y: 7, width: 10, height: 5 }]),
       region("danger-west", "danger", [{ x: -12, y: -4, width: 5, height: 8 }]),
@@ -650,66 +806,49 @@ export function defaultWorldMapForGenre(genre: string): GameWorldMap {
     ]);
   }
   if (genre.includes("奇幻")) {
+    const occupied: Array<[number, number]> = [
+      [0, 0], [6, 0], [-6, 0], [0, 6], [0, -6], [6, 6],
+    ];
     return createWorldMap([
       { x: 0, y: 0, zoneName: "王都", terrainId: "city", properties: {}, objects: ["城门", "集市"] },
-      { x: 8, y: 0, zoneName: "月林", terrainId: "forest", properties: {}, objects: ["古树"] },
-      { x: -8, y: 0, zoneName: "矿谷", terrainId: "mountain", properties: {}, objects: ["矿井"], passable: false },
-      { x: 0, y: 8, zoneName: "边境路", terrainId: "road", properties: {}, objects: ["路碑"] },
-      { x: 0, y: -8, zoneName: "湖畔村", terrainId: "water", properties: {}, objects: ["码头"] },
-      { x: 10, y: 7, zoneName: "旧石桥", terrainId: "road", properties: {}, objects: [] },
-      ...emptyPoints(
-        [
-          [3, 0], [6, 0], [-3, 0], [-6, 0],
-          [0, 3], [0, 6], [0, -3], [0, -6],
-          [3, 3], [5, 5], [-3, 3], [-5, 5],
-          [3, -3], [5, -5], [-3, -3], [-5, -5],
-          [8, 3], [8, -3], [-8, 3], [-8, -3],
-          [6, 6], [9, 4], [-6, 6], [-9, 4],
-        ],
-        "wilderness",
-      ),
-      ...emptyPoints([[7, 6], [8, 5]], "road"),
+      { x: 6, y: 0, zoneName: "月林", terrainId: "forest", properties: {}, objects: ["古树"] },
+      { x: -6, y: 0, zoneName: "矿谷", terrainId: "mountain", properties: {}, objects: ["矿井"], passable: false },
+      { x: 0, y: 6, zoneName: "边境路", terrainId: "road", properties: {}, objects: ["路碑"] },
+      { x: 0, y: -6, zoneName: "湖畔村", terrainId: "water", properties: {}, objects: ["码头"] },
+      { x: 6, y: 6, zoneName: "旧石桥", terrainId: "road", properties: {}, objects: [] },
+      ...gridEmptyPoints(9, 3, "wilderness", occupied),
     ], FANTASY_TERRAINS, [
-      region("capital", "city", [{ x: -5, y: -5, width: 11, height: 11 }]),
-      region("east-road", "road", [{ x: 8, y: -1, width: 9, height: 2 }]),
+      region("capital", "city", [{ x: -6, y: -6, width: 13, height: 13 }]),
+      region("east-road", "road", [{ x: 6, y: -1, width: 9, height: 2 }]),
       region("west-road", "road", [{ x: -13, y: -1, width: 5, height: 2 }]),
-      region("south-road", "road", [{ x: -1, y: 8, width: 2, height: 8 }]),
+      region("south-road", "road", [{ x: -1, y: 6, width: 2, height: 8 }]),
       region("north-road", "road", [{ x: -1, y: -13, width: 2, height: 5 }]),
-      region("moon-forest", "forest", [{ x: 8, y: -7, width: 8, height: 8 }]),
+      region("moon-forest", "forest", [{ x: 6, y: -7, width: 8, height: 8 }]),
       region("mountain-west", "mountain", [{ x: -14, y: -5, width: 6, height: 11 }]),
       region("lake-north", "water", [{ x: -5, y: -13, width: 8, height: 5 }]),
       region("farmland-south", "farmland", [{ x: 3, y: 9, width: 9, height: 6 }]),
       region("wilderness", "wilderness", [{ x: -18, y: -15, width: 37, height: 30 }]),
     ]);
   }
+  const occupied: Array<[number, number]> = [
+    [0, 0], [6, 0], [-6, 0], [0, 6], [0, -6], [6, 6], [-6, 6],
+  ];
   return createWorldMap([
     { x: 0, y: 0, zoneName: "青石镇广场", terrainId: "town", properties: {}, objects: ["告示牌"] },
-    { x: 7, y: 0, zoneName: "药房街", terrainId: "street", properties: {}, objects: ["药房"] },
-    { x: -7, y: 0, zoneName: "铁匠街", terrainId: "street", properties: {}, objects: ["铁匠铺"] },
-    { x: 0, y: 7, zoneName: "东门外", terrainId: "road", properties: {}, objects: ["城门"] },
-    { x: 0, y: -7, zoneName: "杂货街", terrainId: "street", properties: {}, objects: ["杂货铺"] },
-    { x: 9, y: 8, zoneName: "河堤", terrainId: "riverbank", properties: {}, objects: ["渡口"] },
-    { x: -9, y: 8, zoneName: "北郊茶棚", terrainId: "wilderness", properties: {}, objects: [] },
-    ...emptyPoints(
-      [
-        [3, 0], [5, 0], [-3, 0], [-5, 0],
-        [0, 3], [0, 5], [0, -3], [0, -5],
-        [3, 3], [5, 5], [-3, 3], [-5, 5],
-        [3, -3], [5, -5], [-3, -3], [-5, -5],
-        [7, 3], [7, -3], [-7, 3], [-7, -3],
-        [3, 7], [-3, 7], [6, 7], [-6, 7],
-        [3, -7], [-3, -7], [6, -7], [-6, -7],
-      ],
-      "street",
-    ),
-    ...emptyPoints([[8, 6], [9, 7], [10, 8], [7, 8], [8, 9]], "riverbank"),
+    { x: 6, y: 0, zoneName: "药房街", terrainId: "street", properties: {}, objects: ["药房"] },
+    { x: -6, y: 0, zoneName: "铁匠街", terrainId: "street", properties: {}, objects: ["铁匠铺"] },
+    { x: 0, y: 6, zoneName: "东门外", terrainId: "road", properties: {}, objects: ["城门"] },
+    { x: 0, y: -6, zoneName: "杂货街", terrainId: "street", properties: {}, objects: ["杂货铺"] },
+    { x: 6, y: 6, zoneName: "河堤", terrainId: "riverbank", properties: {}, objects: ["渡口"] },
+    { x: -6, y: 6, zoneName: "北郊茶棚", terrainId: "wilderness", properties: {}, objects: [] },
+    ...gridEmptyPoints(9, 3, "street", occupied),
   ], ANCIENT_TERRAINS, [
     region("town", "town", [{ x: -6, y: -6, width: 13, height: 13 }]),
-    region("east-road", "road", [{ x: 7, y: -1, width: 9, height: 2 }]),
+    region("east-road", "road", [{ x: 6, y: -1, width: 9, height: 2 }]),
     region("west-road", "road", [{ x: -12, y: -1, width: 5, height: 2 }]),
-    region("south-road", "road", [{ x: -1, y: 7, width: 2, height: 9 }]),
+    region("south-road", "road", [{ x: -1, y: 6, width: 2, height: 9 }]),
     region("north-road", "road", [{ x: -1, y: -12, width: 2, height: 5 }]),
-    region("riverbank-east", "riverbank", [{ x: 9, y: 6, width: 5, height: 4 }]),
+    region("riverbank-east", "riverbank", [{ x: 6, y: 7, width: 5, height: 4 }]),
     region("river", "water", [{ x: 16, y: -10, width: 3, height: 27 }]),
     region("farmland-south", "farmland", [{ x: 3, y: 10, width: 9, height: 5 }]),
     region("forest-west", "forest", [{ x: -15, y: -9, width: 7, height: 9 }]),
@@ -825,6 +964,7 @@ export function defaultTemplateDraft(characterCount = 3): GameTemplateDraft {
   }));
   return {
     title: "青石镇",
+    genre: "古代悬疑",
     worldview: DEFAULT_WORLDVIEW,
     initialTime: formatGameDateTime(DEFAULT_INITIAL_TIME_PARTS),
     initialTimeParts: { ...DEFAULT_INITIAL_TIME_PARTS },
@@ -1057,6 +1197,8 @@ function genrePreset(
   extraAttributes: GameAttributeDefinition[] = [],
 ): GameTemplatePreset {
   const draft = defaultTemplateDraft(3);
+  const genreCharacters =
+    CHAR_TEMPLATES_BY_GENRE[genre] ?? CHAR_TEMPLATES;
   const commonKeys = new Set(
     genre.includes("现代")
       ? ["hp", "stamina", "insight", "charm", "reputation", "mood"]
@@ -1091,14 +1233,14 @@ function genrePreset(
   );
   const moodOptions =
     definitions.find((item) => item.key === "mood")?.textOptions ?? [];
-  const characters = draft.characters.map((character) => ({
+  const characters = genreCharacters.map((character) => ({
     ...character,
     attrs: {
       ...Object.fromEntries(
         Object.entries(character.attrs).filter(([key]) => commonKeys.has(key)),
       ),
       ...(moodOptions.length
-        ? { mood: moodOptions[draft.characters.indexOf(character) % moodOptions.length] }
+        ? { mood: moodOptions[genreCharacters.indexOf(character) % moodOptions.length] }
         : {}),
     },
   }));
@@ -1109,6 +1251,7 @@ function genrePreset(
     description,
     draft: {
       ...draft,
+      genre,
       characters,
       title,
       worldview,

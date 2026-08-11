@@ -34,7 +34,7 @@ import {
 } from "../../lib/game/prompts";
 import {
   AI_RUNTIME_PRESETS,
-  CHAR_TEMPLATES,
+  CHAR_TEMPLATES_BY_GENRE,
   applyAiPreset,
   cloneTemplateDraft,
   DEFAULT_ATTRIBUTE_DEFINITIONS,
@@ -625,6 +625,7 @@ export function GameScreen({
       {
         ...base,
         title: source.title,
+        genre: source.genre,
         worldview: source.worldview,
         initialTime: source.initialTime,
         initialTimeParts: { ...source.initialTimeParts },
@@ -775,6 +776,7 @@ export function GameScreen({
     const next: GameTemplateDraft = {
       ...draft,
       title: world.title,
+      genre: world.genre,
       worldview: world.worldview,
       initialTime: world.initialTime,
       initialTimeParts: { ...world.initialTimeParts },
@@ -3642,19 +3644,21 @@ function CharacterChoiceScreen({
             <span>{draft.characters.length >= 6 ? "最多 6 名" : "点击添加"}</span>
           </div>
           <div className="game-character-presets">
-            {CHAR_TEMPLATES.map((template) => (
-              <button
-                type="button"
-                className="game-character-preset"
-                key={template.name}
-                disabled={draft.characters.length >= 6}
-                onClick={() => onAddPreset(template)}
-              >
-                <strong>{template.name}</strong>
-                <span>{template.persona}</span>
-                <small>＋ 添加</small>
-              </button>
-            ))}
+            {(CHAR_TEMPLATES_BY_GENRE[draft.genre ?? "古代悬疑"] ?? CHAR_TEMPLATES_BY_GENRE["古代悬疑"]).map(
+              (template) => (
+                <button
+                  type="button"
+                  className="game-character-preset"
+                  key={template.name}
+                  disabled={draft.characters.length >= 6}
+                  onClick={() => onAddPreset(template)}
+                >
+                  <strong>{template.name}</strong>
+                  <span>{template.persona}</span>
+                  <small>＋ 添加</small>
+                </button>
+              ),
+            )}
             <button
               type="button"
               className="game-character-preset game-character-preset-blank"
@@ -3805,12 +3809,9 @@ function CharacterEditorScreen({
 }) {
   const character = draft.characters[index] ?? defaultTemplateDraft(2).characters[0];
   const definitions = attributeDefinitionsForDraft(draft);
-  const files = (draft.contextFiles ?? defaultContextFiles(draft.worldview, draft.initialTime))
-    .map(({ id, title }) => ({ id, title }));
   const mapCells = Object.values(draft.worldMap?.cells ?? {}).sort(
     (a, b) => a.y - b.y || a.x - b.x,
   );
-  const characterFeatures: AgentFeatureKey[] = ["propose", "respond"];
   const setAttr = (definition: GameAttributeDefinition, raw: string) => {
     const value =
       definition.valueType === "number" && raw.trim() !== ""
@@ -3822,7 +3823,7 @@ function CharacterEditorScreen({
     <div className="game-screen game-editor-screen">
       <EditorHeader
         title={`角色 ${index + 1}`}
-        subtitle="独立编辑姓名、人设、属性与物品"
+        subtitle="独立编辑姓名、人设、属性、物品与初始位置"
         topActions={topActions}
         onBack={onBack}
       />
@@ -3867,40 +3868,6 @@ function CharacterEditorScreen({
               onChange={(e) => onChange({ ...character, persona: e.target.value })}
             />
           </label>
-          <label className="game-field">
-            System 提示词（空=默认）
-            <textarea
-              rows={4}
-              value={character.systemPrompt ?? ""}
-              onChange={(e) => onChange({ ...character, systemPrompt: e.target.value })}
-            />
-          </label>
-          <AgentConfigEditor
-            model={character.model}
-            onModelChange={(model) => onChange({ ...character, model })}
-            readableFileIds={character.readableFileIds}
-            editableFileIds={character.editableFileIds}
-            onAccessChange={(readableFileIds, editableFileIds) =>
-              onChange({ ...character, readableFileIds, editableFileIds })
-            }
-            disabledFeatures={characterFeatures.filter(
-              (feature) => !(character.capabilities ?? characterFeatures).includes(feature),
-            )}
-            onDisabledFeaturesChange={(disabledFeatures) =>
-              onChange({
-                ...character,
-                capabilities: characterFeatures.filter(
-                  (feature) => !disabledFeatures.includes(feature),
-                ),
-              })
-            }
-            attributeDefinitions={definitions}
-            attributePermissions={character.attributePermissions}
-            onAttributePermissionsChange={(attributePermissions) =>
-              onChange({ ...character, attributePermissions })
-            }
-            files={files}
-          />
         </section>
         <section className="game-editor-section game-card">
           <div className="game-section-title">

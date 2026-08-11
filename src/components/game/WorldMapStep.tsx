@@ -7,14 +7,17 @@ import {
 } from "react";
 import {
   DEFAULT_TERRAIN_COLORS,
+  cellsCoveredByRegion,
   effectiveMapProperties,
   effectivePassableAt,
   normalizeWorldMap,
+  regionWithoutPoint,
   stableTerrainId,
   terrainAt,
   terrainDefinitions,
   terrainNameAt,
   terrainRange,
+  terrainRegionContains,
   worldMapBounds,
 } from "../../lib/game/map";
 import type {
@@ -56,6 +59,9 @@ type MapDrag = PanDrag | RegionDrag;
 const GRID_SIZE = 76;
 const VIEWBOX_WIDTH = 800;
 const VIEWBOX_HEIGHT = 420;
+/** viewBox 横纵比下限/上限（用于限制过扁/过窄的拉伸）。 */
+const MIN_VIEWBOX_RATIO = 1.2;
+const MAX_VIEWBOX_RATIO = 2.6;
 
 function parseProperties(value: string): Record<string, GameMapPropertyValue> {
   return Object.fromEntries(
@@ -165,8 +171,8 @@ export function WorldMapStepEditor({
   const [collapsed, setCollapsed] = useState(false);
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
-  const [newX, setNewX] = useState("0");
-  const [newY, setNewY] = useState("0");
+  const [viewSize, setViewSize] = useState({ width: VIEWBOX_WIDTH, height: VIEWBOX_HEIGHT });
+  const viewportRef = useRef<HTMLDivElement | null>(null);
   const [newTerrain, setNewTerrain] = useState("");
   const [newTerrainColor, setNewTerrainColor] = useState(
     DEFAULT_TERRAIN_COLORS[terrainTypes.length % DEFAULT_TERRAIN_COLORS.length] ??
@@ -195,6 +201,22 @@ export function WorldMapStepEditor({
     }
   }, [activeTerrainId, terrainTypes]);
 
+  useEffect(() => {
+    const node = viewportRef.current;
+    if (!node) return;
+    const updateSize = () => {
+      const width = Math.max(node.clientWidth, 320);
+      const height = Math.max(node.clientHeight, 240);
+      let ratio = width / height;
+      ratio = Math.min(MAX_VIEWBOX_RATIO, Math.max(MIN_VIEWBOX_RATIO, ratio));
+      setViewSize({ width, height: Math.round(width / ratio) });
+    };
+    updateSize();
+    const observer = new ResizeObserver(() => updateSize());
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
+
   const clampZoom = (value: number) => Math.min(2.5, Math.max(0.45, value));
   const updateMap = (nextMap: GameWorldMap) =>
     onChange({ ...draft, worldMap: normalizeWorldMap(nextMap) });
@@ -204,10 +226,39 @@ export function WorldMapStepEditor({
     );
     updateMap(mapWith(map, { cells: compactCells }));
   };
+  /** 清除一批格子的点覆盖地形，使它们继承所在区域的地形。 */
+  const clearCellTerrainOverrides = (coords: Array<[number, number]>) => {
+    const cellsByKey = { ...map.cells };
+    for (const [x, y] of coords) {
+      const key = `${x},${y}`;
+      const cell = cellsByKey[key];
+      if (!cell || !cell.terrainId) continue;
+      const next = copyCell(cell, {
+        terrainId: undefined,
+        terrain: undefined,
+      });
+      if (cellHasContent(next)) cellsByKey[key] = next;
+      else delete cellsByKey[key];
+    }
+    updateCells(cellsByKey);
+  };
   const updateCell = (oldKey: string, patch: Partial<GameMapCell>) => {
     const current = map.cells[oldKey];
     if (!current) return;
-    const cellsByKey = { ...map.cells };
+    let nextMap = map;
+    if ("terrainId" in patch && patch.terrainId) {
+      // 同一格地形唯一：给格子设置点覆盖地形时，从覆盖它的区域中挖掉此格。
+      for (const region of map.terrainRegions) {
+        if (
+          region &&
+          region.terrainId !== patch.terrainId &&
+          terrainRegionContains(region, current)
+        ) {
+          nextMap = regionWithoutPoint(nextMap, region, current.x, current.y);
+        }
+      }
+    }
+    const cellsByKey = { ...nextMap.cells };
     const next = copyCell(current, patch);
     const nextKey = `${next.x},${next.y}`;
     delete cellsByKey[oldKey];
@@ -262,33 +313,6 @@ export function WorldMapStepEditor({
     setSelectedKey(null);
     setEditingKey(null);
     setHoveredKey(null);
-  };
-  const addPoint = () => {
-    const parsedX = Number(newX);
-    const parsedY = Number(newY);
-    if (!Number.isFinite(parsedX) || !Number.isFinite(parsedY)) {
-      setMapNotice("请输入有效的整数坐标。");
-      return;
-    }
-    const x = Math.round(parsedX);
-    const y = Math.round(parsedY);
-    const key = `${x},${y}`;
-    if (map.cells[key]) {
-      editCell(key);
-      setMapNotice(`坐标（${x}, ${y}）已经存在，已选中它。`);
-      return;
-    }
-    const cell: GameMapCell = {
-      x,
-      y,
-      zoneName: "未命名重点",
-      properties: {},
-      objects: [],
-    };
-    updateCells({ ...map.cells, [key]: cell });
-    setSelectedKey(key);
-    setEditingKey(key);
-    setMapNotice("");
   };
   const parseTerrainProperties = (text: string) => parseProperties(text);
   const addTerrainType = () => {
@@ -412,8 +436,8 @@ export function WorldMapStepEditor({
   const mapBounds = worldMapBounds(map);
   const mapCenterX = (mapBounds.minX + mapBounds.maxX) / 2;
   const mapCenterY = (mapBounds.minY + mapBounds.maxY) / 2;
-  const viewTransform = `translate(${VIEWBOX_WIDTH / 2 + pan.x} ${
-    VIEWBOX_HEIGHT / 2 + pan.y
+  const viewTransform = `translate(${viewSize.width / 2 + pan.x} ${
+    viewSize.height / 2 + pan.y
   }) scale(${zoom}) translate(${-mapCenterX * GRID_SIZE} ${
     -mapCenterY * GRID_SIZE
   })`;
@@ -425,15 +449,15 @@ export function WorldMapStepEditor({
     const bounds = event.currentTarget.getBoundingClientRect();
     const screenX =
       ((event.clientX - bounds.left) / Math.max(bounds.width, 1)) *
-      VIEWBOX_WIDTH;
+      viewSize.width;
     const screenY =
       ((event.clientY - bounds.top) / Math.max(bounds.height, 1)) *
-      VIEWBOX_HEIGHT;
+      viewSize.height;
     const worldX =
-      ((screenX - (VIEWBOX_WIDTH / 2 + pan.x)) / zoom + mapCenterX * GRID_SIZE) /
+      ((screenX - (viewSize.width / 2 + pan.x)) / zoom + mapCenterX * GRID_SIZE) /
       GRID_SIZE;
     const worldY =
-      ((screenY - (VIEWBOX_HEIGHT / 2 + pan.y)) / zoom + mapCenterY * GRID_SIZE) /
+      ((screenY - (viewSize.height / 2 + pan.y)) / zoom + mapCenterY * GRID_SIZE) /
       GRID_SIZE;
     return [Math.round(worldX), Math.round(worldY)];
   };
@@ -476,6 +500,8 @@ export function WorldMapStepEditor({
                 ),
             ).flat(),
           };
+    // 同一格地形唯一：区域覆盖的格子清除点覆盖地形，由区域决定。
+    clearCellTerrainOverrides(cellsCoveredByRegion(nextRegion));
     updateMap(
       mapWith(map, {
         // New drawings take precedence over older broad background regions.
@@ -528,8 +554,8 @@ export function WorldMapStepEditor({
       return;
     }
     const bounds = event.currentTarget.getBoundingClientRect();
-    const xScale = VIEWBOX_WIDTH / Math.max(bounds.width, 1);
-    const yScale = VIEWBOX_HEIGHT / Math.max(bounds.height, 1);
+    const xScale = viewSize.width / Math.max(bounds.width, 1);
+    const yScale = viewSize.height / Math.max(bounds.height, 1);
     setPan({
       x: drag.panX + (event.clientX - drag.clientX) * xScale,
       y: drag.panY + (event.clientY - drag.clientY) * yScale,
@@ -610,6 +636,8 @@ export function WorldMapStepEditor({
     const coordinates = region.coordinates ?? [];
     const key = (px: number, py: number) => `${px},${py}`;
     if (coordinates.some(([px, py]) => key(px, py) === key(x, y))) return;
+    // 同一格地形唯一：加入格子的点覆盖地形清除，由区域决定。
+    clearCellTerrainOverrides([[x, y]]);
     updateMap(
       mapWith(map, {
         terrainRegions: map.terrainRegions.map((item) =>
@@ -642,16 +670,17 @@ export function WorldMapStepEditor({
     const key = (px: number, py: number) => `${px},${py}`;
     const existing = map.terrainRegions.find(
       (region) =>
-        region.terrainId === activeTerrainId &&
         (region.coordinates ?? []).some(([px, py]) => key(px, py) === key(x, y)),
     );
     if (existing) {
-      removeRegionCoordinate(
-        existing.id,
-        (existing.coordinates ?? []).findIndex(
-          ([px, py]) => key(px, py) === key(x, y),
-        ),
+      const index = (existing.coordinates ?? []).findIndex(
+        ([px, py]) => key(px, py) === key(x, y),
       );
+      const willBeEmpty = (existing.coordinates ?? []).length <= 1;
+      removeRegionCoordinate(existing.id, index);
+      if (willBeEmpty && selectedRegionId === existing.id) {
+        setSelectedRegionId(null);
+      }
       return;
     }
     const targetId = selectedRegionId;
@@ -791,10 +820,10 @@ export function WorldMapStepEditor({
             </p>
           </div>
 
-          <div className="game-map-viewport">
+          <div className="game-map-viewport" ref={viewportRef}>
             <svg
               className="game-map-svg"
-              viewBox={`0 0 ${VIEWBOX_WIDTH} ${VIEWBOX_HEIGHT}`}
+              viewBox={`0 0 ${viewSize.width} ${viewSize.height}`}
               role="img"
               aria-label="可缩放、可平移并可批量绘制地形区的世界地图"
               onPointerDown={handleMapPointerDown}
@@ -899,33 +928,17 @@ export function WorldMapStepEditor({
                   const isSelected = selectedKey === key;
                   const effectiveTerrain = terrainAt(map, cell);
                   const passable = effectivePassableAt(map, cell);
-                  if (!isNamed) {
-                    return (
-                      <g
-                        key={key}
-                        className="game-map-empty-point"
-                        data-map-node="true"
-                        transform={`translate(${cell.x * GRID_SIZE} ${
-                          cell.y * GRID_SIZE
-                        })`}
-                        pointerEvents="none"
-                      >
-                        <title>
-                          {nodeTitle} · 地形：{" "}
-                          {effectiveTerrain?.displayName || "未设置地形"}
-                        </title>
-                        <circle
-                          r={5}
-                          fill={effectiveTerrain?.color ?? "#94a3b8"}
-                        />
-                      </g>
-                    );
-                  }
                   return (
                     <g
                       key={key}
                       className={
-                        isSelected ? "game-map-node selected" : "game-map-node"
+                        isNamed
+                          ? isSelected
+                            ? "game-map-node selected"
+                            : "game-map-node"
+                          : isSelected
+                            ? "game-map-empty-point selected"
+                            : "game-map-empty-point"
                       }
                       data-map-node="true"
                       role="button"
@@ -940,10 +953,7 @@ export function WorldMapStepEditor({
                       }}
                       onClick={() => {
                         if (drawMode === "region") return;
-                        if (drawMode === "paint") {
-                          paintRegionCell(cell.x, cell.y);
-                          return;
-                        }
+                        if (drawMode === "paint") return;
                         selectCell(key);
                       }}
                       onKeyDown={(event) => {
@@ -965,52 +975,71 @@ export function WorldMapStepEditor({
                         {nodeTitle} · （{cell.x}, {cell.y}） ·{" "}
                         {effectiveTerrain?.displayName || "未设置地形"}
                       </title>
-                      <rect
-                        x={-31}
-                        y={-25}
-                        width={62}
-                        height={50}
-                        rx={14}
-                        className="game-map-node-card"
-                        fill={effectiveTerrain?.color ?? "#94a3b8"}
-                      />
-                      <circle
-                        cx={-20}
-                        cy={-14}
-                        r={4}
-                        className={
-                          passable === false
-                            ? "game-map-node-status blocked"
-                            : "game-map-node-status"
-                        }
-                      />
-                      <text
-                        x={0}
-                        y={1}
-                        textAnchor="middle"
-                        className="game-map-node-label"
-                        pointerEvents="none"
-                      >
-                        {nodeTitle.slice(0, 10)}
-                      </text>
-                      <text
-                        x={0}
-                        y={15}
-                        textAnchor="middle"
-                        className="game-map-node-terrain"
-                        pointerEvents="none"
-                      >
-                        {(effectiveTerrain?.displayName || "未设地形").slice(0, 9)}
-                      </text>
-                      <text
-                        x={0}
-                        y={42}
-                        textAnchor="middle"
-                        className="game-map-node-coordinate"
-                        pointerEvents="none"
-                      >
-                        {cell.x}, {cell.y}
-                      </text>
+                      {isNamed ? (
+                        <>
+                          <rect
+                            x={-31}
+                            y={-25}
+                            width={62}
+                            height={50}
+                            rx={14}
+                            className="game-map-node-card"
+                            fill={effectiveTerrain?.color ?? "#94a3b8"}
+                          />
+                          <circle
+                            cx={-20}
+                            cy={-14}
+                            r={4}
+                            className={
+                              passable === false
+                                ? "game-map-node-status blocked"
+                                : "game-map-node-status"
+                            }
+                          />
+                          <text
+                            x={0}
+                            y={1}
+                            textAnchor="middle"
+                            className="game-map-node-label"
+                            pointerEvents="none"
+                          >
+                            {nodeTitle.slice(0, 10)}
+                          </text>
+                          <text
+                            x={0}
+                            y={15}
+                            textAnchor="middle"
+                            className="game-map-node-terrain"
+                            pointerEvents="none"
+                          >
+                            {(effectiveTerrain?.displayName || "未设地形").slice(
+                              0,
+                              9,
+                            )}
+                          </text>
+                          <text
+                            x={0}
+                            y={42}
+                            textAnchor="middle"
+                            className="game-map-node-coordinate"
+                            pointerEvents="none"
+                          >
+                            {cell.x}, {cell.y}
+                          </text>
+                        </>
+                      ) : (
+                        <>
+                          <circle
+                            r={12}
+                            fill="transparent"
+                            className="game-map-empty-hit"
+                          />
+                          <circle
+                            r={5}
+                            fill={effectiveTerrain?.color ?? "#94a3b8"}
+                          />
+                        </>
+                      )}
                     </g>
                   );
                 })}
@@ -1077,36 +1106,6 @@ export function WorldMapStepEditor({
             拖动空白处平移 · 滚轮或「− / +」缩放 · 点击或触摸重点选中 ·
             选择「拖拽创建地形区」可批量绘制
           </p>
-
-          <form
-            className="game-map-add-coordinate"
-            onSubmit={(event) => {
-              event.preventDefault();
-              addPoint();
-            }}
-          >
-            <label className="game-field">
-              X
-              <input
-                type="number"
-                step={1}
-                value={newX}
-                onChange={(event) => setNewX(event.target.value)}
-              />
-            </label>
-            <label className="game-field">
-              Y
-              <input
-                type="number"
-                step={1}
-                value={newY}
-                onChange={(event) => setNewY(event.target.value)}
-              />
-            </label>
-            <button type="submit" className="secondary-btn">
-              添加重点坐标
-            </button>
-          </form>
 
           {selectedCell && selectedKey ? (
             <div className="game-map-selection-card">

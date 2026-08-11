@@ -2019,8 +2019,10 @@ body {
 
 .game-map-viewport {
   position: relative;
-  min-height: 280px;
-  height: clamp(280px, 48vw, 440px);
+  width: 100%;
+  height: min(62vh, 560px);
+  min-height: 260px;
+  max-height: 560px;
   overflow: hidden;
   border: 1px solid var(--border);
   border-radius: 14px;
@@ -2032,7 +2034,6 @@ body {
   display: block;
   width: 100%;
   height: 100%;
-  min-height: 280px;
   cursor: grab;
   outline: none;
   touch-action: none;
@@ -2073,14 +2074,30 @@ body {
 }
 
 .game-map-empty-point {
-  cursor: default;
-  pointer-events: none;
+  cursor: pointer;
+  outline: none;
 }
 
 .game-map-empty-point circle {
   stroke: color-mix(in srgb, var(--text) 55%, transparent);
   stroke-width: 1.2;
   fill-opacity: 0.9;
+}
+
+.game-map-empty-point .game-map-empty-hit {
+  fill: transparent;
+  stroke: none;
+}
+
+.game-map-empty-point:hover circle:last-child,
+.game-map-empty-point:focus circle:last-child,
+.game-map-empty-point.selected circle:last-child {
+  stroke: var(--accent);
+  stroke-width: 2;
+}
+
+.game-map-empty-point.selected circle:first-of-type {
+  fill: color-mix(in srgb, var(--accent) 12%, transparent);
 }
 
 .game-map-region-preview {
