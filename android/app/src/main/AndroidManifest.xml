@@ -26,13 +26,6 @@
 
         </activity>
 
-        <activity
-            android:name=".ChatGptWebViewActivity"
-            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode|navigation"
-            android:exported="false"
-            android:screenOrientation="unspecified"
-            android:windowSoftInputMode="adjustResize" />
-
         <service
             android:name=".ChatKeepAliveService"
             android:exported="false"

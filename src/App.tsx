@@ -54,7 +54,6 @@ import { InfoPanel } from "./components/InfoPanel";
 import { RenameDialog } from "./components/RenameDialog";
 import { GameScreen } from "./components/game/GameScreen";
 import { ModelSwitcher } from "./components/ModelSwitcher";
-import { openChatGptWebView } from "./lib/chatgptWebView";
 import { SettingsPanel } from "./components/SettingsPanel";
 import type { ExportedFile } from "./lib/documentExport";
 import { deleteExportedFile } from "./lib/documentExport";
@@ -784,18 +783,6 @@ export default function App() {
           </div>
         </div>
         <div className="topbar-actions">
-          <button
-            type="button"
-            className="icon-btn"
-            onClick={() =>
-              void openChatGptWebView().catch((error) =>
-                alert(error instanceof Error ? error.message : String(error)),
-              )
-            }
-            title="ChatGPT 网页"
-          >
-            ◎
-          </button>
           <button
             type="button"
             className="icon-btn"
