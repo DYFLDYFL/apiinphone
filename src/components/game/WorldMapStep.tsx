@@ -9,10 +9,10 @@ import {
   DEFAULT_TERRAIN_COLORS,
   cellsCoveredByRegion,
   effectiveMapProperties,
-  effectivePassableAt,
   normalizeWorldMap,
   regionWithoutPoint,
   stableTerrainId,
+  subtractRegionOverlap,
   terrainAt,
   terrainDefinitions,
   terrainNameAt,
@@ -22,7 +22,6 @@ import {
 } from "../../lib/game/map";
 import type {
   GameMapCell,
-  GameMapPropertyValue,
   GameTerrainRange,
   GameTerrainRegion,
   GameTerrainType,
@@ -59,38 +58,6 @@ type MapDrag = PanDrag | RegionDrag;
 const GRID_SIZE = 76;
 const VIEWBOX_WIDTH = 800;
 const VIEWBOX_HEIGHT = 420;
-/** viewBox 横纵比下限/上限（用于限制过扁/过窄的拉伸）。 */
-const MIN_VIEWBOX_RATIO = 1.2;
-const MAX_VIEWBOX_RATIO = 2.6;
-
-function parseProperties(value: string): Record<string, GameMapPropertyValue> {
-  return Object.fromEntries(
-    value
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter(Boolean)
-      .map((line) => {
-        const index = line.indexOf("=");
-        const key = index < 0 ? line : line.slice(0, index);
-        const raw = index < 0 ? "" : line.slice(index + 1).trim();
-        if (raw === "true") return [key.trim(), true];
-        if (raw === "false") return [key.trim(), false];
-        const number = Number(raw);
-        return [
-          key.trim(),
-          raw !== "" && Number.isFinite(number) ? number : raw,
-        ];
-      }),
-  );
-}
-
-function propertiesText(
-  properties: Record<string, GameMapPropertyValue> | undefined,
-): string {
-  return Object.entries(properties ?? {})
-    .map(([key, value]) => `${key}=${value}`)
-    .join("\n");
-}
 
 function cellHasContent(cell: GameMapCell): boolean {
   return Boolean(
@@ -178,8 +145,7 @@ export function WorldMapStepEditor({
     DEFAULT_TERRAIN_COLORS[terrainTypes.length % DEFAULT_TERRAIN_COLORS.length] ??
       "#4ade80",
   );
-  const [newTerrainPassable, setNewTerrainPassable] = useState(true);
-  const [newTerrainProperties, setNewTerrainProperties] = useState("");
+  const [newTerrainCost, setNewTerrainCost] = useState("1");
   const [activeTerrainId, setActiveTerrainId] = useState(
     terrainTypes[0]?.id ?? "",
   );
@@ -207,9 +173,7 @@ export function WorldMapStepEditor({
     const updateSize = () => {
       const width = Math.max(node.clientWidth, 320);
       const height = Math.max(node.clientHeight, 240);
-      let ratio = width / height;
-      ratio = Math.min(MAX_VIEWBOX_RATIO, Math.max(MIN_VIEWBOX_RATIO, ratio));
-      setViewSize({ width, height: Math.round(width / ratio) });
+      setViewSize({ width, height });
     };
     updateSize();
     const observer = new ResizeObserver(() => updateSize());
@@ -217,7 +181,7 @@ export function WorldMapStepEditor({
     return () => observer.disconnect();
   }, []);
 
-  const clampZoom = (value: number) => Math.min(2.5, Math.max(0.45, value));
+  const clampZoom = (value: number) => Math.min(8, Math.max(0.1, value));
   const updateMap = (nextMap: GameWorldMap) =>
     onChange({ ...draft, worldMap: normalizeWorldMap(nextMap) });
   const updateCells = (cellsByKey: Record<string, GameMapCell>) => {
@@ -314,7 +278,6 @@ export function WorldMapStepEditor({
     setEditingKey(null);
     setHoveredKey(null);
   };
-  const parseTerrainProperties = (text: string) => parseProperties(text);
   const addTerrainType = () => {
     const displayName = newTerrain.trim();
     if (!displayName) {
@@ -332,17 +295,20 @@ export function WorldMapStepEditor({
       id = `${baseId}_${suffix}`;
       suffix += 1;
     }
+    const cost = Number(newTerrainCost);
     const definition: GameTerrainType = {
       id,
       displayName,
       color: newTerrainColor,
-      passable: newTerrainPassable,
-      defaultProperties: parseTerrainProperties(newTerrainProperties),
+      passable: true,
+      defaultProperties: {
+        movementCost: Number.isFinite(cost) && cost >= 0 ? cost : 1,
+      },
     };
     updateMap(mapWith(map, { terrainTypes: [...terrainTypes, definition] }));
     setActiveTerrainId(id);
     setNewTerrain("");
-    setNewTerrainProperties("");
+    setNewTerrainCost("1");
     setMapNotice("");
   };
   const renameTerrain = (terrainId: string) => {
@@ -502,12 +468,8 @@ export function WorldMapStepEditor({
           };
     // 同一格地形唯一：区域覆盖的格子清除点覆盖地形，由区域决定。
     clearCellTerrainOverrides(cellsCoveredByRegion(nextRegion));
-    updateMap(
-      mapWith(map, {
-        // New drawings take precedence over older broad background regions.
-        terrainRegions: [nextRegion, ...map.terrainRegions],
-      }),
-    );
+    // 强制区域互不重叠：新区域从所有旧区域中挖掉重叠格。
+    updateMap(subtractRegionOverlap(map, nextRegion));
     setMapNotice(
       `已创建「${
         terrainTypes.find((item) => item.id === activeTerrainId)?.displayName ??
@@ -638,9 +600,16 @@ export function WorldMapStepEditor({
     if (coordinates.some(([px, py]) => key(px, py) === key(x, y))) return;
     // 同一格地形唯一：加入格子的点覆盖地形清除，由区域决定。
     clearCellTerrainOverrides([[x, y]]);
+    // 强制区域互不重叠：该格若被其他区域覆盖，从那些区域中挖掉此格。
+    let nextMap = map;
+    for (const other of map.terrainRegions) {
+      if (other.id !== regionId && terrainRegionContains(other, { x, y })) {
+        nextMap = regionWithoutPoint(nextMap, other, x, y);
+      }
+    }
     updateMap(
-      mapWith(map, {
-        terrainRegions: map.terrainRegions.map((item) =>
+      mapWith(nextMap, {
+        terrainRegions: nextMap.terrainRegions.map((item) =>
           item.id === regionId
             ? { ...item, coordinates: [...coordinates, [x, y] as [number, number]] }
             : item,
@@ -701,12 +670,6 @@ export function WorldMapStepEditor({
     setMapNotice("已创建点选地形区，可继续点击格子加入或移出。");
   };
 
-  const selectedPassability =
-    selectedCell?.passable === undefined
-      ? "inherit"
-      : selectedCell.passable
-        ? "true"
-        : "false";
   const regionPreviewBounds = regionPreview
     ? regionBounds(regionPreview.start, regionPreview.end)
     : undefined;
@@ -732,37 +695,6 @@ export function WorldMapStepEditor({
       {!collapsed ? (
         <div className="game-map-editor-body">
           <div className="game-map-toolbar">
-            <div className="game-map-zoom-controls" aria-label="地图缩放">
-              <button
-                type="button"
-                className="game-map-control-btn"
-                aria-label="缩小地图"
-                onClick={() => setZoom((current) => clampZoom(current * 0.82))}
-              >
-                −
-              </button>
-              <span className="game-map-zoom-label">
-                {Math.round(zoom * 100)}%
-              </span>
-              <button
-                type="button"
-                className="game-map-control-btn"
-                aria-label="放大地图"
-                onClick={() => setZoom((current) => clampZoom(current * 1.22))}
-              >
-                +
-              </button>
-              <button
-                type="button"
-                className="game-map-reset-btn"
-                onClick={() => {
-                  setZoom(1);
-                  setPan({ x: 0, y: 0 });
-                }}
-              >
-                重置视图
-              </button>
-            </div>
             <span className="game-map-toolbar-meta">
               {cells.length} 个重点 · {map.terrainRegions.length} 个地形区 ·{" "}
               {terrainTypes.length} 种地形
@@ -821,6 +753,37 @@ export function WorldMapStepEditor({
           </div>
 
           <div className="game-map-viewport" ref={viewportRef}>
+            <div className="game-map-zoom-controls" aria-label="地图缩放">
+              <button
+                type="button"
+                className="game-map-control-btn"
+                aria-label="缩小地图"
+                onClick={() => setZoom((current) => clampZoom(current * 0.82))}
+              >
+                −
+              </button>
+              <span className="game-map-zoom-label">
+                {Math.round(zoom * 100)}%
+              </span>
+              <button
+                type="button"
+                className="game-map-control-btn"
+                aria-label="放大地图"
+                onClick={() => setZoom((current) => clampZoom(current * 1.22))}
+              >
+                +
+              </button>
+              <button
+                type="button"
+                className="game-map-reset-btn"
+                onClick={() => {
+                  setZoom(1);
+                  setPan({ x: 0, y: 0 });
+                }}
+              >
+                重置视图
+              </button>
+            </div>
             <svg
               className="game-map-svg"
               viewBox={`0 0 ${viewSize.width} ${viewSize.height}`}
@@ -927,7 +890,6 @@ export function WorldMapStepEditor({
                     cell.zoneName?.trim() || `位置点（${cell.x}, ${cell.y}）`;
                   const isSelected = selectedKey === key;
                   const effectiveTerrain = terrainAt(map, cell);
-                  const passable = effectivePassableAt(map, cell);
                   return (
                     <g
                       key={key}
@@ -986,16 +948,6 @@ export function WorldMapStepEditor({
                             className="game-map-node-card"
                             fill={effectiveTerrain?.color ?? "#94a3b8"}
                           />
-                          <circle
-                            cx={-20}
-                            cy={-14}
-                            r={4}
-                            className={
-                              passable === false
-                                ? "game-map-node-status blocked"
-                                : "game-map-node-status"
-                            }
-                          />
                           <text
                             x={0}
                             y={1}
@@ -1029,13 +981,21 @@ export function WorldMapStepEditor({
                         </>
                       ) : (
                         <>
-                          <circle
-                            r={12}
-                            fill="transparent"
+                          <rect
+                            x={-14}
+                            y={-12}
+                            width={28}
+                            height={24}
+                            rx={7}
                             className="game-map-empty-hit"
                           />
-                          <circle
-                            r={5}
+                          <rect
+                            x={-11}
+                            y={-9}
+                            width={22}
+                            height={18}
+                            rx={5}
+                            className="game-map-empty-box"
                             fill={effectiveTerrain?.color ?? "#94a3b8"}
                           />
                         </>
@@ -1048,7 +1008,7 @@ export function WorldMapStepEditor({
             {!cells.length && !map.terrainRegions.length ? (
               <div className="game-map-empty">
                 <strong>还没有地图重点或地形区</strong>
-                <span>添加重点坐标，或选择地形后拖拽创建区域。</span>
+                <span>选择地形后拖拽创建区域，或从默认网格点开始编辑。</span>
               </div>
             ) : null}
             {popoverCell && popoverKey ? (
@@ -1071,10 +1031,7 @@ export function WorldMapStepEditor({
                   </span>
                 </div>
                 <p>
-                  {terrainNameAt(map, popoverCell)} ·{" "}
-                  {effectivePassableAt(map, popoverCell) === false
-                    ? "不可通行"
-                    : "可通行"}
+                  {terrainNameAt(map, popoverCell)}
                 </p>
                 <p>
                   {popoverCell.objects.length} 个物件 ·{" "}
@@ -1117,17 +1074,6 @@ export function WorldMapStepEditor({
                     {selectedTerrain?.displayName ?? "未标注"}
                   </span>
                 </div>
-                <span
-                  className={
-                    effectivePassableAt(map, selectedCell) === false
-                      ? "game-map-passability blocked"
-                      : "game-map-passability"
-                  }
-                >
-                  {effectivePassableAt(map, selectedCell) === false
-                    ? "不可通行"
-                    : "可通行"}
-                </span>
               </div>
               {editingKey === selectedKey ? (
                 <div className="game-map-selected-editor">
@@ -1160,37 +1106,6 @@ export function WorldMapStepEditor({
                           </option>
                         ))}
                       </select>
-                    </label>
-                    <label className="game-field">
-                      通行性覆盖
-                      <select
-                        value={selectedPassability}
-                        onChange={(event) =>
-                          updateSelectedCell({
-                            passable:
-                              event.target.value === "inherit"
-                                ? undefined
-                                : event.target.value === "true",
-                          })
-                        }
-                      >
-                        <option value="inherit">继承地形默认</option>
-                        <option value="true">强制可通行</option>
-                        <option value="false">强制不可通行</option>
-                      </select>
-                    </label>
-                    <label className="game-field game-map-editor-wide">
-                      点属性（每行一个 key=value）
-                      <textarea
-                        rows={3}
-                        value={propertiesText(selectedCell.properties)}
-                        placeholder={"危险等级=2\n所属势力=北境"}
-                        onChange={(event) =>
-                          updateSelectedCell({
-                            properties: parseProperties(event.target.value),
-                          })
-                        }
-                      />
                     </label>
                     <label className="game-field game-map-editor-wide">
                       存在物件（逗号分隔）
@@ -1435,9 +1350,7 @@ export function WorldMapStepEditor({
             <div className="game-map-subsection-heading">
               <div>
                 <h4>地形注册表</h4>
-                <span>
-                  id 永久稳定；显示名、颜色、通行性和默认属性可独立调整。
-                </span>
+                <span>显示名、颜色和移动成本可独立调整；所有地形均可通行。</span>
               </div>
               <span>{terrainTypes.length} 种</span>
             </div>
@@ -1472,32 +1385,31 @@ export function WorldMapStepEditor({
                         updateTerrain(terrain.id, { color: event.target.value })
                       }
                     />
-                    <select
-                      aria-label={`${terrain.displayName}通行性`}
-                      value={terrain.passable ? "true" : "false"}
-                      onChange={(event) =>
-                        updateTerrain(terrain.id, {
-                          passable: event.target.value === "true",
-                        })
-                      }
-                    >
-                      <option value="true">可通行</option>
-                      <option value="false">不可通行</option>
-                    </select>
-                    <code title="稳定 id">{terrain.id}</code>
-                    <textarea
-                      rows={1}
-                      aria-label={`${terrain.displayName}默认属性`}
-                      value={propertiesText(terrain.defaultProperties)}
-                      placeholder="默认属性 key=value"
-                      onChange={(event) =>
-                        updateTerrain(terrain.id, {
-                          defaultProperties: parseTerrainProperties(
-                            event.target.value,
-                          ),
-                        })
-                      }
-                    />
+                    <label className="game-map-cost-field">
+                      movementCost
+                      <input
+                        type="number"
+                        step="any"
+                        min={0}
+                        aria-label={`${terrain.displayName}移动成本`}
+                        value={
+                          typeof terrain.defaultProperties.movementCost === "number"
+                            ? String(terrain.defaultProperties.movementCost)
+                            : "1"
+                        }
+                        onChange={(event) => {
+                          const raw = event.target.value;
+                          const parsed = Number(raw);
+                          const value =
+                            raw.trim() === "" || !Number.isFinite(parsed)
+                              ? 1
+                              : parsed;
+                          updateTerrain(terrain.id, {
+                            defaultProperties: { movementCost: value },
+                          });
+                        }}
+                      />
+                    </label>
                     <button
                       type="button"
                       className="link-btn game-map-delete-btn"
@@ -1530,20 +1442,17 @@ export function WorldMapStepEditor({
                 aria-label="新增地形颜色"
                 onChange={(event) => setNewTerrainColor(event.target.value)}
               />
-              <label className="checkbox">
+              <label className="game-map-cost-field">
+                movementCost
                 <input
-                  type="checkbox"
-                  checked={newTerrainPassable}
-                  onChange={(event) => setNewTerrainPassable(event.target.checked)}
+                  type="number"
+                  step="any"
+                  min={0}
+                  value={newTerrainCost}
+                  aria-label="新增地形移动成本"
+                  onChange={(event) => setNewTerrainCost(event.target.value)}
                 />
-                可通行
               </label>
-              <input
-                value={newTerrainProperties}
-                placeholder="默认属性 movementCost=1"
-                aria-label="新增地形默认属性"
-                onChange={(event) => setNewTerrainProperties(event.target.value)}
-              />
               <button type="submit" className="secondary-btn">
                 添加地形
               </button>

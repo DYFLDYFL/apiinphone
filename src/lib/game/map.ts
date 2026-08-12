@@ -125,7 +125,7 @@ function normalizeTerrainType(
       typeof raw.color === "string" && raw.color.trim()
         ? raw.color.trim()
         : DEFAULT_TERRAIN_COLORS[index % DEFAULT_TERRAIN_COLORS.length],
-    passable: typeof raw.passable === "boolean" ? raw.passable : true,
+    passable: true,
     defaultProperties: normalizedProperties(
       raw.defaultProperties ?? raw.defaultProps ?? raw.properties,
     ),
@@ -352,12 +352,13 @@ export function normalizeWorldMap(raw: unknown): GameWorldMap {
       ...(terrainId ? { terrainId } : {}),
       properties: normalizedProperties(rawCell.properties),
       objects,
-      ...(typeof rawCell.passable === "boolean"
-        ? { passable: rawCell.passable }
-        : {}),
     };
     if (hasCellContent(cell)) cells[mapCellKey(x, y)] = cell;
   }
+
+  const defaultTerrainId = ensureTerrain(
+    source.defaultTerrainId ?? source.defaultTerrain,
+  );
 
   return {
     terrainTypes: terrains,
@@ -365,6 +366,7 @@ export function normalizeWorldMap(raw: unknown): GameWorldMap {
     terrainIndex: Object.fromEntries(
       terrains.map((terrain, index) => [terrain.id, index]),
     ),
+    ...(defaultTerrainId ? { defaultTerrainId } : {}),
     cells,
   };
 }
@@ -469,7 +471,7 @@ export function cellsCoveredByRegion(
   return result;
 }
 
-/** 从坐标型区域中移除 (x,y)；移除后若为空则整个区域丢弃。 */
+/** 从区域中移除 (x,y)，保持原数组索引位置；移除后若为空则整个区域丢弃。 */
 export function regionWithoutPoint(
   map: GameWorldMap,
   region: GameTerrainRegion,
@@ -482,10 +484,12 @@ export function regionWithoutPoint(
       ranges.length > 0 ? { ...region, ranges } : undefined;
     return {
       ...map,
-      terrainRegions: [
-        ...(nextRegion ? [nextRegion] : []),
-        ...map.terrainRegions.filter((item) => item.id !== region.id),
-      ],
+      terrainRegions: (nextRegion
+        ? map.terrainRegions.map((item) =>
+            item.id === region.id ? nextRegion : item,
+          )
+        : map.terrainRegions.filter((item) => item.id !== region.id)
+      ) as GameTerrainRegion[],
     };
   }
   const coordinates = (region.coordinates ?? []).filter(
@@ -495,14 +499,39 @@ export function regionWithoutPoint(
     coordinates.length > 0 ? { ...region, coordinates } : undefined;
   return {
     ...map,
-    terrainRegions: [
-      ...(nextRegion ? [nextRegion] : []),
-      ...map.terrainRegions.filter((item) => item.id !== region.id),
-    ],
+    terrainRegions: (nextRegion
+      ? map.terrainRegions.map((item) =>
+          item.id === region.id ? nextRegion : item,
+        )
+      : map.terrainRegions.filter((item) => item.id !== region.id)
+    ) as GameTerrainRegion[],
   };
 }
 
-/** Resolves point overrides first, then the first matching region. */
+/**
+ * 从新区域覆盖的所有旧区域中挖掉重叠格，保证区域互不重叠。
+ * 返回含 newRegion 前插的完整地图。
+ */
+export function subtractRegionOverlap(
+  map: GameWorldMap,
+  newRegion: GameTerrainRegion,
+): GameWorldMap {
+  let next = map;
+  for (const oldRegion of map.terrainRegions) {
+    if (oldRegion.id === newRegion.id) continue;
+    for (const [x, y] of cellsCoveredByRegion(newRegion)) {
+      if (terrainRegionContains(oldRegion, { x, y })) {
+        next = regionWithoutPoint(next, oldRegion, x, y);
+      }
+    }
+  }
+  return {
+    ...next,
+    terrainRegions: [newRegion, ...next.terrainRegions],
+  };
+}
+
+/** Resolves point overrides first, then the first matching region, then default terrain. */
 export function terrainAt(
   map: GameWorldMap,
   position: GameMapPosition,
@@ -518,7 +547,7 @@ export function terrainAt(
       if (terrain) return terrain;
     }
   }
-  return undefined;
+  return terrainById(map, map.defaultTerrainId);
 }
 
 export function terrainIdAt(
@@ -545,15 +574,6 @@ export function effectiveMapProperties(
     ...(terrain?.defaultProperties ?? {}),
     ...(cell?.properties ?? {}),
   };
-}
-
-export function effectivePassableAt(
-  map: GameWorldMap,
-  position: GameMapPosition,
-): boolean | undefined {
-  const cell = mapCellAt(map, position);
-  if (typeof cell?.passable === "boolean") return cell.passable;
-  return terrainAt(map, position)?.passable;
 }
 
 export interface GameMapBounds {

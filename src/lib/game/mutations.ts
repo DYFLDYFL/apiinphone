@@ -12,7 +12,6 @@ import type {
 } from "./types";
 import {
   effectiveMapProperties,
-  effectivePassableAt,
   terrainDefinitions,
   terrainNameAt,
 } from "./map";
@@ -194,9 +193,7 @@ export function worldMapText(game: GameState): string {
     ? terrains
         .map(
           (terrain) =>
-            `${terrain.id}=${terrain.displayName}（${
-              terrain.passable ? "可通行" : "不可通行"
-            }；默认属性：${
+            `${terrain.id}=${terrain.displayName}（默认属性：${
               Object.entries(terrain.defaultProperties)
                 .map(([key, value]) => `${key}=${value}`)
                 .join("，") || "无"
@@ -229,12 +226,9 @@ export function worldMapText(game: GameState): string {
     .map((cell) => {
       const position = { x: cell.x, y: cell.y };
       const properties = effectiveMapProperties(map, position);
-      const passable = effectivePassableAt(map, position);
       return `[${cell.x},${cell.y}] ${
         cell.zoneName || "位置点"
-      } · 地形：${terrainNameAt(map, position)} · ${
-        passable === false ? "不可通行" : "可通行"
-      } · 属性：${
+      } · 地形：${terrainNameAt(map, position)} · 属性：${
         Object.entries(properties)
           .map(([key, value]) => `${key}=${value}`)
           .join("，") || "无"
@@ -267,8 +261,6 @@ export function mapMovementReference(
   from: { x: number; y: number },
   to: { x: number; y: number },
 ): string {
-  const fromPassable = effectivePassableAt(map, from);
-  const toPassable = effectivePassableAt(map, to);
   const movementCosts = [from, to]
     .map((position) => effectiveMapProperties(map, position).movementCost)
     .filter((value): value is number => typeof value === "number");
@@ -280,12 +272,9 @@ export function mapMovementReference(
     : "";
   return `距离 ${mapDistance(from, to)} 格；起点（${Math.round(
     from.x,
-  )},${Math.round(from.y)}）${terrainNameAt(map, from)}${
-    fromPassable === false ? "·不可通行" : ""
-  }；终点（${Math.round(to.x)},${Math.round(to.y)}）${terrainNameAt(
-    map,
-    to,
-  )}${toPassable === false ? "·不可通行" : ""}${averageCost}`;
+  )},${Math.round(from.y)}）${terrainNameAt(map, from)}；终点（${Math.round(
+    to.x,
+  )},${Math.round(to.y)}）${terrainNameAt(map, to)}${averageCost}`;
 }
 
 export function readableContextFiles(

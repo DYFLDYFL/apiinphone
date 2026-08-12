@@ -607,10 +607,12 @@ export function createWorldMap(
   cells: Array<GameMapCell> = [],
   terrainTypes: Array<GameTerrainType | string> = [],
   terrainRegions: GameTerrainRegion[] = [],
+  defaultTerrainId = "",
 ): GameWorldMap {
   return normalizeWorldMap({
     terrainTypes,
     terrainRegions,
+    ...(defaultTerrainId ? { defaultTerrainId } : {}),
     cells,
   });
 }
@@ -682,7 +684,7 @@ const ANCIENT_TERRAINS: GameTerrainType[] = [
   terrain("riverbank", "河岸", "#38bdf8", true, { movementCost: 1.2 }),
   terrain("farmland", "农田", "#a3e635", true, { movementCost: 1.4 }),
   terrain("forest", "林地", "#22c55e", true, { movementCost: 1.8 }),
-  terrain("water", "水域", "#0ea5e9", false, { movementCost: 4 }),
+  terrain("water", "水域", "#0ea5e9", true, { movementCost: 4 }),
   terrain("wilderness", "荒地", "#94a3b8", true, { movementCost: 1.6 }),
 ];
 
@@ -693,7 +695,7 @@ const MODERN_TERRAINS: GameTerrainType[] = [
   terrain("industrial", "工业用地", "#a78bfa", true, { movementCost: 1.3 }),
   terrain("public", "公共设施", "#4ade80", true, { movementCost: 1 }),
   terrain("park", "公园", "#22c55e", true, { movementCost: 1.5 }),
-  terrain("river", "河道", "#0ea5e9", false, { movementCost: 4 }),
+  terrain("river", "河道", "#0ea5e9", true, { movementCost: 4 }),
   terrain("outskirts", "城市外围", "#94a3b8", true, { movementCost: 1.6 }),
 ];
 
@@ -701,19 +703,19 @@ const APOCALYPSE_TERRAINS: GameTerrainType[] = [
   terrain("settlement", "废墟聚落", "#f97316", true, { movementCost: 1 }),
   terrain("highway", "旧公路", "#facc15", true, { movementCost: 0.8 }),
   terrain("wetland", "湿地", "#14b8a6", true, { movementCost: 2.2 }),
-  terrain("danger", "危险区", "#ef4444", false, { movementCost: 3 }),
+  terrain("danger", "危险区", "#ef4444", true, { movementCost: 3 }),
   terrain("farmland", "农场遗址", "#a3e635", true, { movementCost: 1.7 }),
   terrain("ruins", "荒废城区", "#a78bfa", true, { movementCost: 1.5 }),
   terrain("wasteland", "荒地", "#94a3b8", true, { movementCost: 2 }),
-  terrain("water", "水源", "#0ea5e9", false, { movementCost: 4 }),
+  terrain("water", "水源", "#0ea5e9", true, { movementCost: 4 }),
 ];
 
 const SCI_FI_TERRAINS: GameTerrainType[] = [
   terrain("habitat", "舱室", "#38bdf8", true, { movementCost: 1 }),
   terrain("maintenance", "维护区", "#f97316", true, { movementCost: 1.2 }),
-  terrain("engine", "机房", "#ef4444", false, { movementCost: 2.5 }),
+  terrain("engine", "机房", "#ef4444", true, { movementCost: 2.5 }),
   terrain("corridor", "交通环廊", "#facc15", true, { movementCost: 0.7 }),
-  terrain("vacuum", "真空区", "#64748b", false, { movementCost: 5 }),
+  terrain("vacuum", "真空区", "#64748b", true, { movementCost: 5 }),
   terrain("dock", "停泊区", "#a78bfa", true, { movementCost: 1.3 }),
   terrain("colony", "殖民地外环", "#22c55e", true, { movementCost: 1.8 }),
 ];
@@ -722,8 +724,8 @@ const FANTASY_TERRAINS: GameTerrainType[] = [
   terrain("city", "城镇", "#c08457", true, { movementCost: 1 }),
   terrain("forest", "森林", "#22c55e", true, { movementCost: 1.8 }),
   terrain("road", "道路", "#facc15", true, { movementCost: 0.75 }),
-  terrain("mountain", "山地", "#78716c", false, { movementCost: 3 }),
-  terrain("water", "水域", "#0ea5e9", false, { movementCost: 4 }),
+  terrain("mountain", "山地", "#78716c", true, { movementCost: 3 }),
+  terrain("water", "水域", "#0ea5e9", true, { movementCost: 4 }),
   terrain("farmland", "农野", "#a3e635", true, { movementCost: 1.4 }),
   terrain("wilderness", "荒野", "#94a3b8", true, { movementCost: 1.8 }),
 ];
@@ -738,21 +740,21 @@ export function defaultWorldMapForGenre(genre: string): GameWorldMap {
       { x: 6, y: 0, zoneName: "生活区", terrainId: "habitat", properties: {}, objects: ["居住舱"] },
       { x: -6, y: 0, zoneName: "停泊区", terrainId: "dock", properties: {}, objects: ["飞船接口"] },
       { x: 0, y: 6, zoneName: "维修环廊", terrainId: "maintenance", properties: {}, objects: ["工具柜"] },
-      { x: 0, y: -6, zoneName: "能源区", terrainId: "engine", properties: {}, objects: ["反应堆"], passable: false },
+      { x: 0, y: -6, zoneName: "能源区", terrainId: "engine", properties: {}, objects: ["反应堆"] },
       { x: 6, y: 6, zoneName: "外环观测点", terrainId: "corridor", properties: {}, objects: [] },
       ...gridEmptyPoints(9, 3, "corridor", occupied),
     ], SCI_FI_TERRAINS, [
       region("station", "habitat", [{ x: -6, y: -6, width: 13, height: 13 }]),
-      region("corridor-east", "corridor", [{ x: 6, y: -1, width: 8, height: 2 }]),
+      region("corridor-east", "corridor", [{ x: 7, y: -1, width: 7, height: 2 }]),
       region("corridor-west", "corridor", [{ x: -12, y: -1, width: 4, height: 2 }]),
-      region("corridor-south", "corridor", [{ x: -1, y: 6, width: 2, height: 8 }]),
-      region("corridor-north", "corridor", [{ x: -1, y: -12, width: 2, height: 4 }]),
-      region("maintenance-ring", "maintenance", [{ x: -4, y: 8, width: 8, height: 3 }]),
-      region("vacuum-north", "vacuum", [{ x: -12, y: -12, width: 26, height: 3 }]),
-      region("vacuum-east", "vacuum", [{ x: 12, y: -8, width: 5, height: 19 }]),
-      region("vacuum-west", "vacuum", [{ x: -16, y: -8, width: 4, height: 19 }]),
-      region("dock-west", "dock", [{ x: -13, y: -3, width: 5, height: 6 }]),
-    ]);
+      region("corridor-south", "corridor", [{ x: -1, y: 7, width: 2, height: 7 }]),
+      region("corridor-north", "corridor", [{ x: -1, y: -12, width: 2, height: 3 }]),
+      region("maintenance-ring", "maintenance", [{ x: 2, y: 8, width: 4, height: 2 }]),
+      region("vacuum-north", "vacuum", [{ x: -12, y: -9, width: 26, height: 2 }]),
+      region("vacuum-east", "vacuum", [{ x: 14, y: -8, width: 3, height: 19 }]),
+      region("vacuum-west", "vacuum", [{ x: -16, y: -8, width: 3, height: 19 }]),
+      region("dock-west", "dock", [{ x: -13, y: -3, width: 5, height: 2 }]),
+    ], "vacuum");
   }
   if (genre.includes("现代")) {
     const occupied: Array<[number, number]> = [
@@ -768,17 +770,16 @@ export function defaultWorldMapForGenre(genre: string): GameWorldMap {
       ...gridEmptyPoints(9, 3, "old-street", occupied),
     ], MODERN_TERRAINS, [
       region("city-grid", "downtown", [{ x: -6, y: -6, width: 13, height: 13 }]),
-      region("east-avenue", "downtown", [{ x: 6, y: -1, width: 8, height: 2 }]),
+      region("east-avenue", "downtown", [{ x: 7, y: -1, width: 7, height: 2 }]),
       region("west-avenue", "downtown", [{ x: -12, y: -1, width: 5, height: 2 }]),
-      region("south-avenue", "downtown", [{ x: -1, y: 6, width: 2, height: 8 }]),
+      region("south-avenue", "downtown", [{ x: -1, y: 7, width: 2, height: 7 }]),
       region("north-avenue", "downtown", [{ x: -1, y: -12, width: 2, height: 5 }]),
-      region("old-town", "old-street", [{ x: 4, y: -4, width: 7, height: 6 }]),
+      region("old-town", "old-street", [{ x: 8, y: -4, width: 6, height: 3 }]),
       region("riverfront", "waterfront", [{ x: 4, y: 7, width: 8, height: 3 }]),
       region("river", "river", [{ x: 14, y: -8, width: 3, height: 19 }]),
-      region("industrial-west", "industrial", [{ x: -12, y: -4, width: 5, height: 8 }]),
-      region("parks-north", "park", [{ x: -3, y: -12, width: 7, height: 4 }]),
-      region("outskirts", "outskirts", [{ x: -17, y: -14, width: 35, height: 28 }]),
-    ]);
+      region("industrial-west", "industrial", [{ x: -12, y: -4, width: 5, height: 2 }]),
+      region("parks-north", "park", [{ x: -7, y: -12, width: 4, height: 3 }]),
+    ], "outskirts");
   }
   if (genre.includes("末日")) {
     const occupied: Array<[number, number]> = [
@@ -787,7 +788,7 @@ export function defaultWorldMapForGenre(genre: string): GameWorldMap {
     return createWorldMap([
       { x: 0, y: 0, zoneName: "聚落", terrainId: "settlement", properties: {}, objects: ["净水器"] },
       { x: 6, y: 0, zoneName: "旧公路", terrainId: "highway", properties: {}, objects: ["废弃车辆"] },
-      { x: -6, y: 0, zoneName: "感染区", terrainId: "danger", properties: {}, objects: ["警示牌"], passable: false },
+      { x: -6, y: 0, zoneName: "感染区", terrainId: "danger", properties: {}, objects: ["警示牌"] },
       { x: 0, y: 6, zoneName: "水源地", terrainId: "wetland", properties: {}, objects: ["蓄水池"] },
       { x: 0, y: -6, zoneName: "农场遗址", terrainId: "farmland", properties: {}, objects: ["破旧温室"] },
       { x: 6, y: -6, zoneName: "瞭望塔", terrainId: "ruins", properties: {}, objects: [] },
@@ -797,13 +798,12 @@ export function defaultWorldMapForGenre(genre: string): GameWorldMap {
       region("old-highway", "highway", [{ x: 6, y: -1, width: 10, height: 2 }]),
       region("west-road", "highway", [{ x: -12, y: -1, width: 5, height: 2 }]),
       region("south-road", "highway", [{ x: -1, y: 6, width: 2, height: 7 }]),
-      region("farm-east", "farmland", [{ x: 4, y: -6, width: 8, height: 5 }]),
-      region("wetland-south", "wetland", [{ x: -5, y: 7, width: 10, height: 5 }]),
-      region("danger-west", "danger", [{ x: -12, y: -4, width: 5, height: 8 }]),
+      region("farm-east", "farmland", [{ x: 6, y: -6, width: 7, height: 5 }]),
+      region("wetland-south", "wetland", [{ x: -5, y: 8, width: 3, height: 3 }]),
+      region("danger-west", "danger", [{ x: -12, y: -4, width: 5, height: 2 }]),
       region("water-north", "water", [{ x: -4, y: -13, width: 9, height: 5 }]),
       region("ruins-north", "ruins", [{ x: 6, y: -11, width: 7, height: 5 }]),
-      region("wasteland", "wasteland", [{ x: -16, y: -14, width: 34, height: 27 }]),
-    ]);
+    ], "wasteland");
   }
   if (genre.includes("奇幻")) {
     const occupied: Array<[number, number]> = [
@@ -812,23 +812,22 @@ export function defaultWorldMapForGenre(genre: string): GameWorldMap {
     return createWorldMap([
       { x: 0, y: 0, zoneName: "王都", terrainId: "city", properties: {}, objects: ["城门", "集市"] },
       { x: 6, y: 0, zoneName: "月林", terrainId: "forest", properties: {}, objects: ["古树"] },
-      { x: -6, y: 0, zoneName: "矿谷", terrainId: "mountain", properties: {}, objects: ["矿井"], passable: false },
+      { x: -6, y: 0, zoneName: "矿谷", terrainId: "mountain", properties: {}, objects: ["矿井"] },
       { x: 0, y: 6, zoneName: "边境路", terrainId: "road", properties: {}, objects: ["路碑"] },
       { x: 0, y: -6, zoneName: "湖畔村", terrainId: "water", properties: {}, objects: ["码头"] },
       { x: 6, y: 6, zoneName: "旧石桥", terrainId: "road", properties: {}, objects: [] },
       ...gridEmptyPoints(9, 3, "wilderness", occupied),
     ], FANTASY_TERRAINS, [
       region("capital", "city", [{ x: -6, y: -6, width: 13, height: 13 }]),
-      region("east-road", "road", [{ x: 6, y: -1, width: 9, height: 2 }]),
+      region("east-road", "road", [{ x: 7, y: -1, width: 8, height: 2 }]),
       region("west-road", "road", [{ x: -13, y: -1, width: 5, height: 2 }]),
-      region("south-road", "road", [{ x: -1, y: 6, width: 2, height: 8 }]),
+      region("south-road", "road", [{ x: -1, y: 7, width: 2, height: 7 }]),
       region("north-road", "road", [{ x: -1, y: -13, width: 2, height: 5 }]),
-      region("moon-forest", "forest", [{ x: 6, y: -7, width: 8, height: 8 }]),
-      region("mountain-west", "mountain", [{ x: -14, y: -5, width: 6, height: 11 }]),
-      region("lake-north", "water", [{ x: -5, y: -13, width: 8, height: 5 }]),
+      region("moon-forest", "forest", [{ x: 7, y: -8, width: 7, height: 7 }]),
+      region("mountain-west", "mountain", [{ x: -14, y: -5, width: 6, height: 3 }]),
+      region("lake-north", "water", [{ x: -7, y: -13, width: 4, height: 3 }]),
       region("farmland-south", "farmland", [{ x: 3, y: 9, width: 9, height: 6 }]),
-      region("wilderness", "wilderness", [{ x: -18, y: -15, width: 37, height: 30 }]),
-    ]);
+    ], "wilderness");
   }
   const occupied: Array<[number, number]> = [
     [0, 0], [6, 0], [-6, 0], [0, 6], [0, -6], [6, 6], [-6, 6],
@@ -844,16 +843,15 @@ export function defaultWorldMapForGenre(genre: string): GameWorldMap {
     ...gridEmptyPoints(9, 3, "street", occupied),
   ], ANCIENT_TERRAINS, [
     region("town", "town", [{ x: -6, y: -6, width: 13, height: 13 }]),
-    region("east-road", "road", [{ x: 6, y: -1, width: 9, height: 2 }]),
+    region("east-road", "road", [{ x: 7, y: -1, width: 8, height: 2 }]),
     region("west-road", "road", [{ x: -12, y: -1, width: 5, height: 2 }]),
-    region("south-road", "road", [{ x: -1, y: 6, width: 2, height: 9 }]),
+    region("south-road", "road", [{ x: -1, y: 7, width: 2, height: 8 }]),
     region("north-road", "road", [{ x: -1, y: -12, width: 2, height: 5 }]),
-    region("riverbank-east", "riverbank", [{ x: 6, y: 7, width: 5, height: 4 }]),
+    region("riverbank-east", "riverbank", [{ x: 6, y: 7, width: 5, height: 3 }]),
     region("river", "water", [{ x: 16, y: -10, width: 3, height: 27 }]),
     region("farmland-south", "farmland", [{ x: 3, y: 10, width: 9, height: 5 }]),
-    region("forest-west", "forest", [{ x: -15, y: -9, width: 7, height: 9 }]),
-    region("wilderness", "wilderness", [{ x: -18, y: -14, width: 37, height: 30 }]),
-  ]);
+    region("forest-west", "forest", [{ x: -15, y: -9, width: 7, height: 8 }]),
+  ], "wilderness");
 }
 
 export type AgentInformationPreset =

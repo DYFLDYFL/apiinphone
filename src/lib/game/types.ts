@@ -70,6 +70,8 @@ export interface GameWorldMap {
   terrainRegions: GameTerrainRegion[];
   /** Optional id -> terrainTypes index for fast lookup; safe to rebuild. */
   terrainIndex?: Record<string, number>;
+  /** 未标注格子的兜底地形 id（如荒野/城郊），替代覆盖整图的大背景区域。 */
+  defaultTerrainId?: string;
   cells: Record<string, GameMapCell>;
 }
 
