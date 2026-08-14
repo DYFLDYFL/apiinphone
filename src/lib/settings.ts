@@ -53,6 +53,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   webSearchEndpoint: "",
   webSearchMetasoKey: "",
   webSearchBaiduKey: "",
+  webSearchExaKey: "",
   httpConnectTimeout: 15,
   httpReadTimeout: 120,
   retryCount: 2,

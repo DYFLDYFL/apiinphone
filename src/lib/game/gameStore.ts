@@ -390,7 +390,7 @@ function normalizeGame(game: GameState): GameState {
     } else if (a.kind === "character") {
       a.systemPrompt = characterSystemPrompt(a.name, a.persona);
     } else if (a.capabilities.includes("world_open")) {
-      a.systemPrompt = worldSystemPrompt(game.worldview || a.persona);
+      a.systemPrompt = worldSystemPrompt(game.worldview);
     } else if (a.capabilities.includes("chronicle")) {
       a.systemPrompt = chroniclerSystemPrompt("god");
     }

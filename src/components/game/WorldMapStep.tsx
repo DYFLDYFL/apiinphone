@@ -8,11 +8,11 @@ import {
 import {
   DEFAULT_TERRAIN_COLORS,
   cellsCoveredByRegion,
+  commitTerrainRegion,
   effectiveMapProperties,
   normalizeWorldMap,
   regionWithoutPoint,
   stableTerrainId,
-  subtractRegionOverlap,
   terrainAt,
   terrainDefinitions,
   terrainNameAt,
@@ -30,7 +30,6 @@ import type {
 import type { GameTemplateDraft } from "../../lib/game/templates";
 
 type DrawMode = "pan" | "region" | "paint";
-type RegionShape = "range" | "coordinates";
 
 interface WorldMapStepEditorProps {
   draft: GameTemplateDraft;
@@ -150,7 +149,6 @@ export function WorldMapStepEditor({
     terrainTypes[0]?.id ?? "",
   );
   const [drawMode, setDrawMode] = useState<DrawMode>("pan");
-  const [regionShape, setRegionShape] = useState<RegionShape>("range");
   const [terrainRenameDrafts, setTerrainRenameDrafts] = useState<
     Record<string, string>
   >({});
@@ -189,6 +187,46 @@ export function WorldMapStepEditor({
       Object.entries(cellsByKey).filter(([, cell]) => cellHasContent(cell)),
     );
     updateMap(mapWith(map, { cells: compactCells }));
+  };
+  /** 平移松手后：给当前视口内缺失的整数格补默认地形空点（远处自动扩展）。 */
+  const fillViewportCells = () => {
+    const bounds = worldMapBounds(map);
+    const centerX = (bounds.minX + bounds.maxX) / 2;
+    const centerY = (bounds.minY + bounds.maxY) / 2;
+    const toWorld = (sx: number, sy: number) => ({
+      x: (sx - (viewSize.width / 2 + pan.x)) / zoom / GRID_SIZE + centerX,
+      y: (sy - (viewSize.height / 2 + pan.y)) / zoom / GRID_SIZE + centerY,
+    });
+    const topLeft = toWorld(0, 0);
+    const bottomRight = toWorld(viewSize.width, viewSize.height);
+    const minX = Math.floor(Math.min(topLeft.x, bottomRight.x));
+    const maxX = Math.ceil(Math.max(topLeft.x, bottomRight.x));
+    const minY = Math.floor(Math.min(topLeft.y, bottomRight.y));
+    const maxY = Math.ceil(Math.max(topLeft.y, bottomRight.y));
+    const total = (maxX - minX + 1) * (maxY - minY + 1);
+    if (total > 400) return;
+    const fillTerrain =
+      map.defaultTerrainId ?? terrainTypes[0]?.id ?? "";
+    if (!fillTerrain) return;
+    const cellsByKey = { ...map.cells };
+    let added = 0;
+    for (let x = minX; x <= maxX; x += 1) {
+      for (let y = minY; y <= maxY; y += 1) {
+        const key = `${x},${y}`;
+        if (cellsByKey[key]) continue;
+        cellsByKey[key] = {
+          x,
+          y,
+          terrainId: fillTerrain,
+          properties: {},
+          objects: [],
+        };
+        added += 1;
+        if (added >= 400) break;
+      }
+      if (added >= 400) break;
+    }
+    if (added) updateCells(cellsByKey);
   };
   /** 清除一批格子的点覆盖地形，使它们继承所在区域的地形。 */
   const clearCellTerrainOverrides = (coords: Array<[number, number]>) => {
@@ -437,39 +475,22 @@ export function WorldMapStepEditor({
     const id = map.terrainRegions.some((region) => region.id === idBase)
       ? `${idBase}_${map.terrainRegions.length + 1}`
       : idBase;
-    const nextRegion: GameTerrainRegion =
-      regionShape === "range"
-        ? {
-            id,
-            terrainId: activeTerrainId,
-            ranges: [
-              terrainRange(
-                bounds.minX,
-                bounds.minY,
-                bounds.maxX - bounds.minX + 1,
-                bounds.maxY - bounds.minY + 1,
-              ),
-            ],
-          }
-        : {
-            id,
-            terrainId: activeTerrainId,
-            coordinates: Array.from(
-              { length: bounds.maxY - bounds.minY + 1 },
-              (_, yOffset) =>
-                Array.from(
-                  { length: bounds.maxX - bounds.minX + 1 },
-                  (_, xOffset) => [bounds.minX + xOffset, bounds.minY + yOffset] as [
-                    number,
-                    number,
-                  ],
-                ),
-            ).flat(),
-          };
+    const nextRegion: GameTerrainRegion = {
+      id,
+      terrainId: activeTerrainId,
+      ranges: [
+        terrainRange(
+          bounds.minX,
+          bounds.minY,
+          bounds.maxX - bounds.minX + 1,
+          bounds.maxY - bounds.minY + 1,
+        ),
+      ],
+    };
     // 同一格地形唯一：区域覆盖的格子清除点覆盖地形，由区域决定。
     clearCellTerrainOverrides(cellsCoveredByRegion(nextRegion));
-    // 强制区域互不重叠：新区域从所有旧区域中挖掉重叠格。
-    updateMap(subtractRegionOverlap(map, nextRegion));
+    // 同地形相邻区域自动合并为单一条目；否则挖洞前插，保证区域互不重叠。
+    updateMap(commitTerrainRegion(map, nextRegion));
     setMapNotice(
       `已创建「${
         terrainTypes.find((item) => item.id === activeTerrainId)?.displayName ??
@@ -533,6 +554,8 @@ export function WorldMapStepEditor({
     if (drag.mode === "region") {
       commitRegion(drag.start, drag.current);
       setRegionPreview(undefined);
+    } else if (drag.mode === "pan") {
+      fillViewportCells();
     }
   };
   const handleMapWheel = (event: ReactWheelEvent<SVGSVGElement>) => {
@@ -658,15 +681,19 @@ export function WorldMapStepEditor({
       return;
     }
     const id = `region_${Date.now().toString(36)}_${map.terrainRegions.length}`;
-    updateMap(
-      mapWith(map, {
-        terrainRegions: [
-          { id, terrainId: activeTerrainId, coordinates: [[x, y] as [number, number]] },
-          ...map.terrainRegions,
-        ],
-      }),
+    clearCellTerrainOverrides([[x, y]]);
+    const nextMap = commitTerrainRegion(map, {
+      id,
+      terrainId: activeTerrainId,
+      coordinates: [[x, y] as [number, number]],
+    });
+    updateMap(nextMap);
+    const merged = nextMap.terrainRegions.find(
+      (region) =>
+        region.terrainId === activeTerrainId &&
+        (region.coordinates ?? []).some(([px, py]) => key(px, py) === key(x, y)),
     );
-    setSelectedRegionId(id);
+    setSelectedRegionId(merged?.id ?? id);
     setMapNotice("已创建点选地形区，可继续点击格子加入或移出。");
   };
 
@@ -728,19 +755,6 @@ export function WorldMapStepEditor({
                     {terrain.displayName}
                   </option>
                 ))}
-              </select>
-            </label>
-            <label className="game-field">
-              保存形状
-              <select
-                value={regionShape}
-                onChange={(event) =>
-                  setRegionShape(event.target.value as RegionShape)
-                }
-                disabled={drawMode !== "region"}
-              >
-                <option value="range">紧凑矩形范围</option>
-                <option value="coordinates">坐标数组</option>
               </select>
             </label>
             <p>
@@ -832,41 +846,6 @@ export function WorldMapStepEditor({
                   y2={10000}
                   className="game-map-axis"
                 />
-                {map.terrainRegions.map((region) => (
-                  <g
-                    key={region.id}
-                    className={
-                      region.id === selectedRegionId
-                        ? "game-map-terrain-region selected"
-                        : "game-map-terrain-region"
-                    }
-                  >
-                    {(region.ranges ?? []).map((range, index) => (
-                      <rect
-                        key={`${region.id}-range-${index}`}
-                        x={range.x * GRID_SIZE - GRID_SIZE / 2}
-                        y={range.y * GRID_SIZE - GRID_SIZE / 2}
-                        width={range.width * GRID_SIZE}
-                        height={range.height * GRID_SIZE}
-                        fill={colorForTerrain(region.terrainId)}
-                        className="game-map-region-fill"
-                        pointerEvents="none"
-                      />
-                    ))}
-                    {(region.coordinates ?? []).map(([x, y], index) => (
-                      <rect
-                        key={`${region.id}-coordinate-${index}`}
-                        x={x * GRID_SIZE - GRID_SIZE / 2 + 3}
-                        y={y * GRID_SIZE - GRID_SIZE / 2 + 3}
-                        width={GRID_SIZE - 6}
-                        height={GRID_SIZE - 6}
-                        fill={colorForTerrain(region.terrainId)}
-                        className="game-map-region-fill"
-                        pointerEvents="none"
-                      />
-                    ))}
-                  </g>
-                ))}
                 {regionPreviewBounds ? (
                   <rect
                     x={regionPreviewBounds.minX * GRID_SIZE - GRID_SIZE / 2}
@@ -937,6 +916,15 @@ export function WorldMapStepEditor({
                         {nodeTitle} · （{cell.x}, {cell.y}） ·{" "}
                         {effectiveTerrain?.displayName || "未设置地形"}
                       </title>
+                      <rect
+                        x={-GRID_SIZE / 2}
+                        y={-GRID_SIZE / 2}
+                        width={GRID_SIZE}
+                        height={GRID_SIZE}
+                        className="game-map-cell-terrain"
+                        fill={effectiveTerrain?.color ?? "#94a3b8"}
+                        pointerEvents="none"
+                      />
                       {isNamed ? (
                         <>
                           <rect
@@ -982,11 +970,10 @@ export function WorldMapStepEditor({
                       ) : (
                         <>
                           <rect
-                            x={-14}
-                            y={-12}
-                            width={28}
-                            height={24}
-                            rx={7}
+                            x={-GRID_SIZE / 2}
+                            y={-GRID_SIZE / 2}
+                            width={GRID_SIZE}
+                            height={GRID_SIZE}
                             className="game-map-empty-hit"
                           />
                           <rect

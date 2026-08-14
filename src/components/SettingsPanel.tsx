@@ -110,7 +110,7 @@ export function SettingsPanel({
                 搜索引擎
                 <select
                   value={
-                    ["mojeek", "bing_cn", "searxng", "metaso", "baidu"].includes(
+                    ["mojeek", "bing_cn", "searxng", "metaso", "baidu", "exa"].includes(
                       draft.webSearchEngine,
                     )
                       ? draft.webSearchEngine
@@ -123,11 +123,8 @@ export function SettingsPanel({
                   <option value="searxng">SearXNG（自托管）</option>
                   <option value="metaso">秘塔 Metaso</option>
                   <option value="baidu">百度 AI 搜索</option>
+                  <option value="exa">Exa（语义搜索）</option>
                 </select>
-                <p className="settings-hint">
-                  对齐 Reasonix：默认 Mojeek HTML 抓取。失败时自动回退 Bing RSS /
-                  DuckDuckGo。填写秘塔 Key 后优先用秘塔。
-                </p>
               </label>
               {draft.webSearchEngine === "searxng" && (
                 <label>
@@ -139,9 +136,6 @@ export function SettingsPanel({
                       update({ webSearchEndpoint: e.target.value })
                     }
                   />
-                  <p className="settings-hint">
-                    手机不要填 localhost。留空时使用公共 SearXNG 回退。
-                  </p>
                 </label>
               )}
               <label>
@@ -160,9 +154,23 @@ export function SettingsPanel({
                     });
                   }}
                 />
-                <p className="settings-hint">
-                  约 ¥0.03/次；国内中文最稳。在 metaso.cn 创建 Key。
-                </p>
+              </label>
+              <label>
+                Exa API Key（可选）
+                <input
+                  type="password"
+                  value={draft.webSearchExaKey}
+                  placeholder="填写后优先使用 Exa 语义搜索"
+                  onChange={(e) => {
+                    const key = e.target.value;
+                    update({
+                      webSearchExaKey: key,
+                      ...(key.trim()
+                        ? { webSearchEngine: "exa" as const }
+                        : {}),
+                    });
+                  }}
+                />
               </label>
               {draft.webSearchEngine === "baidu" && (
                 <label>

@@ -439,6 +439,7 @@ export function sheetPublicView(sheet: GameSheet): string {
 
 export function recentEventsText(game: GameState, limit = 12): string {
   return game.events
+    .filter((e) => (e.audience ?? "public") === "public")
     .slice(-limit)
     .map(
       (e) =>

@@ -531,6 +531,152 @@ export function subtractRegionOverlap(
   };
 }
 
+function containsRange(
+  outer: GameTerrainRange,
+  inner: GameTerrainRange,
+): boolean {
+  return (
+    outer.x <= inner.x &&
+    outer.y <= inner.y &&
+    inner.x + inner.width <= outer.x + outer.width &&
+    inner.y + inner.height <= outer.y + outer.height
+  );
+}
+
+/** 两个矩形能否精确合并成一个矩形（并集仍是矩形才可）。 */
+export function rangesMergeable(
+  a: GameTerrainRange,
+  b: GameTerrainRange,
+): boolean {
+  if (containsRange(a, b) || containsRange(b, a)) return true;
+  const overlapX = a.x < b.x + b.width && b.x < a.x + a.width;
+  const overlapY = a.y < b.y + b.height && b.y < a.y + a.height;
+  if (overlapX && overlapY) {
+    return (
+      (a.x === b.x && a.width === b.width) ||
+      (a.y === b.y && a.height === b.height)
+    );
+  }
+  return (
+    (a.x === b.x &&
+      a.width === b.width &&
+      (a.y + a.height === b.y || b.y + b.height === a.y)) ||
+    (a.y === b.y &&
+      a.height === b.height &&
+      (a.x + a.width === b.x || b.x + b.width === a.x))
+  );
+}
+
+export function mergeRangePair(
+  a: GameTerrainRange,
+  b: GameTerrainRange,
+): GameTerrainRange {
+  return {
+    x: Math.min(a.x, b.x),
+    y: Math.min(a.y, b.y),
+    width: Math.max(a.x + a.width, b.x + b.width) - Math.min(a.x, b.x),
+    height: Math.max(a.y + a.height, b.y + b.height) - Math.min(a.y, b.y),
+  };
+}
+
+/** 收敛合并到不动点；不可合并的矩形并列保留。 */
+export function normalizeRanges(
+  ranges: GameTerrainRange[],
+): GameTerrainRange[] {
+  let result = ranges.filter((range) => range.width > 0 && range.height > 0);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    const next: GameTerrainRange[] = [];
+    for (const range of result) {
+      const index = next.findIndex((other) => rangesMergeable(range, other));
+      if (index >= 0) {
+        next[index] = mergeRangePair(range, next[index]);
+        changed = true;
+      } else {
+        next.push(range);
+      }
+    }
+    result = next;
+  }
+  return result;
+}
+
+function mergeCoordinates(
+  a: Array<[number, number]>,
+  b: Array<[number, number]>,
+): Array<[number, number]> {
+  const seen = new Set<string>();
+  const result: Array<[number, number]> = [];
+  for (const point of [...a, ...b]) {
+    const key = mapCellKey(point[0], point[1]);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(point);
+  }
+  return result;
+}
+
+/** 两区域是否重叠或 4-邻接（有公共边）。 */
+export function regionsTouching(
+  a: GameTerrainRegion,
+  b: GameTerrainRegion,
+): boolean {
+  for (const [x, y] of cellsCoveredByRegion(b)) {
+    if (
+      terrainRegionContains(a, { x, y }) ||
+      terrainRegionContains(a, { x: x + 1, y }) ||
+      terrainRegionContains(a, { x: x - 1, y }) ||
+      terrainRegionContains(a, { x, y: y + 1 }) ||
+      terrainRegionContains(a, { x, y: y - 1 })
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * 提交一个地形区：存在同 terrainId 且相邻/重叠的区域时并入它（合并成单一条目）；
+ * 否则维持"挖洞 + 前插"。
+ */
+export function commitTerrainRegion(
+  map: GameWorldMap,
+  newRegion: GameTerrainRegion,
+): GameWorldMap {
+  const target = map.terrainRegions.find(
+    (region) =>
+      region.terrainId === newRegion.terrainId &&
+      regionsTouching(region, newRegion),
+  );
+  if (!target) return subtractRegionOverlap(map, newRegion);
+
+  // 只从其他地形的区域中挖掉新格，跳过 target
+  let next = map;
+  for (const other of map.terrainRegions) {
+    if (other.id === target.id) continue;
+    for (const [x, y] of cellsCoveredByRegion(newRegion)) {
+      if (terrainRegionContains(other, { x, y })) {
+        next = regionWithoutPoint(next, other, x, y);
+      }
+    }
+  }
+  const mergedRegion: GameTerrainRegion = {
+    ...target,
+    coordinates: mergeCoordinates(
+      target.coordinates ?? [],
+      newRegion.coordinates ?? [],
+    ),
+    ranges: normalizeRanges([...(target.ranges ?? []), ...(newRegion.ranges ?? [])]),
+  };
+  return {
+    ...next,
+    terrainRegions: next.terrainRegions.map((region) =>
+      region.id === target.id ? mergedRegion : region,
+    ),
+  };
+}
+
 /** Resolves point overrides first, then the first matching region, then default terrain. */
 export function terrainAt(
   map: GameWorldMap,

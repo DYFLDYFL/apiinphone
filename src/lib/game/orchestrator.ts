@@ -377,6 +377,15 @@ function eventsTextForTick(
   return list.map(lineEvent).join("\n");
 }
 
+/** 本时公开事件（公开时间线的基础材料，不含任何私讯）。 */
+function publicEventsTextForTick(game: GameState, tick: number): string {
+  const list = eventsForTick(game, tick).filter(
+    (e) => (e.audience ?? "public") === "public",
+  );
+  if (!list.length) return "（本时无公开事件）";
+  return list.map(lineEvent).join("\n");
+}
+
 /** 玩家剧情材料：分栏标出「你的行动」，避免模型只写公开见闻或编造无关情节。 */
 function playerChronicleSource(
   game: GameState,
@@ -465,7 +474,7 @@ async function appendChronicles(
       settings,
       game,
       godAgent,
-      `请根据下列本时事件写一节全知剧情：\n${eventsTextForTick(game, tick)}`,
+      `请根据下列本时公开事件写一节全知剧情（私密互动不可写入）：\n${publicEventsTextForTick(game, tick)}`,
       control,
       (text) =>
         onProgress?.({
@@ -543,7 +552,7 @@ async function appendChronicles(
           [
             `角色「${character.name}」。请根据本时你能看到的材料，写一节你的个人经历。`,
             "只写你的行动、见闻和感受，不补写你没有看到的秘密，不替其他角色做全知判断。",
-            eventsTextForTick(game, tick),
+            eventsTextForTick(game, tick, character.id),
           ].join("\n\n"),
           control,
           (text) =>

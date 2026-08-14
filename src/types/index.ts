@@ -30,6 +30,8 @@ export interface AppSettings {
   webSearchEndpoint: string;
   webSearchMetasoKey: string;
   webSearchBaiduKey: string;
+  /** 填了优先用 Exa 语义搜索（ai.exa.ai），留空用免费引擎链。 */
+  webSearchExaKey: string;
   /** Default result count per web_search when model omits topK. */
   webSearchDefaultTopK: number;
   /** Maximum topK allowed per web_search call. */

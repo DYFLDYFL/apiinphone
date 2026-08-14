@@ -233,7 +233,7 @@ export function GameScreen({
   const [status, setStatus] = useState("");
   const [inject, setInject] = useState("");
   const [draft, setDraft] = useState<GameTemplateDraft>(() =>
-    defaultTemplateDraft(3),
+    defaultTemplateDraft(3, "古代悬疑"),
   );
   const [savedWorldPresets, setSavedWorldPresets] = useState<SavedWorldPreset[]>(
     [],
@@ -261,7 +261,6 @@ export function GameScreen({
   const [selectedAiPresetId, setSelectedAiPresetId] = useState("");
   const [worldSetupStep, setWorldSetupStep] =
     useState<WorldSetupStep>("basic");
-  const [charCountInput, setCharCountInput] = useState("3");
   const [logTab, setLogTab] = useState<LogTab>("timeline");
   const [sidePanel, setSidePanel] = useState<SidePanel>("collapsed");
   const [pendingIntent, setPendingIntent] =
@@ -380,7 +379,7 @@ export function GameScreen({
     minimum = 0,
   ): GameTemplateDraft => {
     const clamped = Math.min(6, Math.max(minimum, Math.round(n)));
-    const base = defaultTemplateDraft(Math.max(2, clamped));
+    const base = defaultTemplateDraft(Math.max(2, clamped), prev.genre);
     const defaults = base.characters.slice(0, clamped);
     return syncDraftCharacterAgents({
       ...prev,
@@ -398,26 +397,15 @@ export function GameScreen({
     });
   };
 
-  const applyCharacterCount = (n: number) => {
-    const clamped = Math.min(6, Math.max(0, Math.round(n)));
-    setDraft((prev) => resizeDraftCharacters(prev, clamped));
-    setCharCountInput(String(clamped));
-    return clamped;
-  };
-
   const handleCreate = async (overrideDraft?: GameTemplateDraft) => {
     if (!settings.apiKey.trim()) {
       alert("请先在设置中填写 API Key");
       return;
     }
     const baseDraft = overrideDraft ?? draft;
-    const n = Math.min(
-      6,
-      Math.max(2, Math.round(Number(charCountInput) || baseDraft.characters.length || 3)),
-    );
+    const n = Math.min(6, Math.max(2, baseDraft.characters.length));
     const nextDraft = resizeDraftCharacters(baseDraft, n, 2);
     setDraft(nextDraft);
-    setCharCountInput(String(n));
     const playMode = nextDraft.playMode === "play" ? "play" : "spectate";
     setBusy(true);
     setStatus("生成开场剧情…");
@@ -501,7 +489,6 @@ export function GameScreen({
       const override = a.systemPromptOverride?.trim();
       return {
         ...a,
-        persona: worldview,
         systemPrompt: override
           ? override
           : worldSystemPrompt(worldview),
@@ -606,11 +593,10 @@ export function GameScreen({
   };
 
   const startNewGame = () => {
-    const next = defaultTemplateDraft(3);
+    const next = defaultTemplateDraft(3, "古代悬疑");
     setDraft(next);
     setSelectedPresetId("");
     setSelectedAiPresetId("");
-    setCharCountInput("3");
     setCharacterEntryView("template-choice");
     setAiChoiceBackView("template-choice");
     setView("template-choice");
@@ -638,8 +624,15 @@ export function GameScreen({
           ...item,
           textOptions: item.textOptions ? [...item.textOptions] : undefined,
         })),
+        characters: (preset ? source.characters : base.characters).map(
+          (character) => ({
+            ...character,
+            attrs: { ...character.attrs },
+            model: character.model ? { ...character.model } : undefined,
+          }),
+        ),
       },
-      base.characters,
+      preset ? source.characters : base.characters,
     );
   };
 
@@ -669,7 +662,7 @@ export function GameScreen({
     });
 
   const startNewWorldPreset = () => {
-    setDraft(defaultTemplateDraft(draft.characters.length));
+    setDraft(defaultTemplateDraft(draft.characters.length, draft.genre));
     setEditingWorldPresetId(undefined);
     setEditingWorldPresetSourceId(undefined);
     setEditingWorldPresetName("新世界预设");
@@ -801,7 +794,6 @@ export function GameScreen({
     setDraft(syncDraftCharacterAgents(next));
     setSelectedPresetId(preset.id);
     setSelectedAiPresetId("");
-    setCharCountInput(String(next.characters.length));
     setCharacterEntryView("template-choice");
     setAiChoiceBackView("template-choice");
     setView("characters");
@@ -836,7 +828,6 @@ export function GameScreen({
       },
     ];
     setDraft(syncDraftCharacterAgents(draft, characters));
-    setCharCountInput(String(characters.length));
   };
 
   const addBlankCharacter = () => {
@@ -859,7 +850,6 @@ export function GameScreen({
       characters,
       playerCharacterIndex,
     }));
-    setCharCountInput(String(characters.length));
   };
 
   if (view === "template-choice") {
@@ -930,7 +920,6 @@ export function GameScreen({
     return (
       <CharacterChoiceScreen
         draft={draft}
-        charCountInput={charCountInput}
         topActions={topActions}
         onBack={() => setView(characterEntryView)}
         onOpenCharacter={(index) => {
@@ -940,23 +929,6 @@ export function GameScreen({
         onAddPreset={addCharacterPreset}
         onAddBlank={addBlankCharacter}
         onRemoveCharacter={removeCharacter}
-        onCharCountChange={(value) => {
-          setCharCountInput(value);
-          if (value.trim() === "") return;
-          const count = Number(value);
-          if (Number.isFinite(count) && count >= 0 && count <= 6) {
-            applyCharacterCount(count);
-          }
-        }}
-        onCharCountBlur={() =>
-          applyCharacterCount(
-            charCountInput.trim() === ""
-              ? draft.characters.length || 3
-              : Number.isFinite(Number(charCountInput))
-                ? Number(charCountInput)
-                : draft.characters.length || 3,
-          )
-        }
         onChangeDraft={setDraft}
         onCreate={() => {
           setAiChoiceBackView("characters");
@@ -3603,28 +3575,22 @@ function WorldPipelineStep({
 
 function CharacterChoiceScreen({
   draft,
-  charCountInput,
   topActions,
   onBack,
   onOpenCharacter,
   onAddPreset,
   onAddBlank,
   onRemoveCharacter,
-  onCharCountChange,
-  onCharCountBlur,
   onChangeDraft,
   onCreate,
 }: {
   draft: GameTemplateDraft;
-  charCountInput: string;
   topActions: ReactNode;
   onBack: () => void;
   onOpenCharacter: (index: number) => void;
   onAddPreset: (template: CharTemplateDraft) => void;
   onAddBlank: () => void;
   onRemoveCharacter: (index: number) => void;
-  onCharCountChange: (value: string) => void;
-  onCharCountBlur: () => void;
   onChangeDraft: (draft: GameTemplateDraft) => void;
   onCreate: () => void;
 }) {
@@ -3677,18 +3643,9 @@ function CharacterChoiceScreen({
             <h3>当前人物</h3>
             <span>点击人物进入独立编辑</span>
           </div>
-          <label className="game-field game-character-count-field">
-            角色数量
-            <span className="game-field-hint">编辑中可为 0–6 名，创建至少 2 名</span>
-            <input
-              type="number"
-              min={0}
-              max={6}
-              value={charCountInput}
-              onChange={(e) => onCharCountChange(e.target.value)}
-              onBlur={onCharCountBlur}
-            />
-          </label>
+          <p className="game-field game-character-count-field">
+            当前 {draft.characters.length} 名
+          </p>
           {draft.characters.length ? (
             <div className="game-character-list">
               {draft.characters.map((character, index) => (
@@ -3812,6 +3769,7 @@ function CharacterEditorScreen({
   const mapCells = Object.values(draft.worldMap?.cells ?? {}).sort(
     (a, b) => a.y - b.y || a.x - b.x,
   );
+  const namedCells = mapCells.filter((cell) => cell.zoneName?.trim());
   const setAttr = (definition: GameAttributeDefinition, raw: string) => {
     const value =
       definition.valueType === "number" && raw.trim() !== ""
@@ -3836,30 +3794,70 @@ function CharacterEditorScreen({
               onChange={(e) => onChange({ ...character, name: e.target.value })}
             />
           </label>
-          <label className="game-field">
+          <div className="game-field">
             初始地图位置
-            <select
-              value={
-                character.position
-                  ? `${character.position.x},${character.position.y}`
-                  : ""
-              }
-              onChange={(event) => {
-                const [x, y] = event.target.value.split(",").map(Number);
-                onChange({
-                  ...character,
-                  position: Number.isFinite(x) && Number.isFinite(y) ? { x, y } : undefined,
-                });
-              }}
-            >
-              <option value="">未定位</option>
-              {mapCells.map((cell) => (
-                <option key={`${cell.x},${cell.y}`} value={`${cell.x},${cell.y}`}>
-                  [{cell.x},{cell.y}] {cell.zoneName || "未命名区域"}
-                </option>
-              ))}
-            </select>
-          </label>
+            <div className="game-position-row">
+              <input
+                type="number"
+                step={1}
+                aria-label="初始位置 X 坐标"
+                value={character.position ? String(character.position.x) : ""}
+                placeholder="X"
+                onChange={(e) => {
+                  const x = Number(e.target.value);
+                  onChange({
+                    ...character,
+                    position: { x, y: character.position?.y ?? 0 },
+                  });
+                }}
+              />
+              <input
+                type="number"
+                step={1}
+                aria-label="初始位置 Y 坐标"
+                value={character.position ? String(character.position.y) : ""}
+                placeholder="Y"
+                onChange={(e) => {
+                  const y = Number(e.target.value);
+                  onChange({
+                    ...character,
+                    position: { x: character.position?.x ?? 0, y },
+                  });
+                }}
+              />
+              <button
+                type="button"
+                className="link-btn"
+                onClick={() => onChange({ ...character, position: undefined })}
+              >
+                清除
+              </button>
+            </div>
+            {namedCells.length ? (
+              <div className="game-position-presets">
+                {namedCells.map((cell) => (
+                  <button
+                    type="button"
+                    key={`${cell.x},${cell.y}`}
+                    className={
+                      character.position?.x === cell.x &&
+                      character.position?.y === cell.y
+                        ? "game-position-preset active"
+                        : "game-position-preset"
+                    }
+                    onClick={() =>
+                      onChange({ ...character, position: { x: cell.x, y: cell.y } })
+                    }
+                  >
+                    {cell.zoneName}
+                    <small>
+                      {cell.x},{cell.y}
+                    </small>
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </div>
           <label className="game-field">
             人设
             <textarea
@@ -4014,75 +4012,101 @@ function PipelineEditor({
               <span className="game-pipeline-node-id">（{node.id}）</span>
             </summary>
             <label className="game-pipeline-agent-select">
-              执行能力（可多选，标题文字不参与判断）
-              <select
-                multiple
-                value={node.executionCapabilities ?? []}
-                onChange={(e) => {
-                  const executionCapabilities = Array.from(
-                    e.target.selectedOptions,
-                  ).map((option) => option.value as AgentFeatureKey);
-                  setNodes(
-                    value.nodes.map((n) =>
-                      n.id === node.id ? { ...n, executionCapabilities } : n,
-                    ),
+              执行能力（可多选）
+              <div className="game-pipeline-checkbox-group">
+                {capabilityLabels.map((capability) => {
+                  const checked = (node.executionCapabilities ?? []).includes(
+                    capability.id,
                   );
-                }}
-              >
-                {capabilityLabels.map((capability) => (
-                  <option key={capability.id} value={capability.id}>
-                    {capability.label}
-                  </option>
-                ))}
-              </select>
+                  return (
+                    <label className="game-pipeline-check" key={capability.id}>
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={(event) => {
+                          const executionCapabilities = event.target.checked
+                            ? [...(node.executionCapabilities ?? []), capability.id]
+                            : (node.executionCapabilities ?? []).filter(
+                                (id) => id !== capability.id,
+                              );
+                          setNodes(
+                            value.nodes.map((n) =>
+                              n.id === node.id
+                                ? { ...n, executionCapabilities }
+                                : n,
+                            ),
+                          );
+                        }}
+                      />
+                      {capability.label}
+                    </label>
+                  );
+                })}
+              </div>
             </label>
             <label className="game-pipeline-agent-select">
               执行 AI（可多选）
-              <select
-                multiple
-                value={node.agentIds ?? []}
-                onChange={(e) => {
-                  const agentIds = Array.from(e.target.selectedOptions).map(
-                    (option) => option.value,
+              <div className="game-pipeline-checkbox-group">
+                {eligibleAgents.map((agent) => {
+                  const checked = (node.agentIds ?? []).includes(agent.id);
+                  return (
+                    <label className="game-pipeline-check" key={agent.id}>
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={(event) => {
+                          const agentIds = event.target.checked
+                            ? [...(node.agentIds ?? []), agent.id]
+                            : (node.agentIds ?? []).filter(
+                                (id) => id !== agent.id,
+                              );
+                          const nodes = value.nodes.map((n) =>
+                            n.id === node.id ? { ...n, agentIds } : n,
+                          );
+                          onChange({
+                            ...value,
+                            nodes,
+                            entryAgentIds:
+                              value.nodes[0]?.id === node.id
+                                ? agentIds
+                                : value.entryAgentIds,
+                          });
+                        }}
+                      />
+                      {agent.name}
+                    </label>
                   );
-                  const nodes = value.nodes.map((n) =>
-                    n.id === node.id ? { ...n, agentIds } : n,
-                  );
-                  onChange({
-                    ...value,
-                    nodes,
-                    entryAgentIds:
-                      value.nodes[0]?.id === node.id
-                        ? agentIds
-                        : value.entryAgentIds,
-                  });
-                }}
-              >
-                {eligibleAgents.map((agent) => (
-                  <option key={agent.id} value={agent.id}>{agent.name}</option>
-                ))}
-              </select>
+                })}
+              </div>
             </label>
             <label className="game-pipeline-agent-select">
               目标 AI / 角色（可多选）
-              <select
-                multiple
-                value={node.targetIds ?? []}
-                onChange={(e) => {
-                  const targetIds = Array.from(e.target.selectedOptions).map(
-                    (option) => option.value,
+              <div className="game-pipeline-checkbox-group">
+                {agents.map((agent) => {
+                  const checked = (node.targetIds ?? []).includes(agent.id);
+                  return (
+                    <label className="game-pipeline-check" key={agent.id}>
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={(event) => {
+                          const targetIds = event.target.checked
+                            ? [...(node.targetIds ?? []), agent.id]
+                            : (node.targetIds ?? []).filter(
+                                (id) => id !== agent.id,
+                              );
+                          setNodes(
+                            value.nodes.map((n) =>
+                              n.id === node.id ? { ...n, targetIds } : n,
+                            ),
+                          );
+                        }}
+                      />
+                      {agent.name}
+                    </label>
                   );
-                  setNodes(
-                    value.nodes.map((n) =>
-                      n.id === node.id ? { ...n, targetIds } : n,
-                    ),
-                  );
-                }}
-              >
-                {agents.map((agent) => (
-                  <option key={agent.id} value={agent.id}>{agent.name}</option>
-                ))}
-              </select>
+                })}
+              </div>
             </label>
             <label>
               调度方式
@@ -4283,11 +4307,13 @@ function ModelOverrideEditor({
           onChange={(e) => patch({ model: e.target.value || undefined })}
         >
           <option value="">（沿用全局）</option>
-          {[provider.defaultModel, ...provider.models].map((m) => (
-            <option key={m} value={m}>
-              {m}
-            </option>
-          ))}
+          {Array.from(new Set([provider.defaultModel, ...provider.models])).map(
+            (m) => (
+              <option key={m} value={m}>
+                {m}
+              </option>
+            ),
+          )}
         </select>
       </label>
       {showTier ? (

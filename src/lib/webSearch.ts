@@ -315,6 +315,66 @@ function parseBingRss(xml: string, topK: number): SearchResult[] {
   return results;
 }
 
+async function searchExa(
+  query: string,
+  topK: number,
+  key: string,
+  signal?: AbortSignal,
+): Promise<SearchResult[]> {
+  const { status, data } = await httpJson<{
+    results?: Array<{
+      title?: string;
+      url?: string;
+      text?: string;
+      autopromptString?: string;
+      highlight?: Record<string, string>;
+      publishedDate?: string;
+    }>;
+  }>(
+    "https://api.exa.ai/search",
+    {
+      method: "POST",
+      signal,
+      headers: {
+        "x-api-key": key,
+        "Content-Type": "application/json",
+        "User-Agent": SEARCH_UA,
+      },
+      body: JSON.stringify({
+        query,
+        numResults: Math.min(10, Math.max(1, topK)),
+        type: "auto",
+      }),
+    },
+    20000,
+  );
+  if (status === 401 || status === 403) {
+    throw new WebSearchError("Exa API Key 无效或未授权。");
+  }
+  if (status === 429) {
+    throw new WebSearchError("Exa 限流（429），稍后重试或换 Key。");
+  }
+  if (status !== 200) throw new WebSearchError(`Exa HTTP ${status}`);
+  const results = (data.results ?? [])
+    .filter((r) => r.title && r.url)
+    .map((r) => {
+      const highlightText = r.highlight
+        ? Object.values(r.highlight).join(" ")
+        : "";
+      const snippet =
+        r.text?.slice(0, 500) ||
+        r.autopromptString?.slice(0, 500) ||
+        highlightText.slice(0, 500);
+      return {
+        title: r.title ?? "",
+        url: r.url ?? "",
+        snippet: snippet.trim(),
+      };
+    });
+  if (!results.length) throw new WebSearchError("Exa 未返回结果。");
+  return results;
+}
+
 async function searchJina(
   query: string,
   topK: number,
@@ -415,6 +475,10 @@ function fallbackEngines(primary: string): string[] {
 /** Effective primary engine: Metaso wins when a key is set and engine is still a free default. */
 export function resolveWebSearchEngine(settings: AppSettings): string {
   const configured = (settings.webSearchEngine || "mojeek").trim() || "mojeek";
+  const hasExa = Boolean(settings.webSearchExaKey?.trim());
+  if (hasExa && configured !== "metaso" && configured !== "baidu") {
+    return "exa";
+  }
   const hasMetaso = Boolean(settings.webSearchMetasoKey?.trim());
   if (hasMetaso && (configured === "mojeek" || configured === "bing_cn")) {
     return "metaso";
@@ -541,6 +605,11 @@ async function searchWithEngine(
       });
     }
     return results;
+  }
+  if (engine === "exa") {
+    const key = settings.webSearchExaKey.trim();
+    if (!key) throw new WebSearchError("Exa 需要 API Key。");
+    return searchExa(query, topK, key, signal);
   }
   if (engine === "metaso") {
     const key = settings.webSearchMetasoKey.trim();
@@ -722,7 +791,7 @@ export async function webSearchForTool(
     if (signal?.aborted) return `搜索已取消：${msg}`;
     return (
       `搜索失败：${msg}\n\n` +
-      "建议：默认已用 Mojeek（免 Key）；国内更稳请填写秘塔 Key；或稍后重试 / 关闭 VPN。"
+      "建议：默认已用 Mojeek（免 Key）；质量更高请填 Exa Key 或秘塔 Key；或稍后重试 / 关闭 VPN。"
     );
   }
 }

@@ -1749,6 +1749,62 @@ body {
   white-space: nowrap;
 }
 
+.game-position-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.game-position-row input {
+  min-width: 0;
+  width: 72px;
+  min-height: 38px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  padding: 7px 9px;
+  background: var(--game-input);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+}
+
+.game-position-row input:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+
+.game-position-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.game-position-preset {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--game-surface-soft);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.game-position-preset small {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.game-position-preset:hover,
+.game-position-preset.active {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
 .game-attribute-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -2060,28 +2116,21 @@ body {
   stroke-width: 1;
 }
 
-.game-map-canvas-backdrop {
-  fill: var(--game-surface-soft);
-}
-
 .game-map-axis {
   stroke: color-mix(in srgb, var(--accent) 35%, transparent);
   stroke-width: 1.2;
   stroke-dasharray: 5 5;
 }
 
-.game-map-region-fill {
-  fill-opacity: 0.16;
-  stroke: color-mix(in srgb, var(--text) 24%, transparent);
-  stroke-width: 1;
-  stroke-dasharray: 4 4;
+.game-map-cell-terrain {
+  fill-opacity: 0.55;
+  transition: fill 140ms ease;
 }
 
-.game-map-terrain-region.selected .game-map-region-fill {
-  fill-opacity: 0.3;
+.game-map-node.selected .game-map-cell-terrain,
+.game-map-empty-point.selected .game-map-cell-terrain {
   stroke: var(--accent);
   stroke-width: 2;
-  stroke-dasharray: none;
 }
 
 .game-map-empty-point {
@@ -2989,8 +3038,33 @@ body {
   flex: 1;
 }
 
-.game-pipeline-agent-select select {
-  min-height: 72px;
+.game-pipeline-checkbox-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.game-pipeline-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 9px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--game-surface-soft);
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.game-pipeline-check:hover,
+.game-pipeline-check:has(input:checked) {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.game-pipeline-check input {
+  accent-color: var(--accent);
 }
 
 @media (max-width: 600px) {
