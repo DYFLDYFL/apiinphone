@@ -62,6 +62,8 @@ import {
   formatEventSummary,
 } from "../../lib/game/mutations";
 import { normalizeWorldMap, terrainNameAt } from "../../lib/game/map";
+import { ModeSwitcher } from "../ModeSwitcher";
+import type { AppMode } from "../ModeSwitcher";
 import {
   deleteSavedAiPreset,
   deleteSavedWorldPreset,
@@ -106,14 +108,16 @@ import {
   type ReasoningEffort,
 } from "../../lib/apiProviders";
 import { ModelSwitcher } from "../ModelSwitcher";
+import { confirmAsync, showMessage } from "../../lib/uiDialogs";
 import { WorldMapStepEditor } from "./WorldMapStep";
 
 interface GameScreenProps {
   settings: AppSettings;
   onSettingsChange: (next: AppSettings) => void;
-  onBack: () => void;
   onOpenSettings: () => void;
   onOpenInfo: () => void;
+  appMode?: AppMode;
+  onSwitchMode?: (mode: AppMode) => void;
 }
 
 type LogTab = "timeline" | "story" | "playerStory";
@@ -211,9 +215,10 @@ function syncDraftCharacterAgents(
 export function GameScreen({
   settings,
   onSettingsChange,
-  onBack,
   onOpenSettings,
   onOpenInfo,
+  appMode,
+  onSwitchMode,
 }: GameScreenProps) {
   const [games, setGames] = useState<
     Array<{ id: string; title: string; updatedAt: string; tick: number }>
@@ -365,7 +370,7 @@ export function GameScreen({
         setGame(seeded);
         bindGameRunnerGame(seeded);
       } catch (err) {
-        alert(String(err));
+        void showMessage(String(err));
       } finally {
         setBusy(false);
         setStatus("");
@@ -399,7 +404,7 @@ export function GameScreen({
 
   const handleCreate = async (overrideDraft?: GameTemplateDraft) => {
     if (!settings.apiKey.trim()) {
-      alert("请先在设置中填写 API Key");
+      void showMessage("请先在设置中填写 API Key");
       return;
     }
     const baseDraft = overrideDraft ?? draft;
@@ -432,7 +437,7 @@ export function GameScreen({
       setStatus("");
       await refreshList();
     } catch (err) {
-      alert(String(err));
+      void showMessage(String(err));
       setStatus("");
     } finally {
       setBusy(false);
@@ -440,7 +445,9 @@ export function GameScreen({
   };
 
   const handleDelete = async (id: string) => {
-    if (!window.confirm("删除该局将清空本地文件夹中的剧情与存档，确定？")) return;
+    if (!(await confirmAsync("删除该局将清空本地文件夹中的剧情与存档，确定？"))) {
+      return;
+    }
     if (isGameRunning(id)) stopGameAdvance();
     await deleteGame(id);
     if (game?.id === id) {
@@ -459,7 +466,7 @@ export function GameScreen({
         : Boolean(game.godStory.trim());
     if (!ready) return;
     if (!settings.apiKey.trim()) {
-      alert("请先在设置中填写 API Key");
+      void showMessage("请先在设置中填写 API Key");
       return;
     }
     const injectText = inject;
@@ -468,7 +475,7 @@ export function GameScreen({
       await startGameAdvance(settings, game, injectText);
       await refreshList();
     } catch (err) {
-      alert(String(err));
+      void showMessage(String(err));
     }
   };
 
@@ -538,7 +545,7 @@ export function GameScreen({
 
   const unlockGodView = async (): Promise<boolean> => {
     if (!game || game.godViewUnlocked) return true;
-    const ok = window.confirm(
+    const ok = await confirmAsync(
       "查看时间线/上帝剧情需解锁上帝视角，视为作弊且不可再上锁。确定解锁？",
     );
     if (!ok) return false;
@@ -551,7 +558,7 @@ export function GameScreen({
 
   const handleSubmitIntent = () => {
     if (!intentAction.trim()) {
-      alert("请填写行动");
+      void showMessage("请填写行动");
       return;
     }
     const ok = submitPlayerIntent({
@@ -567,6 +574,12 @@ export function GameScreen({
 
   const topActions = (
     <div className="game-topbar-actions">
+      {onSwitchMode && (
+        <ModeSwitcher
+          current={appMode ?? "game"}
+          onSwitch={onSwitchMode}
+        />
+      )}
       <button
         type="button"
         className="icon-btn"
@@ -959,7 +972,6 @@ export function GameScreen({
       <NewGameLobbyScreen
         games={games}
         topActions={topActions}
-        onBack={onBack}
         onStartNewGame={startNewGame}
         onOpenGame={(id) => void openGame(id)}
         onDelete={(id) => void handleDelete(id)}
@@ -1051,9 +1063,6 @@ export function GameScreen({
           />
         </div>
         {topActions}
-        <button type="button" className="secondary-btn" onClick={onBack}>
-          回对话
-        </button>
       </header>
 
       <div className="game-body game-play">
@@ -1104,10 +1113,6 @@ export function GameScreen({
           </div>
           {playMode === "play" && unlocked ? (
             <p className="settings-hint warn-hint">已解锁·作弊（不可再锁）</p>
-          ) : playMode === "play" && !unlocked ? (
-            <p className="settings-hint">
-              默认仅「玩家剧情」；点「时间线」或「剧情」可提示解锁。
-            </p>
           ) : null}
 
           {logTab === "timeline" ? (
@@ -1432,9 +1437,6 @@ export function GameScreen({
             </button>
           )}
         </div>
-        <p className="settings-hint">
-          每次推进一轮交互后由世界拨钟；回对话或回列表时推进仍继续。
-        </p>
       </footer>
     </div>
   );
@@ -1468,7 +1470,6 @@ function attributeDefinitionsForDraft(
 function NewGameLobbyScreen({
   games,
   topActions,
-  onBack,
   onStartNewGame,
   onOpenGame,
   onDelete,
@@ -1476,7 +1477,6 @@ function NewGameLobbyScreen({
 }: {
   games: Array<{ id: string; title: string; updatedAt: string; tick: number }>;
   topActions: ReactNode;
-  onBack: () => void;
   onStartNewGame: () => void;
   onOpenGame: (id: string) => void;
   onDelete: (id: string) => void;
@@ -1485,12 +1485,8 @@ function NewGameLobbyScreen({
   return (
     <div className="game-screen">
       <header className="game-topbar">
-        <button type="button" className="icon-btn" onClick={onBack}>
-          ←
-        </button>
         <div className="game-topbar-title">
           <div>游戏</div>
-          <div className="game-subtitle">分层建局，不把所有设置堆在一页。</div>
         </div>
         {topActions}
       </header>
@@ -2197,7 +2193,7 @@ export function LegacyWorldMapStep({
     setNewTerrain("");
     setMapNotice("");
   };
-  const renameTerrain = (terrain: string) => {
+  const renameTerrain = async (terrain: string) => {
     const nextTerrain = (terrainRenameDrafts[terrain] ?? terrain).trim();
     if (!nextTerrain) {
       setMapNotice("地形名称不能为空。");
@@ -2213,9 +2209,9 @@ export function LegacyWorldMapStep({
     ).length;
     if (
       usageCount > 0 &&
-      !window.confirm(
+      !(await confirmAsync(
         `有 ${usageCount} 个坐标使用「${terrain}」。重命名后将同步替换这些坐标，继续吗？`,
-      )
+      ))
     ) {
       return;
     }
@@ -2239,7 +2235,7 @@ export function LegacyWorldMapStep({
     });
     setMapNotice("");
   };
-  const deleteTerrain = (terrain: string) => {
+  const deleteTerrain = async (terrain: string) => {
     const usageCount = cells.filter(
       ({ cell }) => cell.terrain === terrain,
     ).length;
@@ -2250,7 +2246,7 @@ export function LegacyWorldMapStep({
           ? `有 ${usageCount} 个坐标使用「${terrain}」。删除后将替换为「${replacement}」，继续吗？`
           : `有 ${usageCount} 个坐标使用「${terrain}」。删除后这些坐标的地形会清空，继续吗？`
         : `确定删除地形「${terrain}」吗？`;
-    if (!window.confirm(warning)) return;
+    if (!(await confirmAsync(warning))) return;
     const cellsByKey = { ...map.cells };
     if (usageCount > 0) {
       Object.entries(cellsByKey).forEach(([key, cell]) => {
@@ -2760,7 +2756,7 @@ export function LegacyWorldMapStep({
             <div className="game-map-subsection-heading">
               <div>
                 <h4>地形类型</h4>
-                <span>节点颜色来自这里；删除使用中的地形前会要求替换或清空。</span>
+                <span>地图节点颜色由地形类型决定；删除使用中的地形前需先替换或清空。</span>
               </div>
               <span>{terrainTypes.length} 种</span>
             </div>
@@ -3553,10 +3549,6 @@ function WorldPipelineStep({
         <h3>运行逻辑</h3>
         <span>最后确认每轮如何推进</span>
       </div>
-      <p className="settings-hint">
-        新建游戏不再单独固定顺序或串并行；下面的节点可以指定多个 AI、目标和调度方式。
-        节点标题可直接编辑，实际执行由绑定 AI 的能力和执行能力配置决定。
-      </p>
       <PipelineEditor
         value={draft.pipeline ?? defaultPipeline()}
         onChange={(pipeline) => onChange({ ...draft, pipeline })}
@@ -3950,13 +3942,7 @@ function PipelineEditor({
 
   return (
     <div className="game-pipeline-editor">
-      <p className="settings-hint">流水线节点与出边（条件按列表顺序取第一条匹配）</p>
-      <p className="settings-hint">
-        没有单独的入口节点；第一个节点绑定的 AI（可多选）就是入口组：
-        {value.entryAgentIds
-          .map((id) => agents.find((agent) => agent.id === id)?.name ?? id)
-          .join("、") || "未绑定"}
-      </p>
+      <p className="settings-hint">按从上到下的顺序匹配出边条件，取第一条匹配生效。</p>
       {value.nodes.map((node) => {
         const eligibleAgents = agents;
         const outs = value.edges

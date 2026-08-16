@@ -7,7 +7,10 @@ const INDEX_FILE = `${SESSIONS_DIR}/index.json`;
 interface SessionIndex {
   activeId: string;
   order: string[];
-  meta: Record<string, { title: string; updatedAt: string }>;
+  meta: Record<
+    string,
+    { title: string; updatedAt: string; model?: string; providerId?: string }
+  >;
 }
 
 function nowIso(): string {
@@ -124,12 +127,20 @@ export async function saveSession(session: ChatSession): Promise<void> {
   index.meta[session.id] = {
     title: session.title,
     updatedAt: session.updatedAt,
+    ...(session.model ? { model: session.model } : {}),
+    ...(session.providerId ? { providerId: session.providerId } : {}),
   };
   await saveIndex(index);
 }
 
 export async function listSessions(): Promise<
-  Array<{ id: string; title: string; updatedAt: string }>
+  Array<{
+    id: string;
+    title: string;
+    updatedAt: string;
+    model?: string;
+    providerId?: string;
+  }>
 > {
   const index = await loadIndex();
   return [...index.order]
@@ -140,6 +151,8 @@ export async function listSessions(): Promise<
         id,
         title: meta?.title ?? "新对话",
         updatedAt: meta?.updatedAt ?? "",
+        ...(meta?.model ? { model: meta.model } : {}),
+        ...(meta?.providerId ? { providerId: meta.providerId } : {}),
       };
     });
 }

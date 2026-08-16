@@ -1,3 +1,4 @@
+import { Capacitor } from "@capacitor/core";
 import type {
   AppSettings,
   ChatMessage,
@@ -8,6 +9,7 @@ import type {
 } from "../types";
 import { getProvider, modelSupportsThinking, normalizeReasoningEffort, providerSupportsVision, resolveModel } from "./apiProviders";
 import { normalizeMessagesForApi } from "./attachments";
+import { httpJson, httpStreamText, httpText } from "./nativeHttp";
 import { renumberSearchOutput } from "./searchSources";
 import { effectiveMaxToolRounds, effectiveModel } from "./settings";
 import {
@@ -16,6 +18,7 @@ import {
   ToolError,
   toolStatusLabel,
   waitingLabel,
+  type ToolExecutionResult,
 } from "./tools";
 
 export class ApiError extends Error {
@@ -112,6 +115,22 @@ function friendlyApiError(err: unknown): ApiError {
   if (raw.includes("failed to fetch") || raw.includes("network")) {
     return new ApiError("无法连接 API 服务器，请检查网络或 API 地址。");
   }
+  if (
+    raw.includes("unknown host") ||
+    raw.includes("unable to resolve host") ||
+    raw.includes("err_name_not_resolved") ||
+    raw.includes("connect timed out") ||
+    raw.includes("timeout") ||
+    raw.includes("failed to connect") ||
+    raw.includes("connection reset") ||
+    raw.includes("econnrefused") ||
+    raw.includes("connection refused") ||
+    raw.includes("cleartext") ||
+    raw.includes("ssl")
+  ) {
+    const detail = String(err).slice(0, 200);
+    return new ApiError(`无法连接 API 服务器：${detail}`);
+  }
   if (err instanceof ApiError) return err;
   if (err instanceof ToolError) return new ApiError(err.message);
   return new ApiError(String(err));
@@ -131,6 +150,18 @@ async function fetchJson(
   timeoutMs: number,
   errorLabel: string,
 ): Promise<Record<string, unknown>> {
+  if (Capacitor.isNativePlatform()) {
+    // 原生平台直走 OkHttp（HTTP/1.1 优先），WebView fetch 无原生降级且跨域不可靠。
+    const { status, data } = await httpJson<Record<string, unknown>>(
+      url,
+      init,
+      timeoutMs,
+    );
+    if (status < 200 || status >= 300) {
+      throw new ApiError(`${errorLabel} (${status})`, status);
+    }
+    return data;
+  }
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -152,13 +183,29 @@ function apiRoot(settings: AppSettings): string {
 
 function chatUrl(settings: AppSettings): string {
   const base = settings.baseUrl.replace(/\/$/, "");
-  return base.endsWith("/v1")
+  const url = base.endsWith("/v1")
     ? `${base}/chat/completions`
     : `${base}/v1/chat/completions`;
+  return gatewayUrl(url);
+}
+
+/**
+ * 浏览器模式下把 opencode.ai 直连改写为同源 Vite 代理（绕过 CORS 拦截）；
+ * 原生平台（Android OkHttp 回退）不需要，保持直连。
+ */
+function gatewayUrl(url: string): string {
+  if (Capacitor.isNativePlatform()) return url;
+  return url.replace("https://opencode.ai", "/go-gateway");
 }
 
 function applyThinking(settings: AppSettings, body: Record<string, unknown>) {
-  if (!modelSupportsThinking(resolveModel(settings))) return;
+  const provider = settings.providers?.find(
+    (item) => item.id === settings.apiProvider,
+  );
+  const supportsThinking = provider?.thinkingSupport ?? false;
+  if (!supportsThinking || !modelSupportsThinking(resolveModel(settings))) {
+    return;
+  }
   const extra = { ...(body.extra_body as Record<string, unknown> | undefined) };
   if (settings.thinkingMode === "disabled") {
     extra.thinking = { type: "disabled" };
@@ -175,6 +222,7 @@ function applyThinking(settings: AppSettings, body: Record<string, unknown>) {
 function buildChatBody(
   settings: AppSettings,
   messages: ChatMessage[],
+  extraTools?: Array<{ type: string; function: Record<string, unknown> }>,
 ): Record<string, unknown> {
   const body: Record<string, unknown> = {
     model: effectiveModel(settings),
@@ -190,8 +238,11 @@ function buildChatBody(
   applyThinking(settings, body);
   try {
     const tools = buildTools(settings);
-    if (tools) {
-      body.tools = tools;
+    const all = tools
+      ? [...tools, ...(extraTools ?? [])]
+      : [...(extraTools ?? [])];
+    if (all.length) {
+      body.tools = all;
       body.tool_choice = "auto";
     }
   } catch {
@@ -347,6 +398,57 @@ function pickText(delta: Record<string, unknown>, ...keys: string[]): string {
   return "";
 }
 
+/** 解析一行 SSE（`data:` 开头）并累积到各字段；返回是否成功消费。 */
+function feedSseLine(
+  line: string,
+  state: {
+    content: string;
+    reasoning: string;
+    finishReason: string | null;
+    usage: TokenUsage | null;
+    toolAcc: ToolCallAccumulator;
+    /** 是否收到过 `[DONE]` 结束标记（断流保护用）。 */
+    sawDone?: boolean;
+    onDelta?: (text: string) => void;
+    onReasoningDelta?: (text: string) => void;
+  },
+): boolean {
+  const trimmed = line.trim();
+  if (!trimmed.startsWith("data:")) return false;
+  const payload = trimmed.slice(5).trim();
+  if (!payload) return false;
+  if (payload === "[DONE]") {
+    // 标记流已以 [DONE] 正常收尾，供断流保护判断
+    state.sawDone = true;
+    return false;
+  }
+  let chunk: Record<string, unknown>;
+  try {
+    chunk = JSON.parse(payload) as Record<string, unknown>;
+  } catch {
+    return false;
+  }
+  const parsedUsage = parseUsage(chunk);
+  if (parsedUsage) state.usage = parsedUsage;
+  const choices = chunk.choices as Array<Record<string, unknown>> | undefined;
+  const choice = choices?.[0];
+  if (!choice) return true;
+  state.finishReason = String(choice.finish_reason ?? state.finishReason ?? "");
+  const delta = (choice.delta ?? {}) as Record<string, unknown>;
+  const reasoningDelta = pickText(delta, "reasoning_content", "reasoning");
+  if (reasoningDelta) {
+    state.reasoning += reasoningDelta;
+    state.onReasoningDelta?.(reasoningDelta);
+  }
+  const textDelta = pickText(delta, "content");
+  if (textDelta) {
+    state.content += textDelta;
+    state.onDelta?.(textDelta);
+  }
+  state.toolAcc.feed(delta.tool_calls);
+  return true;
+}
+
 async function streamChat(
   settings: AppSettings,
   body: Record<string, unknown>,
@@ -364,14 +466,89 @@ async function streamChat(
     timeout = setTimeout(() => controller.abort(), timeoutMs);
   };
 
-  try {
-    const resp = await fetch(chatUrl(settings), {
-      method: "POST",
-      headers: buildHeaders(settings),
-      body: JSON.stringify(body),
-      signal: controller.signal,
-    });
+  const url = chatUrl(settings);
+  const headers = buildHeaders(settings);
+  const bodyText = JSON.stringify(body);
+  const init: RequestInit = {
+    method: "POST",
+    headers,
+    body: bodyText,
+    signal: controller.signal,
+  };
 
+  // Android 主通道：OkHttp 原生流式（HTTP/1.1 优先）。WebView fetch 对跨域
+  // （go 网关无 CORS）与流式响应体支持不可靠，不再作为手机端主路径。
+  if (Capacitor.isNativePlatform()) {
+    const toolAcc = new ToolCallAccumulator();
+    const state = {
+      content: "",
+      reasoning: "",
+      finishReason: null as string | null,
+      usage: null as TokenUsage | null,
+      toolAcc,
+      sawDone: false,
+      onDelta,
+      onReasoningDelta,
+    };
+    const requestId = `chat_${Date.now().toString(36)}_${Math.random()
+      .toString(36)
+      .slice(2, 8)}`;
+    let buffer = "";
+    try {
+      await httpStreamText({
+        url,
+        method: "POST",
+        headers,
+        body: bodyText,
+        timeoutMs,
+        requestId,
+        signal: controller.signal,
+        onChunk: (chunk) => {
+          bumpTimeout();
+          buffer += chunk;
+          const lines = buffer.split("\n");
+          buffer = lines.pop() ?? "";
+          for (const line of lines) {
+            feedSseLine(line, state);
+          }
+        },
+      });
+    } finally {
+      clearTimeout(timeout);
+    }
+    const streamCut =
+      !state.sawDone && !state.finishReason && !control?.cancelled;
+    if (streamCut) {
+      if (!state.content.trim()) {
+        throw new ApiError("连接中断：流未正常结束，请重试", 502);
+      }
+      return {
+        content: state.content,
+        reasoning: state.reasoning,
+        toolCalls: [],
+        finishReason: state.finishReason,
+        usage: state.usage,
+      };
+    }
+    const tools = toolAcc.finish();
+    return {
+      content: state.content,
+      reasoning: state.reasoning,
+      toolCalls: tools.length ? tools : [],
+      finishReason: state.finishReason,
+      usage: state.usage,
+    };
+  }
+
+  let resp: Response;
+  try {
+    resp = await fetch(url, init);
+  } catch (err) {
+    clearTimeout(timeout);
+    throw err;
+  }
+
+  try {
     if (!resp.ok) {
       const detail = (await resp.text()).slice(0, 200);
       throw new ApiError(`API 错误 (${resp.status})：${detail}`, resp.status);
@@ -387,6 +564,16 @@ async function streamChat(
     let finishReason: string | null = null;
     let usage: TokenUsage | null = null;
     const toolAcc = new ToolCallAccumulator();
+    const state = {
+      content,
+      reasoning,
+      finishReason,
+      usage,
+      toolAcc,
+      sawDone: false,
+      onDelta,
+      onReasoningDelta,
+    };
 
     try {
       while (true) {
@@ -401,36 +588,7 @@ async function streamChat(
         const lines = buffer.split("\n");
         buffer = lines.pop() ?? "";
         for (const line of lines) {
-          const trimmed = line.trim();
-          if (!trimmed.startsWith("data:")) continue;
-          const payload = trimmed.slice(5).trim();
-          if (!payload || payload === "[DONE]") continue;
-          let chunk: Record<string, unknown>;
-          try {
-            chunk = JSON.parse(payload) as Record<string, unknown>;
-          } catch {
-            continue;
-          }
-          const parsedUsage = parseUsage(chunk);
-          if (parsedUsage) usage = parsedUsage;
-          const choices = chunk.choices as
-            | Array<Record<string, unknown>>
-            | undefined;
-          const choice = choices?.[0];
-          if (!choice) continue;
-          finishReason = String(choice.finish_reason ?? finishReason ?? "");
-          const delta = (choice.delta ?? {}) as Record<string, unknown>;
-          const reasoningDelta = pickText(delta, "reasoning_content", "reasoning");
-          if (reasoningDelta) {
-            reasoning += reasoningDelta;
-            onReasoningDelta?.(reasoningDelta);
-          }
-          const textDelta = pickText(delta, "content");
-          if (textDelta) {
-            content += textDelta;
-            onDelta?.(textDelta);
-          }
-          toolAcc.feed(delta.tool_calls);
+          feedSseLine(line, state);
         }
       }
     } finally {
@@ -443,13 +601,35 @@ async function streamChat(
       }
     }
 
+    // 断流保护：正常流一定以 [DONE] 或某 chunk 的 finish_reason 收尾；
+    // 两者皆无（且非用户取消）说明连接被网关切断（clean-FIN）。
+    // 此时 tool_calls 的 arguments 往往是截断的 JSON（如 `{"q`），
+    // 一旦写入会话历史，后续每轮请求都会回放这段坏 JSON，导致上游 400 卡死
+    // （reasonix 的 DeepSeek-Reasonix PR #3957 修复的正是该问题）。
+    // 因此断流时丢弃本次累积的工具调用、不写入历史；正文已收到的部分保留，
+    // 若一个字都没收到则抛 502（可重试状态），让上层 withRetry 重试。
+    const streamCut =
+      !state.sawDone && !state.finishReason && !control?.cancelled;
+    if (streamCut) {
+      if (!state.content.trim()) {
+        throw new ApiError("连接中断：流未正常结束，请重试", 502);
+      }
+      return {
+        content: state.content,
+        reasoning: state.reasoning,
+        toolCalls: [],
+        finishReason: state.finishReason,
+        usage: state.usage,
+      };
+    }
+
     const tools = toolAcc.finish();
     return {
-      content,
-      reasoning,
+      content: state.content,
+      reasoning: state.reasoning,
       toolCalls: tools.length ? tools : [],
-      finishReason,
-      usage,
+      finishReason: state.finishReason,
+      usage: state.usage,
     };
   } catch (err) {
     clearTimeout(timeout);
@@ -491,20 +671,45 @@ async function completeChat(
   let data: Record<string, unknown>;
   // The deadline has to cover reading the body too, not just the response headers.
   try {
-    const resp = await fetch(chatUrl(settings), {
+    const url = chatUrl(settings);
+    const init: RequestInit = {
       method: "POST",
       headers: buildHeaders(settings),
       body: JSON.stringify({ ...body, stream: false }),
       signal: controller.signal,
-    });
-    if (!resp.ok) {
-      const detail = (await resp.text()).slice(0, 200);
-      throw new ApiError(`API 错误 (${resp.status})：${detail}`, resp.status);
+    };
+    if (Capacitor.isNativePlatform()) {
+      // 原生平台直走 OkHttp 整包取回（HTTP/1.1 优先），绕开 WebView fetch。
+      const { status, text } = await httpText(
+        url,
+        init,
+        settings.httpReadTimeout * 1000,
+      );
+      if (status < 200 || status >= 300) {
+        throw new ApiError(`API 错误 (${status})：${text.slice(0, 200)}`, status);
+      }
+      data = JSON.parse(text) as Record<string, unknown>;
+    } else {
+      const resp = await fetch(url, init);
+      if (!resp.ok) {
+        const detail = (await resp.text()).slice(0, 200);
+        throw new ApiError(`API 错误 (${resp.status})：${detail}`, resp.status);
+      }
+      data = (await resp.json()) as Record<string, unknown>;
     }
-    data = (await resp.json()) as Record<string, unknown>;
   } finally {
     clearTimeout(timeout);
   }
+  return buildCompleteResult(data, onDelta, onReasoningDelta, control);
+}
+
+/** 把非流式响应体解析为 CompletionResult 并模拟打字。 */
+async function buildCompleteResult(
+  data: Record<string, unknown>,
+  onDelta?: (text: string) => void,
+  onReasoningDelta?: (text: string) => void,
+  control?: StreamControl,
+): Promise<CompletionResult> {
   const choices = data.choices as Array<Record<string, unknown>>;
   const message = (choices?.[0]?.message ?? {}) as Record<string, unknown>;
   const content = String(message.content ?? "");
@@ -604,9 +809,10 @@ async function runSingleCompletion(
     onDelta?: (text: string) => void;
     onReasoningDelta?: (text: string) => void;
     control?: StreamControl;
+    extraTools?: Array<{ type: string; function: Record<string, unknown> }>;
   },
 ): Promise<CompletionResult> {
-  const body = buildChatBody(settings, convo);
+  const body = buildChatBody(settings, convo, options?.extraTools);
   if (!includeTools) {
     delete body.tools;
     delete body.tool_choice;
@@ -727,6 +933,13 @@ export async function chatStream(
       },
     ) => void;
     control?: StreamControl;
+    /** 附加工具声明（如工作区文件工具），与内置工具一起注入。 */
+    extraTools?: Array<{ type: string; function: Record<string, unknown> }>;
+    /** 附加工具执行器（如工作区文件工具），优先于内置 BUILTIN_HANDLERS。 */
+    extraToolHandlers?: Record<
+      string,
+      (args: Record<string, unknown>, settings: AppSettings, signal?: AbortSignal) => Promise<ToolExecutionResult>
+    >;
   },
 ): Promise<ChatResponse> {
   if (!settings.apiKey.trim()) {
@@ -815,6 +1028,7 @@ export async function chatStream(
               args,
               settings,
               options?.control?.signal,
+              options?.extraToolHandlers,
             );
             toolOut = executed.content;
             exportedFile = executed.exportedFile;
@@ -901,6 +1115,10 @@ export async function chatStream(
 export async function fetchDeepseekBalance(
   settings: AppSettings,
 ): Promise<DeepSeekBalance> {
+  // 余额接口是 DeepSeek 专有端点；其他供应商不支持时返回不可用而非报错。
+  if (settings.apiProvider !== "deepseek") {
+    return { isAvailable: false, balanceInfos: [] };
+  }
   if (!settings.apiKey.trim()) {
     throw new ApiError("请先在设置中填写 API Key");
   }
@@ -937,7 +1155,9 @@ export async function listModels(settings: AppSettings): Promise<string[]> {
     throw new ApiError("请先在设置中填写 API Key");
   }
   const base = settings.baseUrl.replace(/\/$/, "");
-  const url = base.endsWith("/v1") ? `${base}/models` : `${base}/v1/models`;
+  const url = gatewayUrl(
+    base.endsWith("/v1") ? `${base}/models` : `${base}/v1/models`,
+  );
   const data = (await fetchJson(
     url,
     { headers: buildHeaders(settings) },
@@ -953,4 +1173,27 @@ export async function listModels(settings: AppSettings): Promise<string[]> {
   return [...ids].sort((a, b) =>
     a.localeCompare(b, undefined, { sensitivity: "base" }),
   );
+}
+
+/**
+ * 供上下文压缩使用：非流式单轮生成摘要（不跑工具循环）。
+ * 任何失败返回 null，由调用方决定是否继续。
+ */
+export async function summarizeText(
+  settings: AppSettings,
+  messages: ChatMessage[],
+  maxTokens = 500,
+): Promise<string | null> {
+  try {
+    const body = buildChatBody(settings, messages);
+    body.stream = false;
+    body.max_tokens = maxTokens;
+    delete body.tools;
+    delete body.tool_choice;
+    const result = await completeChat(settings, body);
+    const text = (result.content ?? "").trim();
+    return text || null;
+  } catch {
+    return null;
+  }
 }

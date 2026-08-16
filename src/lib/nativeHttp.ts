@@ -1,4 +1,56 @@
-import { Capacitor, CapacitorHttp } from "@capacitor/core";
+import {
+  Capacitor,
+  CapacitorHttp,
+  registerPlugin,
+  type PluginListenerHandle,
+} from "@capacitor/core";
+
+interface HttpNativePlugin {
+  httpText(options: {
+    url: string;
+    method?: string;
+    headers?: Record<string, string>;
+    body?: string;
+    timeoutMs?: number;
+  }): Promise<{ status?: number; text?: string; error?: string }>;
+  httpStream(options: {
+    requestId: string;
+    url: string;
+    method?: string;
+    headers?: Record<string, string>;
+    body?: string;
+    timeoutMs?: number;
+  }): Promise<{ done?: boolean; error?: string }>;
+  httpAbort(options: { requestId: string }): Promise<void>;
+  addListener(
+    eventName: string,
+    listenerFunc: (data: unknown) => void,
+  ): Promise<PluginListenerHandle>;
+}
+
+interface HttpChunkEvent {
+  requestId: string;
+  chunk: string;
+}
+
+const HttpNative = registerPlugin<HttpNativePlugin>("HttpNative");
+
+/** httpChunk 事件按 requestId 分流到各流式请求。 */
+const streamHandlers = new Map<string, (chunk: string) => void>();
+let streamListener: Promise<PluginListenerHandle> | null = null;
+
+function ensureStreamListener(): Promise<PluginListenerHandle> {
+  let listener = streamListener;
+  if (!listener) {
+    listener = HttpNative.addListener("httpChunk", (data: unknown) => {
+      const event = data as HttpChunkEvent;
+      const handler = streamHandlers.get(event.requestId);
+      if (handler) handler(event.chunk);
+    });
+    streamListener = listener;
+  }
+  return listener;
+}
 
 export class HttpError extends Error {
   status: number;
@@ -6,6 +58,56 @@ export class HttpError extends Error {
   constructor(message: string, status = 0) {
     super(message);
     this.status = status;
+  }
+}
+
+/**
+ * 原生增量流式（Android 专用）：OkHttp 逐行推送 SSE 到 onChunk。
+ * 取消时向插件发 httpAbort 立即断开，并抛 AbortedError。
+ */
+export async function httpStreamText(options: {
+  url: string;
+  method?: string;
+  headers?: Record<string, string>;
+  body?: string;
+  timeoutMs?: number;
+  requestId: string;
+  onChunk: (chunk: string) => void;
+  signal?: AbortSignal | null;
+}): Promise<void> {
+  const {
+    url,
+    method = "GET",
+    headers,
+    body,
+    timeoutMs = 15000,
+    requestId,
+    onChunk,
+    signal,
+  } = options;
+  throwIfAborted(signal);
+  await ensureStreamListener();
+  streamHandlers.set(requestId, onChunk);
+  const abortRelay = () => {
+    void HttpNative.httpAbort({ requestId }).catch(() => undefined);
+  };
+  signal?.addEventListener("abort", abortRelay);
+  try {
+    const result = await HttpNative.httpStream({
+      requestId,
+      url,
+      method,
+      headers,
+      ...(body !== undefined ? { body } : {}),
+      timeoutMs,
+    });
+    if (result.error != null) {
+      throw new HttpError(result.error, 0);
+    }
+    throwIfAborted(signal);
+  } finally {
+    signal?.removeEventListener("abort", abortRelay);
+    streamHandlers.delete(requestId);
   }
 }
 
@@ -73,6 +175,28 @@ export async function httpText(
       responseType: "text" as const,
       ...(data !== undefined ? { data } : {}),
     };
+    // OkHttp 原生请求（Android）优先于 CapacitorHttp：插件内先 HTTP/1.1、
+    // 网络层异常再回退 HTTP/2 兜底（opencode go 网关实测接受 HTTP/1.1，
+    // 曾误诊为「只接受 HTTP/2」）。
+    try {
+      const native = await HttpNative.httpText({
+        url,
+        method,
+        headers,
+        ...(data !== undefined ? { body: data } : {}),
+        timeoutMs,
+      });
+      if (native.error != null) {
+        // 网络层失败（DNS/超时/连接重置等）：透出原始原因，便于诊断。
+        throw new HttpError(native.error, 0);
+      }
+      throwIfAborted(outerSignal);
+      return { status: native.status ?? 0, text: native.text ?? "" };
+    } catch (err) {
+      if (err instanceof AbortedError) throw err;
+      if (err instanceof HttpError) throw err;
+      // 插件缺失/调用异常：兜底 CapacitorHttp。
+    }
     const resp =
       method === "GET"
         ? await CapacitorHttp.get(options)

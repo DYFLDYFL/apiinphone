@@ -143,7 +143,7 @@ export function attachmentDisplayMarkdown(
     let block = `![${att.name}](${att.dataUrl})`;
     if (!supportsVision) {
       block +=
-        "\n\n> 当前 DeepSeek API 不支持识图，模型看不到此图。";
+        "\n\n> 当前供应商不支持识图，模型看不到此图。";
     }
     return block;
   }
@@ -187,7 +187,7 @@ export function buildUserMessage(
     } else if (att.kind === "image" && !supportsVision) {
       textParts.push(
         `\n\n---\n**附件 \`${att.name}\`** (${att.mime})\n\n` +
-          "当前 DeepSeek API 不支持图像输入，模型无法看到图片内容。",
+          "当前供应商不支持图像输入，模型无法看到图片内容。",
       );
     } else {
       textParts.push(attachmentDisplayMarkdown(att, supportsVision));
@@ -225,7 +225,7 @@ export function normalizeMessagesForApi(
         textParts.push(String(part.text ?? ""));
       } else if (part.type === "image_url") {
         textParts.push(
-          "\n\n---\n**图片附件**（DeepSeek API 不支持 vision，图像未发送。）",
+          "\n\n---\n**图片附件**（当前供应商不支持 vision，图像未发送。）",
         );
       }
     }

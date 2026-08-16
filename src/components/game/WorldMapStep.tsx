@@ -5,6 +5,7 @@ import {
   type PointerEvent as ReactPointerEvent,
   type WheelEvent as ReactWheelEvent,
 } from "react";
+import { confirmAsync } from "../../lib/uiDialogs";
 import {
   DEFAULT_TERRAIN_COLORS,
   cellsCoveredByRegion,
@@ -392,7 +393,7 @@ export function WorldMapStepEditor({
       }),
     );
   };
-  const deleteTerrain = (terrainId: string) => {
+  const deleteTerrain = async (terrainId: string) => {
     const terrain = terrainTypes.find((item) => item.id === terrainId);
     if (!terrain) return;
     const cellUsage = cells.filter(
@@ -408,7 +409,7 @@ export function WorldMapStepEditor({
         ? `有 ${cellUsage} 个重点坐标和 ${regionUsage} 个地形区使用「${terrain.displayName}」。删除后替换为「${replacement.displayName}」，继续吗？`
         : `有 ${usage} 处使用「${terrain.displayName}」。删除后将清除这些覆盖，继续吗？`
       : `确定删除地形「${terrain.displayName}」吗？`;
-    if (!window.confirm(warning)) return;
+    if (!(await confirmAsync(warning))) return;
     const nextCells = Object.fromEntries(
       Object.entries(map.cells).map(([key, cell]) => {
         if (cell.terrainId !== terrainId) return [key, cell];

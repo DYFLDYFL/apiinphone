@@ -47,6 +47,9 @@ const BUILTIN_TOOLS = [
       parameters: {
         type: "object",
         properties: {},
+        // 空参数工具也显式声明 required: []：kimi 系（Moonshot）严格 JSON Schema
+        // 校验器对缺 required 键的空 properties schema 有报 400 的先例（opencode issue #11357）
+        required: [],
         additionalProperties: false,
       },
     },
@@ -275,9 +278,24 @@ export async function executeTool(
   argumentsJson: string,
   settings: AppSettings,
   signal?: AbortSignal,
+  extraHandlers?: Record<
+    string,
+    (
+      args: Record<string, unknown>,
+      settings: AppSettings,
+      signal?: AbortSignal,
+    ) => Promise<ToolExecutionResult>
+  >,
 ): Promise<ToolExecutionResult> {
   if (signal?.aborted) throw new ToolError("已取消");
   const payload = parseToolArgs(argumentsJson);
+
+  const extra = extraHandlers?.[name];
+  if (extra) {
+    const out = await extra(payload, settings, signal);
+    if (typeof out === "string") return { content: out };
+    return out;
+  }
 
   const handler = BUILTIN_HANDLERS[name];
   if (handler) {

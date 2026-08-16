@@ -33,6 +33,7 @@ import {
   loadSettings,
   rememberModel,
   saveSettings,
+  sessionEffectiveSettings,
   thinkingActive,
   thinkingChainVisible,
 } from "./lib/settings";
@@ -47,13 +48,18 @@ import {
   titleFromFirstMessage,
 } from "./lib/sessionStore";
 import { collectNumberedSources } from "./lib/searchSources";
+import { compressHistory, shouldCompress } from "./lib/contextCompress";
 import { buildToolTrace } from "./lib/tools";
 import { ChatViewer, useChatViewerRef, viewerFromRef } from "./components/ChatViewer";
 import { ExportFileCard } from "./components/ExportFileCard";
 import { InfoPanel } from "./components/InfoPanel";
 import { RenameDialog } from "./components/RenameDialog";
+import { ConfirmDialog } from "./components/ConfirmDialog";
 import { GameScreen } from "./components/game/GameScreen";
+import { WorkspaceScreen } from "./components/workspace/WorkspaceScreen";
 import { ModelSwitcher } from "./components/ModelSwitcher";
+import { ModeSwitcher } from "./components/ModeSwitcher";
+import type { AppMode } from "./components/ModeSwitcher";
 import { SettingsPanel } from "./components/SettingsPanel";
 import type { ExportedFile } from "./lib/documentExport";
 import { deleteExportedFile } from "./lib/documentExport";
@@ -63,12 +69,16 @@ import {
   removeExportHistory,
 } from "./lib/exportHistory";
 import { startChatKeepAlive, stopChatKeepAlive } from "./lib/chatKeepAlive";
+import { confirmAsync, showMessage } from "./lib/uiDialogs";
+import { copyText } from "./lib/clipboard";
 import "./index.css";
 
 interface SessionMeta {
   id: string;
   title: string;
   updatedAt: string;
+  model?: string;
+  providerId?: string;
 }
 
 function normalizeToolTrace(
@@ -108,6 +118,9 @@ export default function App() {
   const [attachments, setAttachments] = useState<AttachmentPreview[]>([]);
   const [busy, setBusy] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsSection, setSettingsSection] = useState<"chat" | "workspace">(
+    "chat",
+  );
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [infoOpen, setInfoOpen] = useState(false);
   const [viewerReady, setViewerReady] = useState(false);
@@ -120,13 +133,16 @@ export default function App() {
   const [renameOpen, setRenameOpen] = useState(false);
   const [renameId, setRenameId] = useState("");
   const [statusText, setStatusText] = useState("");
-  const [appMode, setAppMode] = useState<"chat" | "game">("chat");
+  const [appMode, setAppMode] = useState<"chat" | "game" | "workspace">("chat");
   const [exportHistory, setExportHistory] = useState<ExportedFile[]>([]);
   const [sessionExports, setSessionExports] = useState<ExportedFile[]>([]);
   const streamControlRef = useRef(createStreamControl());
   const toolTraceRef = useRef<ToolTraceItem[]>([]);
   const composingRef = useRef(false);
   const busyRef = useRef(false);
+
+  /** 会话级模型覆写后的设置视图（发送请求与顶栏显示统一使用）。 */
+  const displaySettings = sessionEffectiveSettings(settings, session);
 
   const markBusy = useCallback((value: boolean) => {
     busyRef.current = value;
@@ -145,6 +161,8 @@ export default function App() {
       for (const msg of current.display) {
         if (msg.role === "user") {
           viewer.appendMessage("user", msg.content);
+        } else if (msg.role === "system") {
+          viewer.appendMessage("system", msg.content, { plain: true });
         } else {
           viewer.appendMessage("assistant", msg.content, {
             reasoning: showThinkingChain ? msg.reasoning : undefined,
@@ -162,6 +180,7 @@ export default function App() {
     void (async () => {
       const loaded = await loadSettings();
       setSettings(loaded);
+      setAppMode(loaded.lastView === "game" || loaded.lastView === "workspace" ? loaded.lastView : "chat");
       const active = await loadActiveSession();
       setSession(active);
       setSessionExports(exportsFromSession(active));
@@ -202,14 +221,19 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (settings) void refreshBalance(settings);
-  }, [settings?.apiKey, refreshBalance]);
+    if (settings?.apiProvider === "deepseek") void refreshBalance(settings);
+  }, [settings?.apiKey, settings?.apiProvider, refreshBalance]);
 
   const persistSettings = async (next: AppSettings) => {
     setSettings(next);
     await saveSettings(next);
     await configureNativeChrome(next.theme);
-    void refreshBalance(next);
+    if (next.apiProvider === "deepseek") {
+      void refreshBalance(next);
+    } else {
+      setBalanceLines([]);
+      setBalanceError("");
+    }
   };
 
   const persistSession = async (next: ChatSession) => {
@@ -250,6 +274,8 @@ export default function App() {
   ) => {
     if (!settings) return;
 
+    const runSettings = displaySettings ?? settings;
+
     markBusy(true);
     setStatusText("正在请求…");
     void startChatKeepAlive("AI API Client", "正在生成…");
@@ -265,14 +291,14 @@ export default function App() {
       if (last.role === "user") viewer?.appendMessage("user", last.content);
     }
     viewer?.appendMessage("assistant", "", { typing: true });
-    if (thinkingChainVisible(settings)) {
+    if (thinkingChainVisible(runSettings)) {
       viewer?.updateLastAssistant("", true, "", true);
     }
 
     let reasoningStreaming = false;
     let viewerRaf = 0;
     const pushViewerStream = () => {
-      if (thinkingChainVisible(settings)) {
+      if (thinkingChainVisible(runSettings)) {
         viewer?.updateLastAssistant(
           streamText,
           true,
@@ -294,7 +320,7 @@ export default function App() {
     try {
       let balanceBefore: number | null = null;
       try {
-        const beforeBal = await fetchDeepseekBalance(settings);
+        const beforeBal = await fetchDeepseekBalance(runSettings);
         balanceBefore = cnyTotalFromBalance(beforeBal);
         setBalanceLines(formatBalanceDisplay(beforeBal));
         setBalanceError("");
@@ -307,7 +333,7 @@ export default function App() {
       ): Promise<{ amount: number; kind: SpendKind }> => {
         let fromBalance: number | null = null;
         try {
-          const afterBal = await fetchDeepseekBalance(settings);
+          const afterBal = await fetchDeepseekBalance(runSettings);
           setBalanceLines(formatBalanceDisplay(afterBal));
           setBalanceError("");
           fromBalance = spentCnyFromBalanceDelta(
@@ -321,7 +347,7 @@ export default function App() {
           return { amount: fromBalance, kind: "balance" };
         }
         const estimated = usage
-          ? estimateUsageCostCny(effectiveModel(settings), usage)
+          ? estimateUsageCostCny(effectiveModel(runSettings), usage)
           : 0;
         if (fromBalance === 0 && estimated <= 0) {
           return { amount: 0, kind: "balance" };
@@ -344,7 +370,7 @@ export default function App() {
         onReasoningDelta: (delta) => {
           streamReasoning += delta;
           reasoningStreaming = true;
-          if (thinkingChainVisible(settings)) {
+          if (thinkingChainVisible(runSettings)) {
             scheduleViewerStream();
           }
         },
@@ -418,7 +444,7 @@ export default function App() {
         const assistantDisplay: DisplayMessage = {
           role: "assistant",
           content: cancelContent,
-          reasoning: thinkingActive(settings) ? streamReasoning : undefined,
+          reasoning: thinkingActive(runSettings) ? streamReasoning : undefined,
           toolTrace,
           sources: sources.length ? sources : undefined,
           note: response.note,
@@ -462,7 +488,7 @@ export default function App() {
       const assistantDisplay: DisplayMessage = {
         role: "assistant",
         content: finalContent,
-        reasoning: thinkingActive(settings) ? response.reasoning : undefined,
+        reasoning: thinkingActive(runSettings) ? response.reasoning : undefined,
         toolTrace,
         sources: sources.length ? sources : undefined,
         note: response.note || undefined,
@@ -492,11 +518,11 @@ export default function App() {
       setLastUsage(response.usage);
       setLastSpentCny(spend.amount);
       setLastSpendKind(spend.kind);
-      const savedSettings = rememberModel(settings, effectiveModel(settings));
-      if (savedSettings !== settings) await persistSettings(savedSettings);
+      const savedSettings = rememberModel(runSettings, effectiveModel(runSettings));
+      if (savedSettings !== runSettings) await persistSettings(savedSettings);
 
       viewer?.updateLastAssistantTools(toolTrace, false);
-      if (thinkingChainVisible(settings)) {
+      if (thinkingChainVisible(runSettings)) {
         viewer?.updateLastAssistant(
           finalContent,
           false,
@@ -523,7 +549,7 @@ export default function App() {
         role: "assistant",
         content: errorBody,
         reasoning:
-          thinkingActive(settings) && streamReasoning ? streamReasoning : undefined,
+          thinkingActive(runSettings) && streamReasoning ? streamReasoning : undefined,
         toolTrace: toolTrace.length ? toolTrace : undefined,
         sources: errorSources.length ? errorSources : undefined,
       };
@@ -534,7 +560,7 @@ export default function App() {
       };
 
       await persistSession(failedSession);
-      renderSession(failedSession, thinkingChainVisible(settings));
+      renderSession(failedSession, thinkingChainVisible(runSettings));
       setStatusText(message);
     } finally {
       if (viewerRaf) cancelAnimationFrame(viewerRaf);
@@ -548,25 +574,47 @@ export default function App() {
     if (!settings || !session || busy) return;
     const text = input.trim();
     if (!text && !attachments.length) return;
-    if (!settings.apiKey.trim()) {
+    const sendSettings = displaySettings ?? settings;
+    if (!sendSettings.apiKey.trim()) {
       setSettingsOpen(true);
       return;
     }
-
-    const { content, apiContent } = buildUserMessage(text, attachments, settings);
+    const { content, apiContent } = buildUserMessage(text, attachments, sendSettings);
     const userDisplay: DisplayMessage = { role: "user", content };
     const userMessage: ChatMessage = { role: "user", content: apiContent };
 
+    // 上下文压缩：达到阈值时先把早期对话压缩为摘要，再拼入新消息。
+    let compressedNote: DisplayMessage | null = null;
+    let baseHistory = session.history;
+    if (shouldCompress(sendSettings, session)) {
+      const { history: nextHistory, compressed } = await compressHistory(
+        sendSettings,
+        session.history,
+      );
+      if (compressed) {
+        baseHistory = nextHistory;
+        compressedNote = {
+          role: "system",
+          content: `上下文已压缩（超过阈值 ${sendSettings.contextCompressThreshold}%，早期对话已汇总为摘要）。`,
+        };
+      }
+    }
+
     const history: ChatMessage[] = [
-      { role: "system", content: composeSystemPrompt(settings) },
-      ...session.history,
+      { role: "system", content: composeSystemPrompt(sendSettings) },
+      ...baseHistory,
       userMessage,
     ];
 
     const nextSession: ChatSession = {
       ...session,
-      history: [...session.history, userMessage],
-      display: [...session.display, userDisplay],
+      history: [...baseHistory, userMessage],
+      display: [
+        ...(compressedNote ? [compressedNote] : []),
+        ...session.display,
+        userDisplay,
+      ],
+      contextTokens: compressedNote ? 0 : session.contextTokens,
       title:
         session.display.length === 0
           ? titleFromFirstMessage(text || attachments[0]?.name || "新对话")
@@ -598,10 +646,10 @@ export default function App() {
     const trimmedDisplay = session.display.slice(0, -1);
     const baseSession = { ...session, history: trimmedHistory, display: trimmedDisplay };
     setSession(baseSession);
-    renderSession(baseSession, thinkingChainVisible(settings));
+    renderSession(baseSession, thinkingChainVisible(displaySettings ?? settings));
 
     const history: ChatMessage[] = [
-      { role: "system", content: composeSystemPrompt(settings) },
+      { role: "system", content: composeSystemPrompt(displaySettings ?? settings) },
       ...trimmedHistory,
     ];
     await runChat(history, trimmedDisplay, baseSession, true);
@@ -611,12 +659,8 @@ export default function App() {
     if (!session?.display.length) return;
     const last = [...session.display].reverse().find((m) => m.role === "assistant");
     if (!last?.content) return;
-    try {
-      await navigator.clipboard.writeText(last.content);
-      setStatusText("已复制回复");
-    } catch {
-      setStatusText("复制失败");
-    }
+    const ok = await copyText(last.content);
+    setStatusText(ok ? "已复制回复" : "复制失败");
   };
 
   const handleNewSession = async () => {
@@ -625,6 +669,9 @@ export default function App() {
     setSession(next);
     setSessionExports([]);
     setDrawerOpen(false);
+    setLastUsage(null);
+    setLastSpentCny(null);
+    setLastSpendKind(null);
     await refreshSessions();
   };
 
@@ -635,11 +682,14 @@ export default function App() {
     setSession(loaded);
     setSessionExports(exportsFromSession(loaded));
     setDrawerOpen(false);
+    setLastUsage(null);
+    setLastSpentCny(null);
+    setLastSpendKind(null);
   };
 
   const handleDeleteSession = async (id: string) => {
     if (busy) return;
-    if (!window.confirm("确定删除此对话？")) return;
+    if (!(await confirmAsync("确定删除此对话？"))) return;
     const next = (await deleteSession(id)) ?? (await createNewSession());
     setSession(next);
     setSessionExports(exportsFromSession(next));
@@ -660,7 +710,7 @@ export default function App() {
 
   const handleClearChat = async () => {
     if (!session || busy) return;
-    if (!window.confirm("确定清空当前对话？")) return;
+    if (!(await confirmAsync("确定清空当前对话？"))) return;
     const next = {
       ...session,
       history: [],
@@ -685,10 +735,9 @@ export default function App() {
       const loaded = await loadAttachmentsFromFiles(files);
       setAttachments((prev) => [...prev, ...loaded].slice(0, 10));
     } catch (err) {
-      alert(String(err));
+      void showMessage(String(err));
     }
   };
-
   const handlePaste = async (e: React.ClipboardEvent) => {
     const items = e.clipboardData?.items;
     if (!items) return;
@@ -701,7 +750,7 @@ export default function App() {
           const att = await loadPastedImage(blob);
           setAttachments((prev) => [...prev, att].slice(0, 10));
         } catch (err) {
-          alert(String(err));
+          void showMessage(String(err));
         }
         return;
       }
@@ -717,43 +766,55 @@ export default function App() {
     return <div className="boot">加载中…</div>;
   }
 
-  if (appMode === "game") {
-    return (
-      <div className={`app theme-${settings.theme}`}>
-        <GameScreen
-          settings={settings}
-          onSettingsChange={(next) => void persistSettings(next)}
-          onBack={() => setAppMode("chat")}
-          onOpenSettings={() => setSettingsOpen(true)}
-          onOpenInfo={() => setInfoOpen(true)}
-        />
-        <SettingsPanel
-          open={settingsOpen}
-          settings={settings}
-          onClose={() => setSettingsOpen(false)}
-          onSave={(next) => void persistSettings(next)}
-        />
-        <InfoPanel
-          open={infoOpen}
-          onClose={() => setInfoOpen(false)}
-          settings={settings}
-          session={session}
-          lastUsage={lastUsage}
-          lastSpentCny={lastSpentCny}
-          lastSpendKind={lastSpendKind}
-          balanceLines={balanceLines}
-          balanceError={balanceError}
-          balanceLoading={balanceLoading}
-          onRefreshBalance={() => void refreshBalance(settings)}
-          exportHistory={exportHistory}
-          onRemoveExport={(file) => void handleRemoveExport(file)}
-        />
-      </div>
-    );
-  }
+  const switchMode = (mode: AppMode) => {
+    setAppMode(mode);
+    void persistSettings({ ...settings, lastView: mode });
+  };
+
+  const applyModelSwitch = (
+    next: AppSettings,
+    nextModel: string,
+    changed: boolean,
+  ) => {
+    const remembered = rememberModel(next, nextModel);
+    void persistSettings(remembered);
+    if (changed && session) {
+      const providerId =
+        next.providers?.find((item) => item.id === next.apiProvider)?.id ??
+        next.apiProvider;
+      void persistSession({ ...session, model: nextModel, providerId });
+    }
+  };
 
   return (
     <div className={`app theme-${settings.theme}`}>
+      <div className={`app-zone ${appMode === "game" ? "active" : ""}`}>
+        <GameScreen
+          settings={settings}
+          onSettingsChange={(next) => void persistSettings(next)}
+          onOpenSettings={() => setSettingsOpen(true)}
+          onOpenInfo={() => setInfoOpen(true)}
+          appMode={appMode}
+          onSwitchMode={switchMode}
+        />
+      </div>
+
+      <div className={`app-zone ${appMode === "workspace" ? "active" : ""}`}>
+        <WorkspaceScreen
+          settings={settings}
+          onSettingsChange={(next) => void persistSettings(next)}
+          theme={settings.theme}
+          onOpenSettings={() => {
+            setSettingsSection("workspace");
+            setSettingsOpen(true);
+          }}
+          onOpenInfo={() => setInfoOpen(true)}
+          appMode={appMode}
+          onSwitchMode={switchMode}
+        />
+      </div>
+
+      <div className={`app-zone ${appMode === "chat" ? "active" : ""}`}>
       <header className="topbar">
         <button
           type="button"
@@ -767,14 +828,29 @@ export default function App() {
           <div className="title">{session.title}</div>
           <div className="subtitle">
             <ModelSwitcher
-              settings={settings}
+              settings={displaySettings ?? settings}
               disabled={busy}
               onChange={(next) => {
-                const remembered = rememberModel(next, effectiveModel(next));
-                void persistSettings(remembered);
+                const nextModel = effectiveModel(next);
+                const changed =
+                  nextModel !== effectiveModel(displaySettings ?? settings);
+                if (
+                  changed &&
+                  session &&
+                  session.display.length > 0
+                ) {
+                  void (async () => {
+                    const ok = await confirmAsync(
+                      "切换模型会导致上下文重新读取（缓存失效），推荐开一个新对话使用新的模型。您确定要直接切换模型吗？",
+                    );
+                    if (!ok) return;
+                    applyModelSwitch(next, nextModel, changed);
+                  })();
+                  return;
+                }
+                applyModelSwitch(next, nextModel, changed);
               }}
-            />
-            {(statusText || balanceLines[0]) && (
+            />            {(statusText || balanceLines[0]) && (
               <span className="status-hint">
                 {" · "}
                 {statusText || balanceLines[0]}
@@ -783,19 +859,11 @@ export default function App() {
           </div>
         </div>
         <div className="topbar-actions">
-          <button
-            type="button"
-            className="icon-btn"
-            onClick={() => setAppMode("game")}
-            title="游戏"
-            disabled={busy}
-          >
-            🎲
-          </button>
+          <ModeSwitcher current={appMode} onSwitch={switchMode} disabled={busy} />
           <button type="button" className="icon-btn" onClick={() => setInfoOpen(true)} title="用量">
             ℹ
           </button>
-          <button type="button" className="icon-btn" onClick={() => setSettingsOpen(true)}>
+          <button type="button" className="icon-btn" onClick={() => { setSettingsSection("chat"); setSettingsOpen(true); }}>
             ⚙
           </button>
         </div>
@@ -921,6 +989,9 @@ export default function App() {
                   >
                     {item.title}
                   </button>
+                  <div className="session-model">
+                    {item.model ? item.model : "跟随全局"}
+                  </div>
                   <div className="session-actions">
                     <button type="button" onClick={() => handleRenameSession(item.id)}>
                       重命名
@@ -938,11 +1009,14 @@ export default function App() {
           </aside>
         </div>
       )}
+      </div>
+
+      <ConfirmDialog />
 
       <InfoPanel
         open={infoOpen}
         onClose={() => setInfoOpen(false)}
-        settings={settings}
+        settings={displaySettings ?? settings}
         session={session}
         lastUsage={lastUsage}
         lastSpentCny={lastSpentCny}
@@ -965,6 +1039,7 @@ export default function App() {
       <SettingsPanel
         open={settingsOpen}
         settings={settings}
+        section={settingsSection}
         onClose={() => setSettingsOpen(false)}
         onSave={(next) => void persistSettings(next)}
       />

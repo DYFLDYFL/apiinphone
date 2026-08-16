@@ -470,7 +470,8 @@
       background: transparent;
       color: inherit;
     }
-    .msg.assistant .content blockquote {
+    .msg.assistant .content blockquote,
+    .md-preview-root blockquote {
       margin: 0.4em 0;
       padding: 0.4em 0.8em;
       border-left: 3px solid var(--blockquote-border);
@@ -550,6 +551,17 @@
       }
       return html;
     }
+
+    /**
+     * Exposed for the workspace Markdown preview: renders a full document
+     * (with math support) into a wrapper div suitable for mounting.
+     */
+    window.renderMarkdown = function(mdText) {
+      const wrapper = document.createElement("div");
+      wrapper.className = "content md-preview-root";
+      wrapper.innerHTML = renderMarkdownWithMath(mdText);
+      return wrapper;
+    };
 
     function renderBareLatexInCode(el) {
       el.querySelectorAll("pre code, code").forEach((code) => {

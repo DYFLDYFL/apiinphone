@@ -4,6 +4,7 @@ import {
   openExportedFile,
   shareExportedFile,
 } from "../lib/documentExport";
+import { showMessage } from "../lib/uiDialogs";
 
 interface ExportFileCardProps {
   file: ExportedFile;
@@ -20,7 +21,7 @@ export function ExportFileCard({
     try {
       await openExportedFile(file);
     } catch (err) {
-      alert(err instanceof Error ? err.message : String(err));
+      void showMessage(err instanceof Error ? err.message : String(err));
     }
   };
 
@@ -29,7 +30,7 @@ export function ExportFileCard({
       await shareExportedFile(file);
     } catch (err) {
       if (isShareDismissedError(err)) return;
-      alert(err instanceof Error ? err.message : String(err));
+      void showMessage(err instanceof Error ? err.message : String(err));
     }
   };
 

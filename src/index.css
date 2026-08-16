@@ -25,6 +25,14 @@ body,
   overflow: hidden;
 }
 
+@supports (height: 100dvh) {
+  html,
+  body,
+  #root {
+    height: 100dvh;
+  }
+}
+
 body {
   background: #eef2f7;
 }
@@ -42,6 +50,53 @@ body {
   height: 100%;
   background: var(--app-bg);
   color: var(--text);
+}
+
+/* 三区常驻挂载：激活区显示，其余隐藏（保留各自工作状态）。 */
+.app-zone {
+  display: none;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.app-zone.active {
+  display: flex;
+}
+
+.mode-switcher {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--app-bg) 60%, transparent);
+}
+
+.workspace-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.mode-switcher-btn {
+  border: none;
+  background: none;
+  font-size: 14px;
+  line-height: 1;
+  padding: 4px 6px;
+  border-radius: 8px;
+  cursor: pointer;
+  opacity: 0.55;
+  filter: grayscale(0.4);
+}
+
+.mode-switcher-btn.active {
+  opacity: 1;
+  filter: none;
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
 }
 
 .app.theme-light {
@@ -73,6 +128,13 @@ body {
   padding-top: calc(10px + var(--inset-top));
   background: var(--panel);
   border-bottom: 1px solid var(--border);
+}
+
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
 }
 
 .topbar-title {
@@ -186,6 +248,14 @@ body {
 
 .picker-actions {
   margin-top: 8px;
+}
+
+.confirm-dialog-text {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .main {
@@ -346,6 +416,14 @@ body {
   font: inherit;
   cursor: pointer;
   min-height: 36px;
+}
+
+.session-model {
+  font-size: 11px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .session-actions {
@@ -1322,7 +1400,7 @@ body {
 
 /* —— Layered game creation editors —— */
 .game-lobby-layered {
-  max-width: 860px;
+  max-width: 1100px;
 }
 
 .game-preset-toolbar {
@@ -3074,5 +3152,823 @@ body {
 
   .game-agent-feature-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+/* ===== 项目工作区 ===== */
+.workspace-create-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.workspace-create-row input {
+  min-width: 0;
+  flex: 1;
+  min-height: 38px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  padding: 7px 9px;
+  background: var(--game-input);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+}
+
+.workspace-list {
+  display: grid;
+  gap: 8px;
+}
+
+.workspace-card {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--game-surface-soft);
+}
+
+.workspace-card.active {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, var(--game-surface-soft));
+}
+
+.workspace-card-main {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.workspace-card-main strong {
+  font-size: 14px;
+}
+
+.workspace-card-main span {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.workspace-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.workspace-rename-input {
+  min-width: 0;
+  flex: 1;
+  min-height: 34px;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  padding: 5px 8px;
+  background: var(--game-input);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+}
+
+.workspace-connect-form {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr)) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.workspace-connect-form input {
+  min-width: 0;
+  min-height: 38px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  padding: 7px 9px;
+  background: var(--game-input);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+}
+
+.workspace-repo-info {
+  display: grid;
+  gap: 8px;
+}
+
+.workspace-repo-meta strong {
+  font-size: 15px;
+}
+
+.workspace-repo-meta p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.workspace-repo-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* ===== 工作区主区：单屏吃满屏幕 ===== */
+.workspace-main {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow: hidden;
+  padding: 12px calc(14px + var(--safe-area-right))
+    calc(14px + var(--inset-bottom)) calc(14px + var(--safe-area-left));
+}
+
+.workspace-main > .game-editor-section,
+.workspace-main > .workspace-chat {
+  flex: 1;
+  min-height: 0;
+}
+
+.workspace-main > .game-editor-section {
+  display: flex;
+  flex-direction: column;
+}
+
+.workspace-main-empty {
+  margin: auto;
+  text-align: center;
+}
+
+.workspace-file-subtabs {
+  margin-bottom: 0;
+  flex-shrink: 0;
+}
+
+/* ===== 工作区文件浏览器：两栏吃满剩余高度 ===== */
+.workspace-file-browser {
+  display: grid;
+  grid-template-columns: minmax(190px, 270px) minmax(0, 1fr);
+  gap: 10px;
+  flex: 1;
+  min-height: 0;
+}
+
+.workspace-tree {
+  display: flex;
+  flex-direction: column;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--game-surface-soft);
+  overflow-y: auto;
+  height: 100%;
+  min-height: 0;
+  max-height: none;
+}
+
+.workspace-tree-node {
+  display: flex;
+  flex-direction: column;
+}
+
+.workspace-tree-dir {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  padding: 4px 8px;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.workspace-tree-dir:hover {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.workspace-tree-file {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  padding: 4px 8px;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-tree-file:hover,
+.workspace-tree-file.selected {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+.workspace-file-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--game-surface-soft);
+}
+
+.workspace-file-panel > .workspace-editor,
+.workspace-file-panel > .workspace-file-view {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.workspace-editor-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.workspace-editor-head strong {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-editor-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+
+.workspace-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+}
+
+.workspace-editor input {
+  min-height: 34px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 9px;
+  background: var(--game-input);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+}
+
+.workspace-editor-textarea {
+  flex: 1;
+  min-height: 0;
+  resize: none;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px;
+  background: var(--game-input);
+  color: var(--text);
+  font: inherit;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.workspace-file-view {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+}
+
+.workspace-file-pre {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  padding: 8px;
+  overflow: auto;
+  max-height: none;
+  color: var(--text);
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.workspace-md-preview {
+  flex: 1;
+  min-height: 0;
+  height: auto;
+  width: 100%;
+  max-height: none;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--game-surface-soft);
+}
+
+.workspace-status {
+  flex-shrink: 0;
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: color-mix(in srgb, #f59e0b 14%, transparent);
+  color: #b45309;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+@media (max-width: 600px) {
+  .workspace-connect-form {
+    grid-template-columns: 1fr;
+  }
+
+  .workspace-file-browser {
+    grid-template-columns: 1fr;
+    min-height: 0;
+  }
+
+  .workspace-tree {
+    max-height: 30vh;
+    height: auto;
+  }
+
+  .workspace-file-panel {
+    height: auto;
+    min-height: 40vh;
+  }
+
+  .workspace-editor-textarea,
+  .workspace-file-pre,
+  .workspace-md-preview {
+    flex: none;
+    min-height: 30vh;
+  }
+}
+
+.workspace-connect-block {
+  display: grid;
+  gap: 8px;
+}
+
+.workspace-connect-hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+/* ===== 设置：模型供应商 ===== */
+.settings-providers-entry {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--game-surface-soft);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  margin-bottom: 6px;
+}
+
+.settings-providers-entry span:last-child {
+  color: var(--muted);
+  font-size: 16px;
+}
+
+.settings-back-btn {
+  width: 100%;
+  margin-top: 8px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.settings-providers {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.settings-provider-card {
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--game-surface-soft);
+}
+
+.settings-provider-card.active {
+  border-color: var(--accent);
+}
+
+.settings-provider-card p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.settings-provider-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.settings-provider-head strong {
+  font-size: 13px;
+}
+
+.settings-provider-head span {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.settings-provider-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings-provider-card.editing {
+  border-color: var(--accent);
+}
+
+.settings-provider-card.editing label {
+  display: grid;
+  gap: 4px;
+  font-size: 12px;
+}
+
+.settings-provider-card.editing input {
+  min-height: 36px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 9px;
+  background: var(--game-input);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+}
+
+.settings-provider-add {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.picker-label {
+  color: var(--muted);
+  font-size: 11px;
+  margin-bottom: 6px;
+}
+
+.picker-providers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.settings-model-checks {
+  display: grid;
+  gap: 6px;
+}
+
+.settings-model-checks > span {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.settings-model-check-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  max-height: 140px;
+  overflow-y: auto;
+}
+
+/* ===== 工作区 vibecoding ===== */
+.workspace-panel-tabs {
+  display: flex;
+  gap: 6px;
+}
+
+.workspace-repo-capsule {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  padding: 2px 6px 2px 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--game-surface-soft);
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.workspace-repo-capsule strong {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.workspace-repo-capsule .link-btn {
+  padding: 2px 8px;
+  font-size: 12px;
+}
+
+.workspace-file-subtabs {
+  margin-bottom: 8px;
+}
+
+.workspace-panel-tab {
+  padding: 6px 14px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--game-surface-soft);
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.workspace-panel-tab.active {
+  border-color: var(--accent);
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.workspace-chat {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 1;
+  min-height: 0;
+}
+
+.workspace-agent-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.workspace-agent-tab {
+  padding: 5px 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--game-surface-soft);
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.workspace-agent-tab.active {
+  border-color: var(--accent);
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.workspace-agent-tab.add {
+  border-style: dashed;
+}
+
+.workspace-agent-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.workspace-chat-viewer {
+  flex: 1;
+  min-height: 0;
+  height: auto;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--game-surface-soft);
+}
+
+.workspace-chat-viewer .chat-viewer {
+  width: 100%;
+  height: 100%;
+  border: none;
+}
+
+.workspace-chat-input {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.workspace-chat-input textarea {
+  min-width: 0;
+  flex: 1;
+  min-height: 44px;
+  max-height: 120px;
+  resize: vertical;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 9px 11px;
+  background: var(--game-input);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+/* ===== 项目目录抽屉 ===== */
+.workspace-dir-drawer {
+  position: fixed;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  z-index: 30;
+  width: min(86vw, 340px);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: calc(16px + var(--inset-top)) 16px calc(16px + var(--inset-bottom))
+    calc(16px + var(--safe-area-left));
+  background: var(--panel);
+  border-right: 1px solid var(--border);
+  overflow-y: auto;
+}
+
+.workspace-dir-btn.active {
+  background: var(--accent-soft);
+}
+
+.workspace-dir-create {
+  display: flex;
+  gap: 6px;
+}
+
+.workspace-dir-create input {
+  flex: 1;
+  min-width: 0;
+  min-height: 40px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 9px;
+  background: var(--game-input);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+}
+
+.workspace-dir-notice {
+  margin: 0;
+  color: #b45309;
+  font-size: 12px;
+}
+
+.workspace-dir-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.workspace-dir-switch {
+  flex-shrink: 0;
+  margin-top: auto;
+}
+
+.workspace-dir-switch .workspace-panel-tab {
+  flex: 1;
+}
+
+.workspace-repo-error {
+  display: grid;
+  gap: 8px;
+}
+
+.workspace-repo-error .secondary-btn {
+  justify-self: start;
+}
+
+/* ===== 游戏区吃满屏幕：主玩法屏两栏、大厅两栏 ===== */
+@media (min-width: 640px) {
+  .game-lobby-layered {
+    display: grid;
+    grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
+    align-items: start;
+    gap: 12px;
+  }
+
+  .game-play {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(300px, 38%);
+    grid-template-rows: minmax(0, 1fr);
+    gap: 12px;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .game-play > .game-card {
+    min-height: 0;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .game-play .game-events,
+  .game-play .game-story-body,
+  .game-play .game-side-panel {
+    flex: 1;
+    min-height: 0;
+    max-height: none;
+    overflow: auto;
+  }
+}
+
+@media (max-width: 639px) {
+  .game-events {
+    max-height: 45vh;
+  }
+
+  .game-story-body {
+    max-height: 45vh;
+  }
+
+  .game-side-panel {
+    max-height: 32vh;
+  }
+}
+
+/* ===== 横屏矮屏：紧凑内边距与两栏比例 ===== */
+@media (orientation: landscape) and (max-height: 520px) {
+  .game-topbar {
+    padding: 4px 10px;
+  }
+
+  .game-body {
+    padding: 8px;
+  }
+
+  .game-footer {
+    padding: 6px 10px 8px;
+  }
+
+  .game-play {
+    grid-template-columns: minmax(0, 1.2fr) minmax(240px, 1fr);
+  }
+
+  .workspace-main {
+    padding: 8px;
+  }
+
+  .topbar {
+    padding-top: calc(6px + var(--inset-top));
+    padding-bottom: 6px;
+  }
+
+  .composer {
+    padding-top: 6px;
+    padding-bottom: calc(6px + var(--inset-bottom));
   }
 }

@@ -4,6 +4,7 @@ import {
   DEEPSEEK_PROVIDER,
   defaultRecentModels,
   normalizeReasoningEffort,
+  providerToConfig,
   resolveModel,
 } from "./apiProviders";
 
@@ -27,7 +28,6 @@ const FORCED_ON = {
   toolsEnabled: true,
   toolsWebSearch: true,
   toolsPythonSandbox: true,
-  baseUrl: DEEPSEEK_PROVIDER.baseUrl,
   maxToolRounds: DEFAULT_MAX_TOOL_ROUNDS,
   webSearchDefaultTopK: DEFAULT_WEB_SEARCH_TOP_K,
   webSearchMaxTopK: DEFAULT_WEB_SEARCH_MAX_TOP_K,
@@ -36,18 +36,25 @@ const FORCED_ON = {
 
 export const DEFAULT_SETTINGS: AppSettings = {
   apiProvider: "deepseek",
+  providers: [providerToConfig(DEEPSEEK_PROVIDER)],
   apiKey: "",
+  baseUrl: DEEPSEEK_PROVIDER.baseUrl,
   webSearchEnabled: false,
   gameWebSearchEnabled: false,
   gameAutoDelegateAi: false,
   model: "deepseek-v4-flash",
   gameModel: "deepseek-v4-flash",
+  workspaceModel: "deepseek-v4-flash",
+  workspaceProviderId: "deepseek",
   maxTokens: null,
+  contextCompressThreshold: 80,
   ...FORCED_ON,
   thinkingMode: "enabled",
   reasoningEffort: "high",
   gameThinkingMode: "enabled",
   gameReasoningEffort: "high",
+  workspaceThinkingMode: "enabled",
+  workspaceReasoningEffort: "high",
   pythonSandboxTimeout: 15,
   webSearchEngine: "mojeek",
   webSearchEndpoint: "",
@@ -62,6 +69,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
     "时效问题先 get_current_time 再 web_search；引用搜索结果只用 [1][2]…。",
   theme: "light",
   recentModels: defaultRecentModels(),
+  lastView: "chat",
+  githubToken: "",
 };
 
 function applyForcedOn(settings: AppSettings): AppSettings {
@@ -70,6 +79,35 @@ function applyForcedOn(settings: AppSettings): AppSettings {
 
 export function effectiveModel(settings: AppSettings): string {
   return resolveModel(settings);
+}
+
+/**
+ * 会话级模型覆写：对话若记录了独立模型（session.model / providerId），
+ * 返回覆写后的设置视图，供请求与顶栏显示统一使用；否则原样返回。
+ */
+export function sessionEffectiveSettings(
+  settings: AppSettings | null,
+  session: { model?: string; providerId?: string } | null | undefined,
+): AppSettings | null {
+  if (!settings) return null;
+  const model = session?.model?.trim();
+  const providerId = session?.providerId?.trim();
+  if (!model) return settings;
+  const target =
+    settings.providers?.find((item) => item.id === providerId) ??
+    settings.providers?.find((item) => item.id === settings.apiProvider) ??
+    settings.providers?.[0];
+  if (!target) return settings;
+  return {
+    ...settings,
+    apiProvider: target.id,
+    apiKey: target.apiKey,
+    baseUrl: target.baseUrl,
+    model,
+    providers: settings.providers.map((item) =>
+      item.id === target.id ? { ...item, model } : item,
+    ),
+  };
 }
 
 /** Settings view used for game completions (independent model fields). Always official API. */
@@ -81,6 +119,11 @@ export function settingsForGame(settings: AppSettings): AppSettings {
   return {
     ...settings,
     model: gameModel,
+    providers: settings.providers?.map((provider) =>
+      provider.id === settings.apiProvider
+        ? { ...provider, model: gameModel }
+        : provider,
+    ),
     thinkingMode: settings.gameThinkingMode ?? settings.thinkingMode,
     reasoningEffort: normalizeReasoningEffort(
       settings.gameReasoningEffort ?? settings.reasoningEffort,
@@ -94,6 +137,40 @@ export function settingsForGame(settings: AppSettings): AppSettings {
 
 export function effectiveGameModel(settings: AppSettings): string {
   return resolveModel(settingsForGame(settings));
+}
+
+/** 工作区模式设置视图：独立模型/供应商/思考档位，供应商配置沿用全局 providers。 */
+export function settingsForWorkspace(settings: AppSettings): AppSettings {
+  const workspaceModel =
+    settings.workspaceModel?.trim() ||
+    settings.model?.trim() ||
+    DEEPSEEK_PROVIDER.defaultModel;
+  const providerId =
+    settings.workspaceProviderId?.trim() || settings.apiProvider || "deepseek";
+  const target =
+    settings.providers?.find((item) => item.id === providerId) ??
+    settings.providers?.[0] ??
+    settings.providers?.find((item) => item.id === settings.apiProvider);
+  const provider = target ?? providerToConfig(DEEPSEEK_PROVIDER);
+  return {
+    ...settings,
+    apiProvider: provider.id,
+    apiKey: provider.apiKey,
+    baseUrl: provider.baseUrl,
+    model: workspaceModel,
+    providers: settings.providers?.map((item) =>
+      item.id === provider.id ? { ...item, model: workspaceModel } : item,
+    ),
+    thinkingMode: settings.workspaceThinkingMode ?? settings.thinkingMode,
+    reasoningEffort: normalizeReasoningEffort(
+      settings.workspaceReasoningEffort ?? settings.reasoningEffort,
+      workspaceModel,
+    ),
+  };
+}
+
+export function effectiveWorkspaceModel(settings: AppSettings): string {
+  return resolveModel(settingsForWorkspace(settings));
 }
 
 export function thinkingActive(settings: AppSettings): boolean {
@@ -159,7 +236,34 @@ export async function loadSettings(): Promise<AppSettings> {
       merged.model =
         LEGACY_MODEL_PRESETS[raw.modelPreset] ?? merged.model;
     }
-    merged.apiProvider = "deepseek";
+    // 多供应商迁移：旧版本只有 apiKey/baseUrl/model（无 providers）。
+    if (!merged.providers?.length) {
+      merged.providers = [
+        {
+          id: "deepseek",
+          label: DEEPSEEK_PROVIDER.label,
+          baseUrl: merged.baseUrl || DEEPSEEK_PROVIDER.baseUrl,
+          apiKey: merged.apiKey ?? "",
+          model: merged.model || DEEPSEEK_PROVIDER.defaultModel,
+          models: [...DEEPSEEK_PROVIDER.models],
+          thinkingSupport: true,
+        },
+      ];
+      merged.apiProvider = "deepseek";
+    } else {
+      // 迁移后 apiKey/baseUrl/model 与 active provider 同步，供旧调用兼容。
+      const active = merged.providers.find(
+        (provider) => provider.id === merged.apiProvider,
+      );
+      if (active) {
+        merged.apiKey = active.apiKey;
+        merged.baseUrl = active.baseUrl;
+        merged.model = active.model;
+      }
+      merged.apiProvider = active
+        ? active.id
+        : merged.providers[0].id;
+    }
     if (!merged.recentModels?.length) {
       merged.recentModels = defaultRecentModels();
     }
@@ -201,6 +305,22 @@ export async function loadSettings(): Promise<AppSettings> {
     merged.gameReasoningEffort = normalizeReasoningEffort(
       merged.gameReasoningEffort ?? merged.reasoningEffort,
       merged.gameModel,
+    );
+    if (!merged.workspaceModel?.trim()) {
+      merged.workspaceModel = merged.model;
+    }
+    if (!merged.workspaceProviderId?.trim()) {
+      merged.workspaceProviderId = merged.apiProvider;
+    }
+    if (
+      merged.workspaceThinkingMode !== "enabled" &&
+      merged.workspaceThinkingMode !== "disabled"
+    ) {
+      merged.workspaceThinkingMode = merged.thinkingMode;
+    }
+    merged.workspaceReasoningEffort = normalizeReasoningEffort(
+      merged.workspaceReasoningEffort ?? merged.reasoningEffort,
+      merged.workspaceModel,
     );
     merged.webSearchEnabled = Boolean(merged.webSearchEnabled);
     merged.gameWebSearchEnabled = Boolean(
